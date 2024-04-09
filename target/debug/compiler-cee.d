@@ -1,0 +1,1 @@
+C:\Users\User\Desktop\code\Rust\rust-compiler\target\debug\compiler-cee.exe: C:\Users\User\Desktop\code\Rust\rust-compiler\src\generator.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\lexer.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\main.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\misc.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\parser.rs

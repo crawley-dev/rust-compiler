@@ -3,6 +3,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
+    Illegal,      // an illegal token, doen't match existing patterns.
     OpenSquirly,  // e.g: {
     CloseSquirly, // e.g: }
     OpenParen,    // e.g: (
@@ -12,9 +13,13 @@ pub enum TokenKind {
     IntLit,       // e.g: 55123
     Eof,          // End Of File
     Assign,       // e.g =
-    Illegal,      // an illegal token, doen't match existing patterns.
     Comma,
-    Plus,
+
+    // Operators
+    Multiply,
+    Divide,
+    Add,
+    Subtract,
 
     // keywords
     KeywordExit,
@@ -49,6 +54,15 @@ impl fmt::Debug for Token {
             "Token {{ kind: {:?}, value: {:?} }}",
             self.kind, self.value
         )
+    }
+}
+
+impl Token {
+    pub fn is_operator(&self) -> bool {
+        return match self.kind {
+            TokenKind::Multiply | TokenKind::Divide | TokenKind::Add | TokenKind::Subtract => true,
+            _ => false,
+        };
     }
 }
 

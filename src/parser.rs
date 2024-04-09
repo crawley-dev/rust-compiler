@@ -2,12 +2,6 @@
 use crate::lexer::*;
 
 // union would be better ideally.
-#[derive(Debug)]
-pub enum ExprKind {
-    Illegal,
-    IntLit,
-    Ident,
-}
 
 #[derive(Debug)]
 pub enum StmtKind {
@@ -17,9 +11,22 @@ pub enum StmtKind {
 }
 
 #[derive(Debug)]
-pub struct NodeExpr {
-    pub kind: ExprKind,
-    pub token: Token,
+pub enum ExprKind {
+    Illegal,
+    Term,
+    BinExpr,
+}
+
+#[derive(Debug)]
+pub enum TermKind {
+    IntLit,
+    Ident,
+}
+
+#[derive(Debug)]
+pub enum BinExprKind {
+    Add,
+    Multi,
 }
 
 #[derive(Debug)]
@@ -27,6 +34,26 @@ pub struct NodeStmt {
     pub kind: StmtKind,
     pub ident: Option<Token>,
     pub expr: Option<NodeExpr>,
+}
+
+#[derive(Debug)]
+pub struct NodeExpr {
+    pub kind: ExprKind,
+    pub term: Option<NodeTerm>,
+    pub bin_expr: Option<NodeBinExpr>,
+}
+
+#[derive(Debug)]
+pub struct NodeTerm {
+    pub kind: TermKind,
+    pub token: Token,
+}
+
+#[derive(Debug)]
+pub struct NodeBinExpr {
+    pub kind: BinExprKind,
+    pub lhs: NodeExpr,
+    pub rhs: NodeExpr,
 }
 
 #[derive(Debug)]
@@ -92,37 +119,50 @@ impl Parser {
             };
         }
 
-        if self.token_equals(TokenKind::SemiColon, 0)? {
+        if self
+            .token_equals(TokenKind::SemiColon, 0)
+            .expect("Expected ';'\n")
+        {
             self.consume();
             return Ok(stmt);
         }
         // BUG: this return is never hit.
         //      either: if evals to true, returns. or error propogates up.
-        return Err("Expected ';'");
+        return Err("Unable to parse statement.");
     }
 
     fn parse_expr(&mut self) -> Result<NodeExpr, &'static str> {
+        // should parse all expressions until none left?
+        // e.g if self.peek(1) == OPERATOR >> parse self.peek(2) << rhs
         if self.peek(0).is_none() {
             return Err("No expression to parse.");
+        }
+        if self.peek(1).is_some() && self.peek(1).unwrap().is_operator() {
+            // parse operator & rhs
+            // rhs can be another bin_expr
         }
 
         return match self.peek(0).unwrap().kind {
             TokenKind::IntLit => Ok(NodeExpr {
-                kind: ExprKind::IntLit,
+                kind: ExprKind::Term,
                 token: self.consume(),
             }),
             TokenKind::Ident => Ok(NodeExpr {
-                kind: ExprKind::Ident,
+                kind: ExprKind::Term,
                 token: self.consume(),
             }),
             _ => Err("Unrecognized expression, unable to parse."),
         };
     }
 
+    fn parse_bin_expr(&mut self) -> Result<NodeBinExpr, &'static str> {
+        return Err("una");
+    }
+
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
         if self.peek(offset).is_none() {
             // println!("no token found, can't eval to {:?}", kind);
-            return Err("no token to eval");
+            return Err("no token to evaluate");
         }
 
         // print!("checking {:?} == {:?}", self.peek(offset), kind);
@@ -132,7 +172,8 @@ impl Parser {
             return Ok(true);
         }
         // println!(" .. is false");
-        return Err("token eval was false");
+        // return Err(format!("expected '{:?}' was false", kind));
+        return Err("token evaluation was false.");
     }
 
     fn peek(&self, offset: usize) -> Option<&Token> {

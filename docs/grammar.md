@@ -1,16 +1,35 @@
 $$
 \begin{align}
-	[\text{prog}] &\to [\text{stmt}]^* \\
-	[\text{stmt}] &\to 
+
+	[\text{Prog}] &\to 
 	\begin{cases}
-		\text{exit}([\text{expr}]); \\
-		\text{let}\space\text{ident} = [\text{expr}]; \\
-	\end{cases} \\
-	[\text{expr}] &\to 
-	\begin{cases}
-		\text{expr} + \text{expr} \\
-		\text{int\_lit} \\
-		\text{ident} \\
+		[\text{Stmt}]^* \\
 	\end{cases} \\
 	
+	[\text{Stmt}] &\to 
+	\begin{cases}
+		\text{exit}([\text{Expr}]); \\
+		\text{let}\space\text{ident} = [\text{Expr}]; \\
+	\end{cases} \\
+
+	[\text{Expr}] &\to 
+	\begin{cases}
+		[\text{Term}] \\
+		[\text{BinExpr}] \\
+	\end{cases} \\
+
+	[\text{Term}] &\to
+	\begin{cases}
+		\text{ident} \\
+		\text{int\_lit} \\
+	\end{cases} \\
+
+	[\text{BinExpr}] &\to 
+	\begin{cases}
+		% [\text{Expr}] * [\tsext{Expr}] & \text{prec} = 1 \\
+		% [\text{Expr}] / [\text{Expr}] & \text{prec} = 1 \\
+		[\text{Expr}] + [\text{Expr}] & \text{prec} = 0 \\ 
+		[\text{Expr}] - [\text{Expr}] & \text{prec} = 0 \\
+	\end{cases} \\
+
 \end{align}
