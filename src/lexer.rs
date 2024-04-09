@@ -1,5 +1,4 @@
 #![allow(dead_code, unused_mut, unused_assignments)]
-// use regex::Regex;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
