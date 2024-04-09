@@ -57,13 +57,13 @@ impl fmt::Debug for Token {
     }
 }
 
-impl Token {
-    pub fn is_operator(&self) -> bool {
-        return match self.kind {
-            TokenKind::Multiply | TokenKind::Divide | TokenKind::Add | TokenKind::Subtract => true,
-            _ => false,
-        };
-    }
+// impl Token {
+//     pub fn is_operator(&self) -> bool {
+        // return match self.kind {
+        //     TokenKind::Multiply | TokenKind::Divide | TokenKind::Add | TokenKind::Subtract => true,
+        //     _ => false,
+        // };
+//     }
 }
 
 pub struct Lexer {
@@ -127,8 +127,20 @@ impl Lexer {
                 kind: TokenKind::SemiColon,
                 value: None,
             },
+            b'*' => Token {
+                kind: TokenKind::Multiply,
+                value: None,
+            },
+            b'/' => Token {
+                kind: TokenKind::Divide,
+                value: None,
+            },
             b'+' => Token {
-                kind: TokenKind::Plus,
+                kind: TokenKind::Add,
+                value: None,
+            },
+            b'-' => Token {
+                kind: TokenKind::Subtract,
                 value: None,
             },
             b'=' => Token {

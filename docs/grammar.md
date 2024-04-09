@@ -2,9 +2,7 @@ $$
 \begin{align}
 
 	[\text{Prog}] &\to 
-	\begin{cases}
 		[\text{Stmt}]^* \\
-	\end{cases} \\
 	
 	[\text{Stmt}] &\to 
 	\begin{cases}
@@ -14,8 +12,10 @@ $$
 
 	[\text{Expr}] &\to 
 	\begin{cases}
-		[\text{Term}] \\
-		[\text{BinExpr}] \\
+		% [\text{Term}] \\
+		% [\text{BinExpr}] \\
+		[\text{Expr}] \\
+		[\text{Expr}] + [\text{Term}] \\
 	\end{cases} \\
 
 	[\text{Term}] &\to

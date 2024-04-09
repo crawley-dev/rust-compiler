@@ -33,14 +33,14 @@ pub enum BinExprKind {
 pub struct NodeStmt {
     pub kind: StmtKind,
     pub ident: Option<Token>,
-    pub expr: Option<NodeExpr>,
+    pub expr: Option<Box<NodeExpr>>,
 }
 
 #[derive(Debug)]
 pub struct NodeExpr {
     pub kind: ExprKind,
-    pub term: Option<NodeTerm>,
-    pub bin_expr: Option<NodeBinExpr>,
+    pub term: Option<Box<NodeTerm>>,
+    pub bin_expr: Option<Box<NodeBinExpr>>,
 }
 
 #[derive(Debug)]
@@ -52,8 +52,8 @@ pub struct NodeTerm {
 #[derive(Debug)]
 pub struct NodeBinExpr {
     pub kind: BinExprKind,
-    pub lhs: NodeExpr,
-    pub rhs: NodeExpr,
+    pub lhs: Box<NodeExpr>,
+    pub rhs: Box<NodeExpr>,
 }
 
 #[derive(Debug)]
@@ -84,6 +84,7 @@ impl Parser {
         return Ok(prog);
     }
 
+    // don't propogate err up (?), use .is_ok()
     fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
         let cur_tok = &self.tokens[self.position];
         // println!("parsing {:?}", cur_tok);
@@ -102,7 +103,7 @@ impl Parser {
             stmt = NodeStmt {
                 kind: StmtKind::Exit,
                 ident: None,
-                expr: Some(self.parse_expr()?),
+                expr: Some(Box::new(self.parse_expr()?)),
             };
             self.consume(); // ')'
         } else if cur_tok.kind == TokenKind::KeywordLet
@@ -115,48 +116,60 @@ impl Parser {
             stmt = NodeStmt {
                 kind: StmtKind::Let,
                 ident: temp_ident,
-                expr: Some(self.parse_expr()?),
+                expr: Some(Box::new(self.parse_expr()?)),
             };
         }
 
-        if self
-            .token_equals(TokenKind::SemiColon, 0)
-            .expect("Expected ';'\n")
-        {
+        if self.token_equals(TokenKind::SemiColon, 0).is_ok() {
             self.consume();
             return Ok(stmt);
         }
-        // BUG: this return is never hit.
-        //      either: if evals to true, returns. or error propogates up.
-        return Err("Unable to parse statement.");
+        return Err("Expected ';'.");
     }
 
     fn parse_expr(&mut self) -> Result<NodeExpr, &'static str> {
         // should parse all expressions until none left?
         // e.g if self.peek(1) == OPERATOR >> parse self.peek(2) << rhs
-        if self.peek(0).is_none() {
-            return Err("No expression to parse.");
+
+        // if self.peek(1).is_some() && self.peek(1).unwrap().is_operator() {
+        // parse operator & rhs
+        // rhs can be another bin_expr
+        // }
+
+        let term = self.parse_term()?;
+        if self.peek(0).is_some() {
+            match self.peek(0).unwrap().kind {
+                TokenKind::Multiply => {}
+                TokenKind::Divide => {}
+                TokenKind::Add => {}
+                TokenKind::Subtract => {}
+                _ => false,
+            };
         }
-        if self.peek(1).is_some() && self.peek(1).unwrap().is_operator() {
-            // parse operator & rhs
-            // rhs can be another bin_expr
+
+        return Err("Unable to parse expression");
+    }
+
+    fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
+        if self.peek(0).is_none() {
+            return Err("No term to parse.");
         }
 
         return match self.peek(0).unwrap().kind {
-            TokenKind::IntLit => Ok(NodeExpr {
-                kind: ExprKind::Term,
+            TokenKind::IntLit => Ok(NodeTerm {
+                kind: TermKind::IntLit,
                 token: self.consume(),
             }),
-            TokenKind::Ident => Ok(NodeExpr {
-                kind: ExprKind::Term,
+            TokenKind::Ident => Ok(NodeTerm {
+                kind: TermKind::Ident,
                 token: self.consume(),
             }),
-            _ => Err("Unrecognized expression, unable to parse."),
+            _ => Err("Unrecognized term, unable to parse."),
         };
     }
 
     fn parse_bin_expr(&mut self) -> Result<NodeBinExpr, &'static str> {
-        return Err("una");
+        return Err("Unable to parse binary expressio");
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
@@ -164,9 +177,7 @@ impl Parser {
             // println!("no token found, can't eval to {:?}", kind);
             return Err("no token to evaluate");
         }
-
         // print!("checking {:?} == {:?}", self.peek(offset), kind);
-
         if self.peek(offset).is_some() && self.peek(offset).unwrap().kind == kind {
             // println!(" .. is true");
             return Ok(true);
@@ -187,3 +198,25 @@ impl Parser {
         return self.tokens[i].clone();
     }
 }
+
+/*
+return match self.peek(0).unwrap().kind {
+            TokenKind::IntLit => Ok(NodeExpr {
+                kind: ExprKind::Term,
+                term: Some(Box::new(NodeTerm {
+                    kind: TermKind::IntLit,
+                    token: self.consume(),
+                })),
+                bin_expr: None,
+            }),
+            TokenKind::Ident => Ok(NodeExpr {
+                kind: ExprKind::Term,
+                term: Some(Box::new(NodeTerm {
+                    kind: TermKind::Ident,
+                    token: self.consume(),
+                })),
+                bin_expr: None,
+            }),
+            _ => Err("Unrecognized expression, unable to parse."),
+        };
+*/
