@@ -46,8 +46,9 @@ impl Generator {
         match stmt.kind {
             StmtKind::Exit => {
                 return Ok(format!(
-                    "{}    mov rax, 60\n{}    syscall\n",
-                    self.gen_expr(stmt.expr.unwrap()).unwrap(),
+                    "{}    mov rax, 60\n\
+                     {}    syscall\n",
+                    self.gen_expr(*stmt.expr.unwrap()).unwrap(),
                     self.pop("rdi")
                 ));
             }
@@ -61,11 +62,11 @@ impl Generator {
                 self.vars.insert(
                     stmt.ident.unwrap().value.unwrap(), // consumes identifier
                     Variable {
-                        stk_pos: self.stk_ptr + 1, // call gen_expr after so stk_ptr not up to date
+                        stk_pos: self.stk_ptr, // call gen_expr after so stk_ptr not up to date
                     },
                 );
 
-                return Ok(self.gen_expr(stmt.expr.unwrap()).unwrap());
+                return Ok(self.gen_expr(*stmt.expr.unwrap()).unwrap());
             }
             _ => return Err("Invalid statement."),
         };
@@ -73,15 +74,41 @@ impl Generator {
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
         match expr.kind {
-            ExprKind::IntLit => {
+            ExprKind::Term => return self.gen_term(expr.term.unwrap()),
+            ExprKind::BinExpr => {
+                let bin_expr = expr.bin_expr.unwrap();
+                let lhs = self.gen_expr(bin_expr.lhs)?;
+                let rhs = self.gen_expr(bin_expr.rhs)?;
                 return Ok(format!(
-                    "    mov rax, {}\n{}",
-                    expr.token.value.as_ref().unwrap(),
+                    "{}\
+                     {}\
+                     {}\
+                     {}    \
+                     add rax, rbx\n\
+                     {}",
+                    lhs,
+                    rhs,
+                    self.pop("rax"),
+                    self.pop("rbx"),
+                    self.push("rax"),
+                ));
+            }
+            _ => return Err("Invalid Expression."),
+        }
+    }
+
+    fn gen_term(&mut self, term: NodeTerm) -> Result<String, &'static str> {
+        match term.kind {
+            TermKind::IntLit => {
+                return Ok(format!(
+                    "    mov rax, {}\n\
+                     {}",
+                    term.token.value.as_ref().unwrap(),
                     self.push("rax")
                 ))
             }
-            ExprKind::Ident => {
-                let ident = &expr.token.value.as_ref().unwrap().clone();
+            TermKind::Ident => {
+                let ident = &term.token.value.as_ref().unwrap().clone();
                 if !self.vars.contains_key(ident) {
                     return Err("Identifier doesn't exist.");
                 }
@@ -89,14 +116,14 @@ impl Generator {
                 let word_size = 8;
                 let stk_index = &self
                     .vars
-                    .get(&expr.token.value.clone().unwrap())
+                    .get(&term.token.value.clone().unwrap())
                     .unwrap()
                     .stk_pos;
                 let stk_offset = (self.stk_ptr - stk_index) * word_size;
 
-                return Ok(self.push(format!("QWORD [rsp + {}]\n", stk_offset).as_str()));
+                return Ok(self.push(format!("QWORD [rsp-{}]\n", stk_offset).as_str()));
             }
-            _ => return Err("Invalid expression."),
+            _ => return Err("Invalid term"),
         };
     }
 

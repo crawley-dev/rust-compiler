@@ -27,7 +27,7 @@ fn main() {
     generator.generate_prog().expect("unable to generate code.");
 
     let nasm_output = std::process::Command::new("nasm")
-        .args(&["-f", "win64", &output_path, "-o", "out.obj"])
+        .args(&["-f", "win64", &output_path, "-o", "out.o"])
         .output()
         .expect("Failed to execute nasm");
 
@@ -37,7 +37,7 @@ fn main() {
     }
 
     let ld_output = std::process::Command::new("ld")
-        .args(&["out.obj", "-o", "out.exe"])
+        .args(&["out.o", "-o", "out.exe"])
         .output()
         .expect("Failed to execute ld");
 

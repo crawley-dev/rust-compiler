@@ -19,6 +19,7 @@ pub enum ExprKind {
 
 #[derive(Debug)]
 pub enum TermKind {
+    Illegal,
     IntLit,
     Ident,
 }
@@ -39,7 +40,7 @@ pub struct NodeStmt {
 #[derive(Debug)]
 pub struct NodeExpr {
     pub kind: ExprKind,
-    pub term: Option<Box<NodeTerm>>,
+    pub term: Option<NodeTerm>,
     pub bin_expr: Option<Box<NodeBinExpr>>,
 }
 
@@ -52,8 +53,8 @@ pub struct NodeTerm {
 #[derive(Debug)]
 pub struct NodeBinExpr {
     pub kind: BinExprKind,
-    pub lhs: Box<NodeExpr>,
-    pub rhs: Box<NodeExpr>,
+    pub lhs: NodeExpr,
+    pub rhs: NodeExpr,
 }
 
 #[derive(Debug)]
@@ -87,74 +88,82 @@ impl Parser {
     // don't propogate err up (?), use .is_ok()
     fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
         let cur_tok = &self.tokens[self.position];
-        // println!("parsing {:?}", cur_tok);
-        let mut stmt = NodeStmt {
-            kind: StmtKind::Illegal,
-            ident: None,
-            expr: None,
-        };
 
-        if cur_tok.kind == TokenKind::KeywordExit
-            && self.token_equals(TokenKind::OpenParen, 1)?
-            && self.token_equals(TokenKind::CloseParen, 3)?
-        {
-            self.consume(); // "exit"
-            self.consume(); // '('
-            stmt = NodeStmt {
-                kind: StmtKind::Exit,
+        let stmt = match cur_tok.kind {
+            TokenKind::KeywordExit
+                if self.token_equals(TokenKind::OpenParen, 1)?
+                    && self.token_equals(TokenKind::CloseParen, 3)? =>
+            {
+                self.consume(); // "exit"
+                self.consume(); // '('
+                let stmt = NodeStmt {
+                    kind: StmtKind::Exit,
+                    ident: None,
+                    expr: Some(Box::new(self.parse_expr()?)),
+                };
+                self.consume();
+                stmt
+            }
+            TokenKind::KeywordLet
+                if self.token_equals(TokenKind::Ident, 1)?
+                    && self.token_equals(TokenKind::Assign, 2)? =>
+            {
+                self.consume(); // "let"
+                let temp_ident = Some(self.consume());
+                self.consume(); // '='
+                NodeStmt {
+                    kind: StmtKind::Let,
+                    ident: temp_ident,
+                    expr: Some(Box::new(self.parse_expr()?)),
+                }
+            }
+            _ => NodeStmt {
+                kind: StmtKind::Illegal,
                 ident: None,
-                expr: Some(Box::new(self.parse_expr()?)),
-            };
-            self.consume(); // ')'
-        } else if cur_tok.kind == TokenKind::KeywordLet
-            && self.token_equals(TokenKind::Ident, 1)?
-            && self.token_equals(TokenKind::Assign, 2)?
-        {
-            self.consume(); // "let"
-            let temp_ident = Some(self.consume());
-            self.consume(); // '='
-            stmt = NodeStmt {
-                kind: StmtKind::Let,
-                ident: temp_ident,
-                expr: Some(Box::new(self.parse_expr()?)),
-            };
-        }
+                expr: None,
+            },
+        };
 
         if self.token_equals(TokenKind::SemiColon, 0).is_ok() {
             self.consume();
             return Ok(stmt);
         }
-        return Err("Expected ';'.");
+        return Err("Expected ';'");
     }
 
     fn parse_expr(&mut self) -> Result<NodeExpr, &'static str> {
-        // should parse all expressions until none left?
-        // e.g if self.peek(1) == OPERATOR >> parse self.peek(2) << rhs
-
-        // if self.peek(1).is_some() && self.peek(1).unwrap().is_operator() {
-        // parse operator & rhs
-        // rhs can be another bin_expr
-        // }
-
         let term = self.parse_term()?;
-        if self.peek(0).is_some() {
-            match self.peek(0).unwrap().kind {
-                TokenKind::Multiply => {}
-                TokenKind::Divide => {}
-                TokenKind::Add => {}
-                TokenKind::Subtract => {}
-                _ => false,
-            };
+        if self.peek(0).is_none() {
+            return Err("No operand to parse");
         }
 
-        return Err("Unable to parse expression");
+        let lhs = NodeExpr {
+            kind: ExprKind::Term,
+            term: Some(term),
+            bin_expr: None,
+        };
+
+        if self.peek(0).unwrap().kind == TokenKind::Add {
+            self.consume(); // consume operator
+            let rhs = self.parse_expr()?;
+
+            return Ok(NodeExpr {
+                kind: ExprKind::BinExpr,
+                term: None,
+                bin_expr: Some(Box::new(NodeBinExpr {
+                    kind: BinExprKind::Add,
+                    lhs: lhs,
+                    rhs: rhs,
+                })),
+            });
+        }
+        return Ok(lhs);
     }
 
     fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
         if self.peek(0).is_none() {
             return Err("No term to parse.");
         }
-
         return match self.peek(0).unwrap().kind {
             TokenKind::IntLit => Ok(NodeTerm {
                 kind: TermKind::IntLit,
@@ -169,21 +178,16 @@ impl Parser {
     }
 
     fn parse_bin_expr(&mut self) -> Result<NodeBinExpr, &'static str> {
-        return Err("Unable to parse binary expressio");
+        return Err("Unable to parse binary expression");
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
         if self.peek(offset).is_none() {
-            // println!("no token found, can't eval to {:?}", kind);
             return Err("no token to evaluate");
         }
-        // print!("checking {:?} == {:?}", self.peek(offset), kind);
-        if self.peek(offset).is_some() && self.peek(offset).unwrap().kind == kind {
-            // println!(" .. is true");
+        if self.peek(offset).unwrap().kind == kind {
             return Ok(true);
         }
-        // println!(" .. is false");
-        // return Err(format!("expected '{:?}' was false", kind));
         return Err("token evaluation was false.");
     }
 
@@ -198,25 +202,3 @@ impl Parser {
         return self.tokens[i].clone();
     }
 }
-
-/*
-return match self.peek(0).unwrap().kind {
-            TokenKind::IntLit => Ok(NodeExpr {
-                kind: ExprKind::Term,
-                term: Some(Box::new(NodeTerm {
-                    kind: TermKind::IntLit,
-                    token: self.consume(),
-                })),
-                bin_expr: None,
-            }),
-            TokenKind::Ident => Ok(NodeExpr {
-                kind: ExprKind::Term,
-                term: Some(Box::new(NodeTerm {
-                    kind: TermKind::Ident,
-                    token: self.consume(),
-                })),
-                bin_expr: None,
-            }),
-            _ => Err("Unrecognized expression, unable to parse."),
-        };
-*/
