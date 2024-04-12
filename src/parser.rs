@@ -27,7 +27,9 @@ pub enum TermKind {
 #[derive(Debug)]
 pub enum BinExprKind {
     Add,
-    Multi,
+    Multiply,
+    Subtract,
+    Divide,
 }
 
 #[derive(Debug)]
@@ -143,21 +145,25 @@ impl Parser {
             bin_expr: None,
         };
 
-        if self.peek(0).unwrap().kind == TokenKind::Add {
-            self.consume(); // consume operator
-            let rhs = self.parse_expr()?;
+        let bin_expr_kind = match self.peek(0).unwrap().kind {
+            TokenKind::Add => BinExprKind::Add,
+            TokenKind::Subtract => BinExprKind::Subtract,
+            TokenKind::Multiply => BinExprKind::Multiply,
+            TokenKind::Divide => BinExprKind::Divide,
+            _ => return Ok(lhs), // no operand.
+        };
 
-            return Ok(NodeExpr {
-                kind: ExprKind::BinExpr,
-                term: None,
-                bin_expr: Some(Box::new(NodeBinExpr {
-                    kind: BinExprKind::Add,
-                    lhs: lhs,
-                    rhs: rhs,
-                })),
-            });
-        }
-        return Ok(lhs);
+        self.consume(); // consume operator;
+        let rhs = self.parse_expr()?;
+        return Ok(NodeExpr {
+            kind: ExprKind::BinExpr,
+            term: None,
+            bin_expr: Some(Box::new(NodeBinExpr {
+                kind: bin_expr_kind,
+                lhs: lhs,
+                rhs: rhs,
+            })),
+        });
     }
 
     fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {

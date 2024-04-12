@@ -57,15 +57,6 @@ impl fmt::Debug for Token {
     }
 }
 
-// impl Token {
-//     pub fn is_operator(&self) -> bool {
-// return match self.kind {
-//     TokenKind::Multiply | TokenKind::Divide | TokenKind::Add | TokenKind::Subtract => true,
-//     _ => false,
-// };
-//     }
-// }
-
 pub struct Lexer {
     position: usize,
     read_position: usize,
