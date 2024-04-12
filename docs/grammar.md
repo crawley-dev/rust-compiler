@@ -12,22 +12,21 @@ $$
 
 	[\text{Expr}] &\to 
 	\begin{cases}
-		% [\text{Term}] \\
-		% [\text{BinExpr}] \\
 		[\text{Expr}] \\
-		[\text{Expr}] + [\text{Term}] \\
+		[\text{Expr}] + [\text{Atomic Term}] \\
 	\end{cases} \\
 
-	[\text{Term}] &\to
+	[\text{Atomic Term}] &\to
 	\begin{cases}
 		\text{ident} \\
 		\text{int\_lit} \\
+		([\text{Expr}]) \\
 	\end{cases} \\
 
 	[\text{BinExpr}] &\to 
 	\begin{cases}
-		% [\text{Expr}] * [\tsext{Expr}] & \text{prec} = 1 \\
-		% [\text{Expr}] / [\text{Expr}] & \text{prec} = 1 \\
+		[\text{Expr}] * [\text{Expr}] & \text{prec} = 1 \\
+		[\text{Expr}] / [\text{Expr}] & \text{prec} = 1 \\
 		[\text{Expr}] + [\text{Expr}] & \text{prec} = 0 \\ 
 		[\text{Expr}] - [\text{Expr}] & \text{prec} = 0 \\
 	\end{cases} \\

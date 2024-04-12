@@ -94,6 +94,33 @@ impl Lexer {
             self.skip_whitespace();
         }
         let tok = match self.ch {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+                let ident = self.read_identifier();
+                return match ident.as_str() {
+                    "exit" => Token {
+                        kind: TokenKind::KeywordExit,
+                        value: None,
+                    },
+                    "let" => Token {
+                        kind: TokenKind::KeywordLet,
+                        value: None,
+                    },
+                    _ => Token {
+                        kind: TokenKind::Ident,
+                        value: Some(ident),
+                    },
+                };
+            }
+            b'0'..=b'9' => {
+                return Token {
+                    kind: TokenKind::IntLit,
+                    value: Some(self.read_integer()),
+                };
+            }
+            0 => Token {
+                kind: TokenKind::Eof,
+                value: None,
+            },
             b'{' => Token {
                 kind: TokenKind::OpenSquirly,
                 value: None,
@@ -136,33 +163,6 @@ impl Lexer {
             },
             b'=' => Token {
                 kind: TokenKind::Assign,
-                value: None,
-            },
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                let ident = self.read_identifier();
-                return match ident.as_str() {
-                    "exit" => Token {
-                        kind: TokenKind::KeywordExit,
-                        value: None,
-                    },
-                    "let" => Token {
-                        kind: TokenKind::KeywordLet,
-                        value: None,
-                    },
-                    _ => Token {
-                        kind: TokenKind::Ident,
-                        value: Some(ident),
-                    },
-                };
-            }
-            b'0'..=b'9' => {
-                return Token {
-                    kind: TokenKind::IntLit,
-                    value: Some(self.read_integer()),
-                };
-            }
-            0 => Token {
-                kind: TokenKind::Eof,
                 value: None,
             },
             _ => todo!("we need to implement this."),

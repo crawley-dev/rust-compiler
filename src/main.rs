@@ -19,12 +19,12 @@ fn main() {
     println!("{:#?}", tokens);
 
     let mut parser = Parser::new(tokens);
-    let nodes = parser.parse_prog().unwrap();
+    let nodes = parser.parse_prog().expect("Unable to parse program.");
     println!("{:#?}", nodes.stmts);
 
     let output_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(nodes, output_path.clone());
-    generator.generate_prog().expect("unable to generate code.");
+    generator.generate_prog().expect("Unable to generate code.");
 
     let nasm_output = std::process::Command::new("nasm")
         .args(&["-f", "win64", &output_path, "-o", "out.o"])
