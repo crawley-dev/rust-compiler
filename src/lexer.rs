@@ -2,17 +2,16 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Illegal,      // an illegal token, doen't match existing patterns.
-    OpenSquirly,  // e.g: {
-    CloseSquirly, // e.g: }
-    OpenParen,    // e.g: (
-    CloseParen,   // e.g: )
-    SemiColon,    // e.g: ;
-    Ident,        // e.g: dwa  | a variable name
-    IntLit,       // e.g: 55123
-    Eof,          // End Of File
-    Assign,       // e.g =
+    OpenSquirly,
+    CloseSquirly,
+    OpenParen,
+    CloseParen,
+    SemiColon,
     Comma,
+    Eof,    // End Of File
+    Assign, // e.g =
+    Ident,  // e.g: dwa  | a variable name
+    IntLit, // e.g: 55123
 
     // Operators
     Multiply,
@@ -76,14 +75,10 @@ impl Lexer {
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
-        let mut tokens: Vec<Token> = vec![Token {
-            kind: TokenKind::Illegal,
-            value: None,
-        }];
-        while tokens[tokens.len() - 1].kind != TokenKind::Eof {
+        let mut tokens: Vec<Token> = Vec::new();
+        while tokens.is_empty() || tokens.last().unwrap().kind != TokenKind::Eof {
             tokens.push(self.next_token());
         }
-        tokens.remove(0); // remove vec init token.
         tokens.pop(); // TEMP: removes Eof token
         return tokens;
     }
@@ -113,7 +108,7 @@ impl Lexer {
             b'0'..=b'9' => {
                 return Token {
                     kind: TokenKind::IntLit,
-                    value: Some(self.read_integer()),
+                    value: Some(self.read_int_literal()),
                 };
             }
             0 => Token {
@@ -188,7 +183,7 @@ impl Lexer {
         return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
     }
 
-    fn read_integer(&mut self) -> String {
+    fn read_int_literal(&mut self) -> String {
         let pos = self.position;
         while self.ch.is_ascii_digit() {
             self.read_char();

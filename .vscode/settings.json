@@ -4,5 +4,9 @@
     "editor.formatOnSave": true
   },
   "C_Cpp_Runner.msvcBatchPath": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat",
-  "cmake.configureOnOpen": false
+  "cmake.configureOnOpen": false,
+  "rust-analyzer.linkedProjects": [
+    ".\\Cargo.toml",
+    ".\\Cargo.toml"
+  ]
 }

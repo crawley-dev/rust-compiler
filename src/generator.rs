@@ -15,8 +15,8 @@ pub struct Generator {
 impl Generator {
     pub fn new(prog: NodeProg, file_path: String) -> Generator {
         let generator = Generator {
-            prog: prog,
-            file_path: file_path,
+            prog,
+            file_path,
             stk_ptr: 0,
             vars: HashMap::new(),
         };

@@ -1,7 +1,5 @@
 use crate::lexer::*;
 
-// union would be better ideally.
-
 #[derive(Debug)]
 pub enum StmtKind {
     Exit,
@@ -18,8 +16,9 @@ pub enum ExprKind {
 pub enum TermKind {
     IntLit,
     Ident,
-    Paren, // << implement paren: https://youtu.be/6nl5HTGgvnk?list=PLUDlas_Zy_qC7c5tCgTMYq2idyyT241qs&t=3792
+    Paren,
 }
+
 #[derive(Debug)]
 pub enum BinExprKind {
     Divide,
@@ -89,41 +88,32 @@ impl Parser {
         let cur_tok = &self.tokens[self.position];
 
         let stmt = match cur_tok.kind {
-            TokenKind::KeywordExit
-                if self.token_equals(TokenKind::OpenParen, 1)?
-                    && self.token_equals(TokenKind::CloseParen, 3)? =>
-            {
-                self.consume(); // "exit"
-                self.consume(); // '('
+            TokenKind::KeywordExit => {
+                self.try_consume(TokenKind::KeywordExit)?;
+                self.try_consume(TokenKind::OpenParen)?;
                 let stmt = NodeStmt {
                     kind: StmtKind::Exit,
                     ident: None,
                     expr: Some(self.parse_expr(0)?),
                 };
-                self.consume(); // ')'
+                self.try_consume(TokenKind::CloseParen)?;
                 stmt
             }
-            TokenKind::KeywordLet
-                if self.token_equals(TokenKind::Ident, 1)?
-                    && self.token_equals(TokenKind::Assign, 2)? =>
-            {
-                self.consume(); // "let"
-                let temp_ident = Some(self.consume());
-                self.consume(); // '='
+            TokenKind::KeywordLet => {
+                self.try_consume(TokenKind::KeywordLet)?;
+                let ident = self.try_consume(TokenKind::Ident)?;
+                self.try_consume(TokenKind::Assign)?;
                 NodeStmt {
                     kind: StmtKind::Let,
-                    ident: temp_ident,
+                    ident: Some(ident),
                     expr: Some(self.parse_expr(0)?),
                 }
             }
             _ => return Err("Unable to parse expression"),
         };
 
-        if self.token_equals(TokenKind::SemiColon, 0)? {
-            self.consume();
-            return Ok(stmt);
-        }
-        return Err("Unable to parse statement.");
+        self.try_consume(TokenKind::SemiColon)?;
+        return Ok(stmt);
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
@@ -149,9 +139,8 @@ impl Parser {
             if prec < min_prec {
                 break;
             }
-            // while it is an operand && its precendence is higher than "min"
             let next_prec = prec + 1;
-            self.consume(); // next token, should be next term?
+            self.consume(); // consume operand, checked in match so don't check again
             let rhs = self.parse_expr(next_prec)?;
 
             lhs = NodeExpr {
@@ -183,11 +172,10 @@ impl Parser {
             TokenKind::OpenParen => {
                 let term = NodeTerm {
                     kind: TermKind::Paren,
-                    token: Some(self.consume()), // consume open paren,
+                    token: Some(self.consume()),
                     expr: Some(self.parse_expr(0)?),
                 };
-                self.token_equals(TokenKind::CloseParen, 0)?;
-                self.consume(); // consume close paren
+                self.try_consume(TokenKind::CloseParen)?;
                 Ok(term)
             }
             _ => {
@@ -201,15 +189,15 @@ impl Parser {
         if self.peek(offset).is_none() {
             return Err("no token to evaluate");
         }
-        if self.peek(offset).unwrap().kind == kind {
-            return Ok(true);
+        if self.peek(offset).unwrap().kind != kind {
+            println!(
+                "[COMPILER] Expected '{:?}', found '{:?}'",
+                kind,
+                self.peek(offset).unwrap()
+            );
+            return Err("token evaluation was false.");
         }
-        println!(
-            "[COMPILER] Expected '{:?}', found '{:?}'",
-            kind,
-            self.peek(offset).unwrap().kind
-        );
-        return Err("token evaluation was false.");
+        return Ok(true);
     }
 
     fn peek(&self, offset: usize) -> Option<&Token> {
@@ -224,5 +212,11 @@ impl Parser {
         self.position += 1;
         // println!("consuming: {:?}", &self.tokens[i]);
         return self.tokens[i].clone(); // this works aswell, but clones, ew.
+    }
+
+    // code for clarity.
+    fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {
+        self.token_equals(kind, 0)?;
+        return Ok(self.consume());
     }
 }

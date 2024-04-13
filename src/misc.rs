@@ -7,10 +7,10 @@ pub fn get_file_name() -> (String, String) {
         .nth(2)
         .unwrap_or("default.txt")
         .split('.')
-        .nth(0)
+        .next()
         .unwrap()
         .to_owned();
-    if file_path == "" {
+    if file_path.is_empty() {
         panic!("[COMPILER] Invalid File Path!\n");
     }
     return (file_path, file_name);
