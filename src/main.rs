@@ -27,7 +27,7 @@ fn main() {
     generator.generate_prog().expect("Unable to generate code.");
 
     let nasm_output = std::process::Command::new("nasm")
-        .args(&["-f", "win64", &output_path, "-o", "out.o"])
+        .args(&["-win64", &output_path, "-o", "out.o"])
         .output()
         .expect("Failed to execute nasm");
 
@@ -37,7 +37,7 @@ fn main() {
     }
 
     let ld_output = std::process::Command::new("ld")
-        .args(&["out.o", "-o", "out.exe"])
+        .args(&["out.o", "-o", "out"])
         .output()
         .expect("Failed to execute ld");
 
@@ -45,4 +45,10 @@ fn main() {
         eprintln!("ld command failed: {:?}", ld_output);
         return;
     }
+
+    // UBUNTU CMDS:
+    // nasm -felf64 OUTPUT_NAME.asm
+    // ld OUTPUT_NAME.o -o OUTPUT_NAME
+    // ./OUTPUT_NAME
+    // echo $?
 }

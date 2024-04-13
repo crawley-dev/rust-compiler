@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
+    Illegal,
     OpenSquirly,
     CloseSquirly,
     OpenParen,
@@ -87,7 +88,7 @@ impl Lexer {
         if self.ch.is_ascii_whitespace() {
             self.skip_whitespace();
         }
-        let tok = match self.ch {
+        let kind = match self.ch {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let ident = self.read_identifier();
                 return match ident.as_str() {
@@ -111,58 +112,22 @@ impl Lexer {
                     value: Some(self.read_int_literal()),
                 };
             }
-            0 => Token {
-                kind: TokenKind::Eof,
-                value: None,
-            },
-            b'{' => Token {
-                kind: TokenKind::OpenSquirly,
-                value: None,
-            },
-            b'}' => Token {
-                kind: TokenKind::CloseSquirly,
-                value: None,
-            },
-            b'(' => Token {
-                kind: TokenKind::OpenParen,
-                value: None,
-            },
-            b')' => Token {
-                kind: TokenKind::CloseParen,
-                value: None,
-            },
-            b',' => Token {
-                kind: TokenKind::Comma,
-                value: None,
-            },
-            b';' => Token {
-                kind: TokenKind::SemiColon,
-                value: None,
-            },
-            b'*' => Token {
-                kind: TokenKind::Multiply,
-                value: None,
-            },
-            b'/' => Token {
-                kind: TokenKind::Divide,
-                value: None,
-            },
-            b'+' => Token {
-                kind: TokenKind::Add,
-                value: None,
-            },
-            b'-' => Token {
-                kind: TokenKind::Subtract,
-                value: None,
-            },
-            b'=' => Token {
-                kind: TokenKind::Assign,
-                value: None,
-            },
-            _ => todo!("we need to implement this."),
+            b'{' => TokenKind::OpenSquirly,
+            b'}' => TokenKind::CloseSquirly,
+            b'(' => TokenKind::OpenParen,
+            b')' => TokenKind::CloseParen,
+            b';' => TokenKind::SemiColon,
+            b',' => TokenKind::Comma,
+            b'*' => TokenKind::Multiply,
+            b'/' => TokenKind::Divide,
+            b'+' => TokenKind::Add,
+            b'-' => TokenKind::Subtract,
+            b'=' => TokenKind::Assign,
+            0 => TokenKind::Eof,
+            _ => TokenKind::Illegal,
         };
         self.read_char();
-        return tok;
+        return Token { kind, value: None };
     }
 
     fn read_char(&mut self) {
