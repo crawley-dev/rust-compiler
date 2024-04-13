@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_mut, unused_assignments)]
 use crate::parser::*;
 use std::{collections::HashMap, io::Write};
 
@@ -15,7 +14,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(prog: NodeProg, file_path: String) -> Generator {
-        let mut generator = Generator {
+        let generator = Generator {
             prog: prog,
             file_path: file_path,
             stk_ptr: 0,
@@ -72,49 +71,34 @@ impl Generator {
 
                 return Ok(self.gen_expr(stmt.expr.unwrap()).unwrap());
             }
-            _ => return Err("Invalid statement."),
         };
     }
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
         match expr.kind {
-            ExprKind::Term => return self.gen_term(expr.term.unwrap()),
+            ExprKind::Term => return self.gen_term(*expr.term.unwrap()),
             ExprKind::BinExpr => {
                 let bin_expr = expr.bin_expr.unwrap();
-                let lhs = self.gen_expr(bin_expr.lhs)?;
-                let rhs = self.gen_expr(bin_expr.rhs)?;
-                return match bin_expr.kind {
-                    BinExprKind::Add => Ok(format!(
-                        "{}\
-                     {}\
-                     {}\
-                     {}    \
-                     add rax, rbx\n\
-                     {}",
-                        lhs,
-                        rhs,
-                        self.pop("rax"),
-                        self.pop("rbx"),
-                        self.push("rax"),
-                    )),
-                    BinExprKind::Multiply => Ok(format!(
-                        "{}\
-                             {}\
-                             {}\
-                             {}    \
-                             mul rbx\n\
-                             {}",
-                        lhs,
-                        rhs,
-                        self.pop("rax"),
-                        self.pop("rbx"),
-                        self.push("rax"),
-                    )),
-                    BinExprKind::Divide => todo!(),
-                    BinExprKind::Subtract => todo!(),
+                let lhs = self.gen_expr(bin_expr.rhs)?; // these are flipped, for asm reasons
+                let rhs = self.gen_expr(bin_expr.lhs)?;
+                let operation_asm = match bin_expr.kind {
+                    BinExprKind::Divide => "    div rbx\n",
+                    BinExprKind::Multiply => "    mul rbx\n",
+                    BinExprKind::Subtract => "    sub rax, rbx\n",
+                    BinExprKind::Add => "    add rax, rbx\n",
                 };
+                return Ok(format!(
+                    "{lhs}\
+                     {rhs}\
+                     {}\
+                     {}\
+                     {operation_asm}\
+                     {}",
+                    self.pop("rax"),
+                    self.pop("rbx"),
+                    self.push("rax"),
+                ));
             }
-            _ => return Err("Invalid Expression."),
         }
     }
 
@@ -124,12 +108,12 @@ impl Generator {
                 return Ok(format!(
                     "    mov rax, {}\n\
                      {}",
-                    term.token.value.as_ref().unwrap(),
+                    term.token.unwrap().value.as_ref().unwrap(),
                     self.push("rax")
                 ))
             }
             TermKind::Ident => {
-                let ident = &term.token.value.as_ref().unwrap().clone();
+                let ident = &term.token.as_ref().unwrap().value.as_ref().unwrap().clone();
                 if !self.vars.contains_key(ident) {
                     return Err("Identifier doesn't exist.");
                 }
@@ -137,14 +121,14 @@ impl Generator {
                 let word_size = 8;
                 let stk_index = &self
                     .vars
-                    .get(&term.token.value.clone().unwrap())
+                    .get(&term.token.unwrap().value.clone().unwrap())
                     .unwrap()
                     .stk_pos;
                 let stk_offset = (self.stk_ptr - stk_index) * word_size;
 
                 return Ok(self.push(format!("QWORD [rsp + {}]\n", stk_offset).as_str()));
             }
-            _ => return Err("Invalid term"),
+            TermKind::Paren => return self.gen_expr(term.expr.unwrap()),
         };
     }
 

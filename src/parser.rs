@@ -1,25 +1,21 @@
-#![allow(dead_code, unused_mut, unused_assignments)]
 use crate::lexer::*;
 
 // union would be better ideally.
 
 #[derive(Debug)]
 pub enum StmtKind {
-    Illegal,
     Exit,
     Let,
 }
 
 #[derive(Debug)]
 pub enum ExprKind {
-    Illegal,
     Term,
     BinExpr,
 }
 
 #[derive(Debug)]
 pub enum TermKind {
-    Illegal,
     IntLit,
     Ident,
     Paren, // << implement paren: https://youtu.be/6nl5HTGgvnk?list=PLUDlas_Zy_qC7c5tCgTMYq2idyyT241qs&t=3792
@@ -49,7 +45,8 @@ pub struct NodeExpr {
 #[derive(Debug)]
 pub struct NodeTerm {
     pub kind: TermKind,
-    pub token: Token,
+    pub token: Option<Token>,
+    pub expr: Option<NodeExpr>,
 }
 
 #[derive(Debug)]
@@ -71,7 +68,7 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(input: Vec<Token>) -> Parser {
-        let mut parser = Parser {
+        let parser = Parser {
             tokens: input,
             position: 0,
         };
@@ -119,14 +116,9 @@ impl Parser {
                     expr: Some(self.parse_expr(0)?),
                 }
             }
-            _ => NodeStmt {
-                kind: StmtKind::Illegal,
-                ident: None,
-                expr: None,
-            },
+            _ => return Err("Unable to parse expression"),
         };
 
-        // println!("cur stmt: {:#?}", stmt);
         if self.token_equals(TokenKind::SemiColon, 0)? {
             self.consume();
             return Ok(stmt);
@@ -142,7 +134,7 @@ impl Parser {
 
         let mut lhs = NodeExpr {
             kind: ExprKind::Term,
-            term: Some(term),
+            term: Some(Box::new(term)),
             bin_expr: None,
         };
 
@@ -165,64 +157,44 @@ impl Parser {
             lhs = NodeExpr {
                 kind: ExprKind::BinExpr,
                 term: None,
-                bin_expr: Some(Box::new(NodeBinExpr {
-                    kind: kind,
-                    lhs,
-                    rhs,
-                })),
+                bin_expr: Some(Box::new(NodeBinExpr { kind, lhs, rhs })),
             };
         }
 
         return Ok(lhs);
-
-        // let bin_expr_kind = match self.peek(0).unwrap().kind {
-        //     TokenKind::Add => BinExprKind::Add,
-        //     TokenKind::Subtract => BinExprKind::Subtract,
-        //     TokenKind::Multiply => BinExprKind::Multiply,
-        //     TokenKind::Divide => BinExprKind::Divide,
-        //     _ => return Ok(lhs), // no operand.
-        // };
-
-        // self.consume(); // consume operator;
-        // let rhs = self.parse_expr(0)?;
-        // return Ok(NodeExpr {
-        //     kind: ExprKind::BinExpr,
-        //     term: None,
-        //     bin_expr: Some(Box::new(NodeBinExpr {
-        //         kind: bin_expr_kind,
-        //         lhs: lhs,
-        //         rhs: rhs,
-        //     })),
-        // });
     }
 
     fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
         if self.peek(0).is_none() {
             return Err("No term to parse.");
         }
-        println!("Parsing term: {:?}", self.peek(0).unwrap());
+        // println!("Parsing term: {:?}", self.peek(0).unwrap());
         return match self.peek(0).unwrap().kind {
             TokenKind::IntLit => Ok(NodeTerm {
                 kind: TermKind::IntLit,
-                token: self.consume(),
+                token: Some(self.consume()),
+                expr: None,
             }),
             TokenKind::Ident => Ok(NodeTerm {
                 kind: TermKind::Ident,
-                token: self.consume(),
+                token: Some(self.consume()),
+                expr: None,
             }),
-            // TokenKind::OpenParen => Ok(NodeTerm {
-            //     kind: TermKind::Paren,
-            //     token: self.consume(),
-            // }),
+            TokenKind::OpenParen => {
+                let term = NodeTerm {
+                    kind: TermKind::Paren,
+                    token: Some(self.consume()), // consume open paren,
+                    expr: Some(self.parse_expr(0)?),
+                };
+                self.token_equals(TokenKind::CloseParen, 0)?;
+                self.consume(); // consume close paren
+                Ok(term)
+            }
             _ => {
                 println!("term: '{:?}'", self.peek(0).unwrap());
                 Err("Unrecognized term, unable to parse.")
             }
         };
-    }
-
-    fn parse_bin_expr(&mut self) -> Result<NodeBinExpr, &'static str> {
-        return Err("Unable to parse binary expression");
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {

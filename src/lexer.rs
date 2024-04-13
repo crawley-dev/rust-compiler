@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_mut, unused_assignments)]
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,7 +37,7 @@ pub enum TokenKind {
     // KeywordSwitch,
     // KeywordVoid,
     // KeywordWhile,
-    KeywordInt,
+    // KeywordInt,
 }
 
 #[derive(Clone, PartialEq)]
