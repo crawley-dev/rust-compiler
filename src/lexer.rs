@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -20,9 +23,17 @@ pub enum TokenKind {
     Add,
     Subtract,
 
+    LessThan,
+    GreaterThan,
+    Equal,
+    NotEqual,
+    Not,
+
     // keywords
     KeywordExit,
     KeywordLet,
+    KeywordFunction,
+    KeywordIf,
     // KeywordReturn,
     // KeywordBreak,
     // KeywordCase,
@@ -33,7 +44,6 @@ pub enum TokenKind {
     // KeywordElse,
     // KeywordEnum,
     // KeywordFor,
-    // KeywordIf,
     // KeywordSwitch,
     // KeywordVoid,
     // KeywordWhile,
@@ -61,6 +71,7 @@ pub struct Lexer {
     read_position: usize,
     ch: u8,
     input: Vec<u8>,
+    keywords_set: HashMap<&'static str, TokenKind>,
 }
 
 impl Lexer {
@@ -70,6 +81,12 @@ impl Lexer {
             read_position: 0,
             ch: 0,
             input: input.into_bytes(),
+            keywords_set: HashMap::from([
+                ("exit", TokenKind::KeywordExit),
+                ("let", TokenKind::KeywordLet),
+                ("fn", TokenKind::KeywordFunction),
+                ("if", TokenKind::KeywordIf),
+            ]),
         };
         lex.read_char();
         return lex;
@@ -91,19 +108,15 @@ impl Lexer {
         let kind = match self.ch {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let ident = self.read_identifier();
-                return match ident.as_str() {
-                    "exit" => Token {
-                        kind: TokenKind::KeywordExit,
+                if self.keywords_set.contains_key(ident.as_str()) {
+                    return Token {
+                        kind: self.keywords_set.get(ident.as_str()).unwrap().clone(),
                         value: None,
-                    },
-                    "let" => Token {
-                        kind: TokenKind::KeywordLet,
-                        value: None,
-                    },
-                    _ => Token {
-                        kind: TokenKind::Ident,
-                        value: Some(ident),
-                    },
+                    };
+                }
+                return Token {
+                    kind: TokenKind::Ident,
+                    value: Some(ident),
                 };
             }
             b'0'..=b'9' => {

@@ -20,35 +20,20 @@ fn main() {
 
     let mut parser = Parser::new(tokens);
     let nodes = parser.parse_prog().expect("Unable to parse program.");
-    println!("{:#?}", nodes.stmts);
+    println!("\n{:#?}\n", nodes.stmts);
 
     let output_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(nodes, output_path.clone());
     generator.generate_prog().expect("Unable to generate code.");
 
-    // let nasm_output = std::process::Command::new("nasm")
-    //     .args(&["-win64", &output_path, "-o", "out.o"])
-    //     .output()
-    //     .expect("Failed to execute nasm");
-
-    // if !nasm_output.status.success() {
-    //     eprintln!("nasm command failed: {:?}", nasm_output);
-    //     return;
-    // }
-
-    // let ld_output = std::process::Command::new("ld")
-    //     .args(&["out.o", "-o", "out"])
-    //     .output()
-    //     .expect("Failed to execute ld");
-
-    // if !ld_output.status.success() {
-    //     eprintln!("ld command failed: {:?}", ld_output);
-    //     return;
-    // }
-
-    // UBUNTU CMDS:
-    // nasm -felf64 OUTPUT_NAME.asm
-    // ld OUTPUT_NAME.o -o OUTPUT_NAME
-    // ./OUTPUT_NAME
+    // UBUNTU bash script:
+    // read file
+    // sudo nasm -felf64 $file.asm -o $file.o
+    // sudo ld $file.o -o $file
+    // ./$file
     // echo $?
+
+    // Usage:
+    // bash SCRIPT_NAME.sh
+    // FILE_NAME
 }

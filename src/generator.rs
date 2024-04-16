@@ -1,15 +1,21 @@
 use crate::parser::*;
 use std::{collections::HashMap, io::Write};
 
+const WORD_SIZE: usize = 8;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variable {
     stk_pos: usize,
+    ident: String,
 }
 
 pub struct Generator {
     prog: NodeProg,
     file_path: String,
     stk_ptr: usize,
-    vars: HashMap<String, Variable>,
+    scopes: Vec<usize>, // could try Vec<Vec<Variable>>
+    vars_map: HashMap<String, Variable>,
+    vars_vec: Vec<Variable>,
 }
 
 impl Generator {
@@ -18,7 +24,9 @@ impl Generator {
             prog,
             file_path,
             stk_ptr: 0,
-            vars: HashMap::new(),
+            scopes: vec![],
+            vars_map: HashMap::new(),
+            vars_vec: Vec::new(),
         };
         return generator;
     }
@@ -54,20 +62,44 @@ impl Generator {
                 self.pop("rdi")
             )),
             NodeStmt::Let(ident, expr) => {
-                if self.vars.contains_key(ident.value.as_ref().unwrap()) {
+                if self.vars_map.contains_key(ident.value.as_ref().unwrap()) {
                     return Err("Identifier already used.");
                 }
 
-                self.vars.insert(
-                    ident.value.unwrap(),
-                    Variable {
-                        stk_pos: self.stk_ptr + 1,
-                    },
-                );
+                let var = Variable {
+                    stk_pos: self.stk_ptr + 1,
+                    ident: ident.value.unwrap(),
+                };
+                self.vars_map.insert(var.ident.clone(), var.clone()); // yummy clones
+                self.vars_vec.push(var);
 
                 return Ok(self.gen_expr(expr)?);
             }
-            NodeStmt::Scope(stmts) => Err("Not supported"),
+            NodeStmt::Scope(stmts) => {
+                // need to find out what cur scope is, and what scope vars_map are in.
+                // .. a stack to contain scope
+                // .. where scope is a struct with parent // child scopes.
+                self.scopes.push(stmts.len());
+
+                let mut asm = String::new();
+                for stmt in stmts {
+                    asm += &self.gen_stmt(stmt)?;
+                }
+
+                let pop_amt = self.vars_map.len() - self.scopes.last().unwrap();
+                asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
+                self.stk_ptr -= pop_amt;
+
+                for _ in 0..pop_amt {
+                    if let Some(var) = self.vars_vec.pop() {
+                        self.vars_map.remove(&var.ident);
+                    } else {
+                        break;
+                    }
+                }
+                self.scopes.pop(); // can remove 'scopes', push & pop all in here.
+                Ok(asm)
+            }
         }
     }
 
@@ -110,15 +142,14 @@ impl Generator {
             }
             NodeTerm::Ident(token) => {
                 let ident = &token.value.unwrap();
-                if !self.vars.contains_key(ident) {
+                if !self.vars_map.contains_key(ident) {
                     return Err("Identifier doesn't exist.");
                 }
 
-                let word_size = 8;
-                let stk_index = &self.vars.get(ident).unwrap().stk_pos;
-                let stk_offset = (self.stk_ptr - stk_index) * word_size;
+                let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;
+                let stk_offset = (self.stk_ptr - stk_index) * WORD_SIZE;
 
-                return Ok(self.push(format!("QWORD [rsp + {}]\n", stk_offset).as_str()));
+                return Ok(self.push(format!("QWORD [rsp + {}]", stk_offset).as_str()));
             }
             NodeTerm::Paren(expr) => return self.gen_expr(expr),
         };

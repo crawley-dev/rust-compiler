@@ -1,26 +1,27 @@
 use crate::lexer::*;
+const LOG_DEBUG_INFO: bool = false;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NodeStmt {
     Exit(NodeExpr),
     Let(Token, NodeExpr),
     Scope(Vec<NodeStmt>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NodeExpr {
     Term(Box<NodeTerm>),
     BinExpr(Box<NodeBinExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NodeTerm {
     Ident(Token),
     IntLit(Token),
     Paren(NodeExpr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NodeBinExpr {
     Divide(NodeExpr, NodeExpr),
     Multiply(NodeExpr, NodeExpr),
@@ -28,7 +29,7 @@ pub enum NodeBinExpr {
     Add(NodeExpr, NodeExpr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct NodeProg {
     pub stmts: Vec<NodeStmt>,
 }
@@ -57,9 +58,11 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
-        let cur_tok = &self.tokens[self.position];
+        if LOG_DEBUG_INFO {
+            println!("\nparsing statement: {:?}", self.peek(0).unwrap());
+        }
 
-        let stmt = match cur_tok.kind {
+        let stmt = match self.peek(0).unwrap().kind {
             TokenKind::KeywordExit => {
                 self.try_consume(TokenKind::KeywordExit)?;
                 self.try_consume(TokenKind::OpenParen)?;
@@ -73,10 +76,23 @@ impl Parser {
                 self.try_consume(TokenKind::Assign)?;
                 NodeStmt::Let(ident, self.parse_expr(0)?)
             }
-            _ => return Err("Unable to parse expression"),
+            TokenKind::OpenSquirly => {
+                self.try_consume(TokenKind::OpenSquirly)?;
+                let mut stmts = Vec::new();
+                while self.token_equals(TokenKind::CloseSquirly, 0).is_err() {
+                    stmts.push(self.parse_stmt()?);
+                }
+                self.try_consume(TokenKind::CloseSquirly)?;
+                NodeStmt::Scope(stmts)
+            }
+            _ => return Err("Unable to parse statement"),
         };
 
-        self.try_consume(TokenKind::SemiColon)?;
+        // bools not used, matching to not need ; after a scope..
+        match stmt {
+            NodeStmt::Scope(_) => false,
+            _ => self.try_consume(TokenKind::SemiColon).is_ok(),
+        };
         return Ok(stmt);
     }
 
@@ -120,7 +136,11 @@ impl Parser {
         if self.peek(0).is_none() {
             return Err("No term to parse.");
         }
-        // println!("Parsing term: {:?}", self.peek(0).unwrap());
+
+        if LOG_DEBUG_INFO {
+            println!("\nparsing term: {:?}", self.peek(0).unwrap());
+        }
+
         return match self.peek(0).unwrap().kind {
             TokenKind::IntLit => Ok(NodeTerm::IntLit(self.consume())),
             TokenKind::Ident => Ok(NodeTerm::Ident(self.consume())),
@@ -131,8 +151,10 @@ impl Parser {
                 Ok(term)
             }
             _ => {
-                println!("term: '{:?}'", self.peek(0).unwrap());
-                Err("Unrecognized term, unable to parse.")
+                if LOG_DEBUG_INFO {
+                    println!("term: '{:?}'", self.peek(0).unwrap());
+                }
+                Err("Unable to parse expression")
             }
         };
     }
@@ -142,12 +164,14 @@ impl Parser {
             return Err("no token to evaluate");
         }
         if self.peek(offset).unwrap().kind != kind {
-            println!(
-                "[COMPILER] Expected '{:?}', found '{:?}'",
-                kind,
-                self.peek(offset).unwrap()
-            );
-            return Err("token evaluation was false.");
+            if LOG_DEBUG_INFO {
+                println!(
+                    "[COMPILER] Expected '{:?}', found '{:?}'",
+                    kind,
+                    self.peek(offset).unwrap()
+                );
+            }
+            return Err("token evaluation was false");
         }
         return Ok(true);
     }
@@ -158,9 +182,11 @@ impl Parser {
 
     // remove item from vec? << no clone.
     fn consume(&mut self) -> Token {
+        if LOG_DEBUG_INFO {
+            println!("consuming: {:?}", self.peek(0).unwrap());
+        }
         let i = self.position;
         self.position += 1;
-        // println!("consuming: {:?}", &self.tokens[i]);
         return self.tokens[i].clone(); // this works aswell, but clones, ew.
     }
 
