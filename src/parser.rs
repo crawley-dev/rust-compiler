@@ -1,17 +1,10 @@
 use crate::lexer::*;
 
 #[derive(Debug)]
-pub enum BinExprKind {
-    Divide,
-    Multiply,
-    Subtract,
-    Add,
-}
-
-#[derive(Debug)]
 pub enum NodeStmt {
     Exit(NodeExpr),
     Let(Token, NodeExpr),
+    Scope(Vec<NodeStmt>),
 }
 
 #[derive(Debug)]
@@ -28,10 +21,11 @@ pub enum NodeTerm {
 }
 
 #[derive(Debug)]
-pub struct NodeBinExpr {
-    pub kind: BinExprKind,
-    pub lhs: NodeExpr,
-    pub rhs: NodeExpr,
+pub enum NodeBinExpr {
+    Divide(NodeExpr, NodeExpr),
+    Multiply(NodeExpr, NodeExpr),
+    Subtract(NodeExpr, NodeExpr),
+    Add(NodeExpr, NodeExpr),
 }
 
 #[derive(Debug)]
@@ -95,21 +89,28 @@ impl Parser {
         let mut lhs = NodeExpr::Term(Box::new(term));
 
         loop {
-            let (kind, prec): (BinExprKind, i32) = match self.peek(0).unwrap().kind {
-                TokenKind::Divide => (BinExprKind::Divide, 1),
-                TokenKind::Multiply => (BinExprKind::Multiply, 1),
-                TokenKind::Subtract => (BinExprKind::Subtract, 0),
-                TokenKind::Add => (BinExprKind::Add, 0),
+            let prec = match self.peek(0).unwrap().kind {
+                TokenKind::Divide | TokenKind::Multiply => 1,
+                TokenKind::Subtract | TokenKind::Add => 0,
                 _ => break,
             };
             if prec < min_prec {
                 break;
             }
+
             let next_prec = prec + 1;
-            self.consume(); // consume operand, checked in match so don't check again
+            let op = self.consume(); // consume operand, checked in match so don't check again
             let rhs = self.parse_expr(next_prec)?;
 
-            lhs = NodeExpr::BinExpr(Box::new(NodeBinExpr { kind, lhs, rhs }));
+            let bin_expr = match op.kind {
+                TokenKind::Divide => NodeBinExpr::Divide(lhs, rhs),
+                TokenKind::Multiply => NodeBinExpr::Multiply(lhs, rhs),
+                TokenKind::Subtract => NodeBinExpr::Subtract(lhs, rhs),
+                TokenKind::Add => NodeBinExpr::Add(lhs, rhs),
+                _ => break,
+            };
+
+            lhs = NodeExpr::BinExpr(Box::new(bin_expr)); // on a separate line for clarity..
         }
 
         return Ok(lhs);

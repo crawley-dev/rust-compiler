@@ -67,21 +67,22 @@ impl Generator {
 
                 return Ok(self.gen_expr(expr)?);
             }
+            NodeStmt::Scope(stmts) => Err("Not supported"),
         }
     }
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
         match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
-            NodeExpr::BinExpr(bin_expr) => {
-                let lhs = self.gen_expr(bin_expr.rhs)?; // these are flipped, for asm reasons
-                let rhs = self.gen_expr(bin_expr.lhs)?;
-                let operation_asm = match bin_expr.kind {
-                    BinExprKind::Divide => "    div rbx\n",
-                    BinExprKind::Multiply => "    mul rbx\n",
-                    BinExprKind::Subtract => "    sub rax, rbx\n",
-                    BinExprKind::Add => "    add rax, rbx\n",
+            NodeExpr::BinExpr(box_bin_expr) => {
+                let (lhs_inp, rhs_inp, operation_asm) = match *box_bin_expr {
+                    NodeBinExpr::Divide(lhs, rhs) => (lhs, rhs, "    div rbx\n"),
+                    NodeBinExpr::Multiply(lhs, rhs) => (lhs, rhs, "    mul rbx\n"),
+                    NodeBinExpr::Subtract(lhs, rhs) => (lhs, rhs, "    sub rax, rbx\n"),
+                    NodeBinExpr::Add(lhs, rhs) => (lhs, rhs, "    add rax, rbx\n"),
                 };
+                let lhs = self.gen_expr(rhs_inp)?; // these are flipped, for asm reasons
+                let rhs = self.gen_expr(lhs_inp)?;
                 return Ok(format!(
                     "{lhs}\
                      {rhs}\
