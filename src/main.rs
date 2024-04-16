@@ -26,25 +26,25 @@ fn main() {
     let mut generator = Generator::new(nodes, output_path.clone());
     generator.generate_prog().expect("Unable to generate code.");
 
-    let nasm_output = std::process::Command::new("nasm")
-        .args(&["-win64", &output_path, "-o", "out.o"])
-        .output()
-        .expect("Failed to execute nasm");
+    // let nasm_output = std::process::Command::new("nasm")
+    //     .args(&["-win64", &output_path, "-o", "out.o"])
+    //     .output()
+    //     .expect("Failed to execute nasm");
 
-    if !nasm_output.status.success() {
-        eprintln!("nasm command failed: {:?}", nasm_output);
-        return;
-    }
+    // if !nasm_output.status.success() {
+    //     eprintln!("nasm command failed: {:?}", nasm_output);
+    //     return;
+    // }
 
-    let ld_output = std::process::Command::new("ld")
-        .args(&["out.o", "-o", "out"])
-        .output()
-        .expect("Failed to execute ld");
+    // let ld_output = std::process::Command::new("ld")
+    //     .args(&["out.o", "-o", "out"])
+    //     .output()
+    //     .expect("Failed to execute ld");
 
-    if !ld_output.status.success() {
-        eprintln!("ld command failed: {:?}", ld_output);
-        return;
-    }
+    // if !ld_output.status.success() {
+    //     eprintln!("ld command failed: {:?}", ld_output);
+    //     return;
+    // }
 
     // UBUNTU CMDS:
     // nasm -felf64 OUTPUT_NAME.asm

@@ -8,7 +8,8 @@ $$
 	\begin{cases}
 		\text{exit}([\text{Expr}]); \\
 		\text{let}\space\text{ident} = [\text{Expr}]; \\
-	\end{cases} \\
+		\{[\text{Stmt}]^*\} \\
+	\end{cases} \\ 
 
 	[\text{Expr}] &\to 
 	\begin{cases}

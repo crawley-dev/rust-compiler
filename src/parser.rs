@@ -1,25 +1,6 @@
 use crate::lexer::*;
 
 #[derive(Debug)]
-pub enum StmtKind {
-    Exit,
-    Let,
-}
-
-#[derive(Debug)]
-pub enum ExprKind {
-    Term,
-    BinExpr,
-}
-
-#[derive(Debug)]
-pub enum TermKind {
-    IntLit,
-    Ident,
-    Paren,
-}
-
-#[derive(Debug)]
 pub enum BinExprKind {
     Divide,
     Multiply,
@@ -28,24 +9,22 @@ pub enum BinExprKind {
 }
 
 #[derive(Debug)]
-pub struct NodeStmt {
-    pub kind: StmtKind,
-    pub ident: Option<Token>,
-    pub expr: Option<NodeExpr>,
+pub enum NodeStmt {
+    Exit(NodeExpr),
+    Let(Token, NodeExpr),
 }
 
 #[derive(Debug)]
-pub struct NodeExpr {
-    pub kind: ExprKind,
-    pub term: Option<Box<NodeTerm>>,
-    pub bin_expr: Option<Box<NodeBinExpr>>,
+pub enum NodeExpr {
+    Term(Box<NodeTerm>),
+    BinExpr(Box<NodeBinExpr>),
 }
 
 #[derive(Debug)]
-pub struct NodeTerm {
-    pub kind: TermKind,
-    pub token: Option<Token>,
-    pub expr: Option<NodeExpr>,
+pub enum NodeTerm {
+    Ident(Token),
+    IntLit(Token),
+    Paren(NodeExpr),
 }
 
 #[derive(Debug)]
@@ -83,7 +62,6 @@ impl Parser {
         return Ok(prog);
     }
 
-    // TODO: don't propogate err up (?), use .is_ok()
     fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
         let cur_tok = &self.tokens[self.position];
 
@@ -91,11 +69,7 @@ impl Parser {
             TokenKind::KeywordExit => {
                 self.try_consume(TokenKind::KeywordExit)?;
                 self.try_consume(TokenKind::OpenParen)?;
-                let stmt = NodeStmt {
-                    kind: StmtKind::Exit,
-                    ident: None,
-                    expr: Some(self.parse_expr(0)?),
-                };
+                let stmt = NodeStmt::Exit(self.parse_expr(0)?);
                 self.try_consume(TokenKind::CloseParen)?;
                 stmt
             }
@@ -103,11 +77,7 @@ impl Parser {
                 self.try_consume(TokenKind::KeywordLet)?;
                 let ident = self.try_consume(TokenKind::Ident)?;
                 self.try_consume(TokenKind::Assign)?;
-                NodeStmt {
-                    kind: StmtKind::Let,
-                    ident: Some(ident),
-                    expr: Some(self.parse_expr(0)?),
-                }
+                NodeStmt::Let(ident, self.parse_expr(0)?)
             }
             _ => return Err("Unable to parse expression"),
         };
@@ -122,11 +92,7 @@ impl Parser {
             return Err("No expression to parse");
         }
 
-        let mut lhs = NodeExpr {
-            kind: ExprKind::Term,
-            term: Some(Box::new(term)),
-            bin_expr: None,
-        };
+        let mut lhs = NodeExpr::Term(Box::new(term));
 
         loop {
             let (kind, prec): (BinExprKind, i32) = match self.peek(0).unwrap().kind {
@@ -143,11 +109,7 @@ impl Parser {
             self.consume(); // consume operand, checked in match so don't check again
             let rhs = self.parse_expr(next_prec)?;
 
-            lhs = NodeExpr {
-                kind: ExprKind::BinExpr,
-                term: None,
-                bin_expr: Some(Box::new(NodeBinExpr { kind, lhs, rhs })),
-            };
+            lhs = NodeExpr::BinExpr(Box::new(NodeBinExpr { kind, lhs, rhs }));
         }
 
         return Ok(lhs);
@@ -159,22 +121,11 @@ impl Parser {
         }
         // println!("Parsing term: {:?}", self.peek(0).unwrap());
         return match self.peek(0).unwrap().kind {
-            TokenKind::IntLit => Ok(NodeTerm {
-                kind: TermKind::IntLit,
-                token: Some(self.consume()),
-                expr: None,
-            }),
-            TokenKind::Ident => Ok(NodeTerm {
-                kind: TermKind::Ident,
-                token: Some(self.consume()),
-                expr: None,
-            }),
+            TokenKind::IntLit => Ok(NodeTerm::IntLit(self.consume())),
+            TokenKind::Ident => Ok(NodeTerm::Ident(self.consume())),
             TokenKind::OpenParen => {
-                let term = NodeTerm {
-                    kind: TermKind::Paren,
-                    token: Some(self.consume()),
-                    expr: Some(self.parse_expr(0)?),
-                };
+                self.try_consume(TokenKind::OpenParen)?;
+                let term = NodeTerm::Paren(self.parse_expr(0)?);
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(term)
             }
@@ -204,17 +155,14 @@ impl Parser {
         return self.tokens.get(self.position + offset);
     }
 
+    // remove item from vec? << no clone.
     fn consume(&mut self) -> Token {
-        // println!("consuming: {:?}", &self.tokens[i]);
-        // return self.tokens.remove(0); // pop front value, bad big(o), always shifts every val.
-
         let i = self.position;
         self.position += 1;
         // println!("consuming: {:?}", &self.tokens[i]);
         return self.tokens[i].clone(); // this works aswell, but clones, ew.
     }
 
-    // code for clarity.
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {
         self.token_equals(kind, 0)?;
         return Ok(self.consume());

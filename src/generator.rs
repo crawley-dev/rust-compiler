@@ -46,39 +46,34 @@ impl Generator {
 
     // TODO: BYTE ARRAYS!
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, &'static str> {
-        match stmt.kind {
-            StmtKind::Exit => {
-                return Ok(format!(
-                    "{}    mov rax, 60\n\
-                     {}    syscall\n",
-                    self.gen_expr(stmt.expr.unwrap()).unwrap(),
-                    self.pop("rdi")
-                ));
-            }
-            StmtKind::Let => {
-                // unoptimal, clones identifier string, could use an id?.. it just works
-                let ident = &stmt.ident.as_ref().unwrap().value.clone().unwrap();
-                if self.vars.contains_key(ident) {
-                    return Err("identifier already used.");
+        match stmt {
+            NodeStmt::Exit(expr) => Ok(format!(
+                "{}    mov rax, 60\n\
+                 {}    syscall\n",
+                self.gen_expr(expr)?,
+                self.pop("rdi")
+            )),
+            NodeStmt::Let(ident, expr) => {
+                if self.vars.contains_key(ident.value.as_ref().unwrap()) {
+                    return Err("Identifier already used.");
                 }
 
                 self.vars.insert(
-                    stmt.ident.unwrap().value.unwrap(), // consumes identifier
+                    ident.value.unwrap(),
                     Variable {
                         stk_pos: self.stk_ptr + 1,
                     },
                 );
 
-                return Ok(self.gen_expr(stmt.expr.unwrap()).unwrap());
+                return Ok(self.gen_expr(expr)?);
             }
-        };
+        }
     }
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
-        match expr.kind {
-            ExprKind::Term => return self.gen_term(*expr.term.unwrap()),
-            ExprKind::BinExpr => {
-                let bin_expr = expr.bin_expr.unwrap();
+        match expr {
+            NodeExpr::Term(term) => return self.gen_term(*term),
+            NodeExpr::BinExpr(bin_expr) => {
                 let lhs = self.gen_expr(bin_expr.rhs)?; // these are flipped, for asm reasons
                 let rhs = self.gen_expr(bin_expr.lhs)?;
                 let operation_asm = match bin_expr.kind {
@@ -103,32 +98,28 @@ impl Generator {
     }
 
     fn gen_term(&mut self, term: NodeTerm) -> Result<String, &'static str> {
-        match term.kind {
-            TermKind::IntLit => {
+        match term {
+            NodeTerm::IntLit(token) => {
                 return Ok(format!(
                     "    mov rax, {}\n\
                      {}",
-                    term.token.unwrap().value.as_ref().unwrap(),
+                    token.value.unwrap(),
                     self.push("rax")
-                ))
+                ));
             }
-            TermKind::Ident => {
-                let ident = &term.token.as_ref().unwrap().value.as_ref().unwrap().clone();
+            NodeTerm::Ident(token) => {
+                let ident = &token.value.unwrap();
                 if !self.vars.contains_key(ident) {
                     return Err("Identifier doesn't exist.");
                 }
 
                 let word_size = 8;
-                let stk_index = &self
-                    .vars
-                    .get(&term.token.unwrap().value.clone().unwrap())
-                    .unwrap()
-                    .stk_pos;
+                let stk_index = &self.vars.get(ident).unwrap().stk_pos;
                 let stk_offset = (self.stk_ptr - stk_index) * word_size;
 
                 return Ok(self.push(format!("QWORD [rsp + {}]\n", stk_offset).as_str()));
             }
-            TermKind::Paren => return self.gen_expr(term.expr.unwrap()),
+            NodeTerm::Paren(expr) => return self.gen_expr(expr),
         };
     }
 

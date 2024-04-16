@@ -1,3 +1,4 @@
+BITS 64
 global _start
 _start:
     mov rax, 69
