@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-};
+use std::{collections::HashMap, fmt};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -23,11 +20,13 @@ pub enum TokenKind {
     Add,
     Subtract,
 
-    LessThan,
-    GreaterThan,
+    Not,
     Equal,
     NotEqual,
-    Not,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
 
     // keywords
     KeywordExit,
@@ -66,12 +65,62 @@ impl fmt::Debug for Token {
     }
 }
 
+impl TokenKind {
+    pub fn width(&self) -> usize {
+        match self {
+            TokenKind::Illegal => 7,
+            TokenKind::OpenSquirly => 11,
+            TokenKind::CloseSquirly => 12,
+            TokenKind::OpenParen => 9,
+            TokenKind::CloseParen => 10,
+            TokenKind::SemiColon => 9,
+            TokenKind::Comma => 5,
+            TokenKind::Eof => 3,
+            TokenKind::Assign => 6,
+            TokenKind::Ident => 5,
+            TokenKind::IntLit => 6,
+            TokenKind::Multiply => 8,
+            TokenKind::Divide => 6,
+            TokenKind::Add => 3,
+            TokenKind::Subtract => 8,
+            TokenKind::Not => 3,
+            TokenKind::Equal => 5,
+            TokenKind::NotEqual => 8,
+            TokenKind::LessThan => 8,
+            TokenKind::LessEqual => 9,
+            TokenKind::GreaterThan => 11,
+            TokenKind::GreaterEqual => 12,
+            TokenKind::KeywordExit => 11,
+            TokenKind::KeywordLet => 10,
+            TokenKind::KeywordFunction => 15,
+            TokenKind::KeywordIf => 9,
+        }
+    }
+}
+
+impl Token {
+    pub fn debug_print(&self, longest_tok: usize, longest_ident: usize) {
+        let padding = longest_tok - self.kind.width();
+        let binding = " ".repeat(longest_ident - format!("{:?}", self.value).len());
+
+        println!(
+            "Token {{ kind: {:?}{:width$}, value: {:?}{value_padding} }}",
+            self.kind,
+            "",
+            self.value,
+            width = padding,
+            value_padding = binding,
+        );
+    }
+}
+
 pub struct Lexer {
     position: usize,
     read_position: usize,
     ch: u8,
     input: Vec<u8>,
-    keywords_set: HashMap<&'static str, TokenKind>,
+    keywords_hash: HashMap<&'static str, TokenKind>,
+    symbols_hash: HashMap<&'static str, TokenKind>,
 }
 
 impl Lexer {
@@ -81,11 +130,31 @@ impl Lexer {
             read_position: 0,
             ch: 0,
             input: input.into_bytes(),
-            keywords_set: HashMap::from([
+            keywords_hash: HashMap::from([
                 ("exit", TokenKind::KeywordExit),
                 ("let", TokenKind::KeywordLet),
                 ("fn", TokenKind::KeywordFunction),
                 ("if", TokenKind::KeywordIf),
+            ]),
+            symbols_hash: HashMap::from([
+                ("==", TokenKind::Equal),
+                ("!=", TokenKind::NotEqual),
+                (">=", TokenKind::GreaterEqual),
+                ("<=", TokenKind::LessEqual),
+                ("!", TokenKind::Not),
+                (">", TokenKind::GreaterThan),
+                ("<", TokenKind::LessThan),
+                ("/", TokenKind::Divide),
+                ("*", TokenKind::Multiply),
+                ("+", TokenKind::Add),
+                ("-", TokenKind::Subtract),
+                ("=", TokenKind::Assign),
+                ("{", TokenKind::OpenSquirly),
+                ("}", TokenKind::CloseSquirly),
+                ("(", TokenKind::OpenParen),
+                (")", TokenKind::CloseParen),
+                (";", TokenKind::SemiColon),
+                (",", TokenKind::Comma),
             ]),
         };
         lex.read_char();
@@ -97,7 +166,7 @@ impl Lexer {
         while tokens.is_empty() || tokens.last().unwrap().kind != TokenKind::Eof {
             tokens.push(self.next_token());
         }
-        tokens.pop(); // TEMP: removes Eof token
+        tokens.pop(); // Removes Eof token
         return tokens;
     }
 
@@ -105,58 +174,71 @@ impl Lexer {
         if self.ch.is_ascii_whitespace() {
             self.skip_whitespace();
         }
-        let kind = match self.ch {
+
+        return match self.ch {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let ident = self.read_identifier();
-                if self.keywords_set.contains_key(ident.as_str()) {
+                if self.keywords_hash.contains_key(ident.as_str()) {
                     return Token {
-                        kind: self.keywords_set.get(ident.as_str()).unwrap().clone(),
+                        kind: self.keywords_hash.get(ident.as_str()).unwrap().clone(),
                         value: None,
                     };
                 }
-                return Token {
+
+                Token {
                     kind: TokenKind::Ident,
                     value: Some(ident),
-                };
+                }
             }
-            b'0'..=b'9' => {
-                return Token {
-                    kind: TokenKind::IntLit,
-                    value: Some(self.read_int_literal()),
-                };
-            }
-            b'{' => TokenKind::OpenSquirly,
-            b'}' => TokenKind::CloseSquirly,
-            b'(' => TokenKind::OpenParen,
-            b')' => TokenKind::CloseParen,
-            b';' => TokenKind::SemiColon,
-            b',' => TokenKind::Comma,
-            b'*' => TokenKind::Multiply,
-            b'/' => TokenKind::Divide,
-            b'+' => TokenKind::Add,
-            b'-' => TokenKind::Subtract,
-            b'=' => TokenKind::Assign,
-            0 => TokenKind::Eof,
-            _ => TokenKind::Illegal,
-        };
-        self.read_char();
-        return Token { kind, value: None };
-    }
+            33..=47 | 58..=64 | 91..=96 | 123..=126 => {
+                let symbols = self.read_symbols();
+                if self.symbols_hash.contains_key(symbols.as_str()) {
+                    return Token {
+                        kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
+                        value: None,
+                    };
+                }
 
-    fn read_char(&mut self) {
-        if self.read_position >= self.input.len() {
-            self.ch = 0;
-        } else {
-            self.ch = self.input[self.read_position];
-        }
-        self.position = self.read_position;
-        self.read_position += 1;
+                Token {
+                    kind: TokenKind::Illegal,
+                    value: None,
+                }
+            }
+            b'0'..=b'9' => Token {
+                kind: TokenKind::IntLit,
+                value: Some(self.read_int_literal()),
+            },
+            0 => Token {
+                kind: TokenKind::Eof,
+                value: None,
+            },
+            _ => Token {
+                kind: TokenKind::Illegal,
+                value: None,
+            },
+        };
     }
 
     fn read_identifier(&mut self) -> String {
         let pos = self.position;
         while self.ch.is_ascii_alphanumeric() || self.ch == b'_' {
             self.read_char();
+        }
+        return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
+    }
+
+    fn read_symbols(&mut self) -> String {
+        let pos = self.position;
+        loop {
+            match self.ch {
+                b'(' | b')' | b'{' | b'}' | b';' | b',' => {
+                    // these can't be multi symbol
+                    self.read_char();
+                    break;
+                }
+                33..=47 | 58..=64 | 91..=96 | 123..=126 => self.read_char(),
+                _ => break,
+            }
         }
         return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
     }
@@ -173,6 +255,17 @@ impl Lexer {
         while self.ch.is_ascii_whitespace() {
             self.read_char();
         }
+    }
+
+    fn read_char(&mut self) {
+        if self.read_position >= self.input.len() {
+            self.ch = 0;
+        } else {
+            // println!("char {} | {}", self.ch as char, self.ch);
+            self.ch = self.input[self.read_position];
+        }
+        self.position = self.read_position;
+        self.read_position += 1;
     }
 }
 
@@ -206,87 +299,4 @@ impl Lexer {
         ("f32", TokenKind::KeywordF32),
         ("f64", TokenKind::KeywordF64),
     ]);
-    let consume = |str: &Vec<char>, i: &mut usize| -> char {
-        let j = i.clone();
-        *i += 1;
-        println!("consuming {}, iter: {}", *str.get(j).unwrap(), j);
-        return *str.get(j).unwrap();
-    };
-
-    while str.get(i).is_some() {
-        let mut c = str.get(i).unwrap();
-        let mut buf: String = String::new();
-        match c {
-            '{' => {
-                tokens.push(Token {
-                    kind: TokenKind::OpenBrace,
-                    value: None,
-                });
-                consume(&str, &mut i);
-            }
-            '}' => {
-                tokens.push(Token {
-                    kind: TokenKind::CloseBrace,
-                    value: None,
-                });
-                consume(&str, &mut i);
-            }
-            '(' => {
-                tokens.push(Token {
-                    kind: TokenKind::OpenParen,
-                    value: None,
-                });
-                consume(&str, &mut i);
-            }
-            ')' => {
-                tokens.push(Token {
-                    kind: TokenKind::CloseParen,
-                    value: None,
-                });
-                consume(&str, &mut i);
-            }
-            ';' => {
-                tokens.push(Token {
-                    kind: TokenKind::SemiColon,
-                    value: None,
-                });
-                consume(&str, &mut i);
-            }
-            _ if c.is_digit(10) => {
-                buf.push(consume(&str, &mut i));
-                while str.get(i).is_some() && str.get(i).unwrap().is_digit(10) {
-                    buf.push(consume(&str, &mut i));
-                }
-                tokens.push(Token {
-                    kind: TokenKind::IntLit,
-                    value: Some(buf),
-                });
-            }
-            _ if c.is_alphanumeric() => {
-                buf.push(consume(&str, &mut i));
-                while str.get(i).is_some() && str.get(i).unwrap().is_alphanumeric() {
-                    buf.push(consume(&str, &mut i));
-                }
-                if keywords.contains_key(&buf[..]) {
-                    tokens.push(Token {
-                        kind: (*keywords.get(&buf[..]).unwrap()).clone(),
-                        value: None,
-                    })
-                } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Ident,
-                        value: Some(buf),
-                    })
-                }
-            }
-            _ if c.is_whitespace() => {
-                consume(&str, &mut i);
-            }
-            _ => {
-                panic!("you messed up! {}", c);
-            }
-        }
-    }
-    return tokens;
-}
- */
+*/

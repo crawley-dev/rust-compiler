@@ -7,7 +7,7 @@ use crate::lexer::{Lexer, Token};
 use crate::parser::Parser;
 
 fn main() {
-    // std::env::set_var("RUST_BACKTRACE", "1");
+    std::env::set_var("RUST_BACKTRACE", "1");
 
     let (file_path, file_name) = misc::get_file_name();
     let contents = misc::get_file_contents(file_path);
@@ -16,7 +16,16 @@ fn main() {
 
     let mut lexer = Lexer::new(flattened);
     let tokens: Vec<Token> = lexer.tokenize();
-    println!("{:#?}", tokens);
+
+    let longest_tok = tokens.iter().map(|t| t.kind.width()).max().unwrap_or(0);
+    let longest_ident = tokens
+        .iter()
+        .map(|t| format!("{:?}", t.value).len())
+        .max()
+        .unwrap_or(0);
+    for token in &tokens {
+        token.debug_print(longest_tok, longest_ident);
+    }
 
     let mut parser = Parser::new(tokens);
     let nodes = parser.parse_prog().expect("Unable to parse program.");
@@ -34,6 +43,6 @@ fn main() {
     // echo $?
 
     // Usage:
-    // bash SCRIPT_NAME.sh
+    // bash gen.sh
     // FILE_NAME
 }

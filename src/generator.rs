@@ -13,6 +13,7 @@ pub struct Generator {
     prog: NodeProg,
     file_path: String,
     stk_ptr: usize,
+    label_count: usize,
     scopes: Vec<usize>, // could try Vec<Vec<Variable>>
     vars_map: HashMap<String, Variable>,
     vars_vec: Vec<Variable>,
@@ -24,6 +25,7 @@ impl Generator {
             prog,
             file_path,
             stk_ptr: 0,
+            label_count: 0,
             scopes: vec![],
             vars_map: HashMap::new(),
             vars_vec: Vec::new(),
@@ -35,9 +37,8 @@ impl Generator {
         let mut file = std::fs::File::create(&self.file_path).expect("Invalid filepath given.");
 
         file.write_all(
-            b"BITS 64\n\
-                        global _start\n\
-                        _start:\n",
+            b"global _start\n\
+                  _start:\n",
         )
         .expect("unable to write to file.");
 
@@ -55,12 +56,16 @@ impl Generator {
     // TODO: BYTE ARRAYS!
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, &'static str> {
         match stmt {
-            NodeStmt::Exit(expr) => Ok(format!(
-                "{}    mov rax, 60\n\
-                 {}    syscall\n",
-                self.gen_expr(expr)?,
-                self.pop("rdi")
-            )),
+            NodeStmt::Exit(expr) => {
+                return Ok(format!(
+                    "{expr_asm}    \
+                     mov rax, 60\n\
+                     {pop}    \
+                     syscall\n",
+                    expr_asm = self.gen_expr(expr)?,
+                    pop = self.pop("rdi")
+                ))
+            }
             NodeStmt::Let(ident, expr) => {
                 if self.vars_map.contains_key(ident.value.as_ref().unwrap()) {
                     return Err("Identifier already used.");
@@ -70,37 +75,54 @@ impl Generator {
                     stk_pos: self.stk_ptr + 1,
                     ident: ident.value.unwrap(),
                 };
+
                 self.vars_map.insert(var.ident.clone(), var.clone()); // yummy clones
                 self.vars_vec.push(var);
 
                 return Ok(self.gen_expr(expr)?);
             }
-            NodeStmt::Scope(stmts) => {
-                // need to find out what cur scope is, and what scope vars_map are in.
-                // .. a stack to contain scope
-                // .. where scope is a struct with parent // child scopes.
-                self.scopes.push(stmts.len());
+            NodeStmt::If(expr, scope) => {
+                return Ok(format!(
+                    "{expr_asm}\
+                     {pop_rax}    \
+                     test rax, rax\n    \
+                     jz {jmp_label}\n\
+                     {scope_asm}\
+                     {jmp_label}:\n",
+                    expr_asm = self.gen_expr(expr)?,
+                    pop_rax = self.pop("rax"),
+                    jmp_label = self.create_label(),
+                    scope_asm = self.gen_scope(scope)?
+                ))
+            }
+            NodeStmt::Scope(scope) => return self.gen_scope(scope),
+        }
+    }
 
-                let mut asm = String::new();
-                for stmt in stmts {
-                    asm += &self.gen_stmt(stmt)?;
+    fn gen_scope(&mut self, scope: NodeScope) -> Result<String, &'static str> {
+        self.scopes.push(scope.stmts.len());
+
+        let mut asm = String::new();
+        for stmt in scope.stmts {
+            asm += &self.gen_stmt(stmt)?;
+        }
+
+        if self.vars_map.len() > 0 && !scope.inherits_stms {
+            let pop_amt = self.vars_map.len() - self.scopes.last().unwrap();
+            asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
+            self.stk_ptr -= pop_amt;
+
+            for _ in 0..pop_amt {
+                if let Some(var) = self.vars_vec.pop() {
+                    self.vars_map.remove(&var.ident);
+                } else {
+                    break;
                 }
-
-                let pop_amt = self.vars_map.len() - self.scopes.last().unwrap();
-                asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
-                self.stk_ptr -= pop_amt;
-
-                for _ in 0..pop_amt {
-                    if let Some(var) = self.vars_vec.pop() {
-                        self.vars_map.remove(&var.ident);
-                    } else {
-                        break;
-                    }
-                }
-                self.scopes.pop(); // can remove 'scopes', push & pop all in here.
-                Ok(asm)
             }
         }
+
+        self.scopes.pop(); // can remove 'scopes', push & pop all in here.
+        Ok(asm)
     }
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
@@ -118,14 +140,17 @@ impl Generator {
                 return Ok(format!(
                     "{lhs}\
                      {rhs}\
-                     {}\
-                     {}\
+                     {pop_rax}\
+                     {pop_rbx}\
                      {operation_asm}\
-                     {}",
-                    self.pop("rax"),
-                    self.pop("rbx"),
-                    self.push("rax"),
+                     {push_rax}",
+                    pop_rax = self.pop("rax"),
+                    pop_rbx = self.pop("rbx"),
+                    push_rax = self.push("rax"),
                 ));
+            }
+            NodeExpr::BoolExpr(box_bool_expr) => {
+                todo!("");
             }
         }
     }
@@ -134,11 +159,11 @@ impl Generator {
         match term {
             NodeTerm::IntLit(token) => {
                 return Ok(format!(
-                    "    mov rax, {}\n\
-                     {}",
-                    token.value.unwrap(),
-                    self.push("rax")
-                ));
+                    "    mov rax, {int_lit}\n\
+                     {push_rax}",
+                    int_lit = token.value.unwrap(),
+                    push_rax = self.push("rax")
+                ))
             }
             NodeTerm::Ident(token) => {
                 let ident = &token.value.unwrap();
@@ -163,5 +188,9 @@ impl Generator {
     fn pop(&mut self, reg: &str) -> String {
         self.stk_ptr -= 1;
         return format!("    pop {}\n", reg);
+    }
+
+    fn create_label(&self) -> String {
+        return format!("label{}", self.label_count);
     }
 }

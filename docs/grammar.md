@@ -7,14 +7,19 @@ $$
 	[\text{Stmt}] &\to 
 	\begin{cases}
 		\text{exit}([\text{Expr}]); \\
-		\text{let}\space\text{ident} = [\text{Expr}]; \\
-		\{[\text{Stmt}]^*\} \\
+		\text{let}\space\text{ident} = [\text{Expr}]; \\ 
+		\text{if} ([\text{Expr}])[\text{Scope}] \\
+		[\text{Scope}]
 	\end{cases} \\ 
+
+	[\text{Scope}] &\to 
+		\{[\text{Stmt}]^*\} \\
 
 	[\text{Expr}] &\to 
 	\begin{cases}
 		[\text{Expr}] \\
-		[\text{Expr}] + [\text{Atomic Term}] \\
+		[\text{BinExpr}] \\
+		[\text{BoolExpr}] \\
 	\end{cases} \\
 
 	[\text{Atomic Term}] &\to
@@ -31,5 +36,6 @@ $$
 		[\text{Expr}] + [\text{Expr}] & \text{prec} = 0 \\ 
 		[\text{Expr}] - [\text{Expr}] & \text{prec} = 0 \\
 	\end{cases} \\
+
 
 \end{align}
