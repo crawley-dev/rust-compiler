@@ -9,14 +9,8 @@ pub struct NodeProg {
 #[derive(Debug, PartialEq)]
 pub struct NodeScope {
     pub stmts: Vec<NodeStmt>,
-    pub inherits_stms: bool,
+    pub inherits_stmts: bool,
 }
-
-// #[derive(Debug, PartialEq)]
-// pub enum NodeScope {
-//     Exclusive(Vec<NodeStmt>),
-//     Inclusive(Vec<NodeStmt>),
-// }
 
 #[derive(Debug, PartialEq)]
 pub enum NodeStmt {
@@ -41,16 +35,17 @@ pub enum NodeTerm {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum NodeBinExpr {
-    Divide(NodeExpr, NodeExpr),
-    Multiply(NodeExpr, NodeExpr),
-    Subtract(NodeExpr, NodeExpr),
-    Add(NodeExpr, NodeExpr),
+pub struct NodeBinExpr {
+    pub kind: TokenKind,
+    pub lhs: NodeExpr,
+    pub rhs: NodeExpr,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum NodeBoolExpr {
-    Equal(NodeExpr, NodeExpr),
+pub struct NodeBoolExpr {
+    pub kind: TokenKind,
+    pub lhs: NodeExpr,
+    pub rhs: NodeExpr,
 }
 
 pub struct Parser {
@@ -126,16 +121,10 @@ impl Parser {
         self.try_consume(TokenKind::CloseSquirly)?;
         return Ok(NodeScope {
             stmts,
-            inherits_stms: true,
+            inherits_stmts: true,
         });
     }
 
-    // parse binary expression
-    // if next token is boolean operator
-    // .. create NodeExpr::BoolExpr
-    // .. parse rhs
-    // else
-    // .. create BinExpr
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
         let term = self.parse_term()?;
         if self.peek(0).is_none() {
@@ -143,16 +132,13 @@ impl Parser {
         }
 
         let lhs = NodeExpr::Term(Box::new(term));
-        self.parse_bin_expr(lhs, min_prec)?;
 
-        return match &self.peek(0).unwrap().kind {
-            // TokenKind::Divide | TokenKind::Multiply | TokenKind::Subtract | TokenKind::Add => {
-            // }
-            TokenKind::Equal
-            | TokenKind::GreaterThan
-            | TokenKind::LessThan
-            | TokenKind::GreaterEqual
-            | TokenKind::LessEqual => self.parse_bool_comp(lhs),
+        let tok = &self.peek(0).unwrap();
+        return match tok.kind {
+            _ if tok.kind.is_bin_op() => self.parse_bin_expr(lhs, min_prec),
+            _ if tok.kind.is_logical() || tok.kind.is_comparison() => {
+                self.parse_bool_comp(lhs, min_prec)
+            }
             _ => Ok(lhs),
         };
     }
@@ -163,35 +149,47 @@ impl Parser {
         min_prec: i32,
     ) -> Result<NodeExpr, &'static str> {
         loop {
-            let prec = match self.peek(0).unwrap().kind {
-                TokenKind::Divide | TokenKind::Multiply => 1,
-                TokenKind::Subtract | TokenKind::Add => 0,
-                _ => break,
+            // TODO: check if binary expr
+            let prec = match self.peek(0) {
+                Some(tok) => tok.kind.get_prec(),
+                None => return Err("no token to parse"),
             };
+
             if prec < min_prec {
                 break;
             }
 
             let next_prec = prec + 1;
-            let op = self.consume(); // consume operand, checked in match so don't check again
+            let kind = self.consume().kind; // consume operand, checked in match so don't check again
             let rhs = self.parse_expr(next_prec)?;
 
-            let bin_expr = match op.kind {
-                TokenKind::Divide => NodeBinExpr::Divide(lhs, rhs),
-                TokenKind::Multiply => NodeBinExpr::Multiply(lhs, rhs),
-                TokenKind::Subtract => NodeBinExpr::Subtract(lhs, rhs),
-                TokenKind::Add => NodeBinExpr::Add(lhs, rhs),
-                _ => break,
-            };
-
-            lhs = NodeExpr::BinExpr(Box::new(bin_expr)); // on a separate line for clarity..
+            lhs = NodeExpr::BinExpr(Box::new(NodeBinExpr { kind, lhs, rhs }));
         }
-        Ok(lhs)
+        return Ok(lhs);
     }
 
-    fn parse_bool_comp(&mut self, mut lhs: NodeExpr) -> Result<NodeExpr, &'static str> {
-        println!("lhs {:#?}", lhs);
-        todo!("");
+    fn parse_bool_comp(
+        &mut self,
+        mut lhs: NodeExpr,
+        min_prec: i32,
+    ) -> Result<NodeExpr, &'static str> {
+        loop {
+            let prec = match self.peek(0) {
+                Some(tok) => tok.kind.get_prec(),
+                None => return Err("no token to parse"),
+            };
+
+            if prec < min_prec {
+                break;
+            }
+
+            let next_prec = prec + 1;
+            let kind = self.consume().kind; // consume operand, checked in match so don't check again
+            let rhs = self.parse_expr(next_prec)?;
+
+            lhs = NodeExpr::BoolExpr(Box::new(NodeBoolExpr { kind, lhs, rhs }));
+        }
+        return Ok(lhs);
     }
 
     fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
@@ -216,7 +214,7 @@ impl Parser {
                 if LOG_DEBUG_INFO {
                     println!("term: '{:?}'", self.peek(0).unwrap());
                 }
-                Err("Unable to parse expression")
+                Err("Unable to parse term")
             }
         };
     }

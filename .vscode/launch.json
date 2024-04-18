@@ -7,34 +7,34 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'compiler-cee'",
+            "name": "Debug executable 'rust-compiler'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=compiler-cee",
-                    "--package=compiler-cee"
+                    "--bin=rust-compiler",
+                    "--package=rust-compiler"
                 ],
                 "filter": {
-                    "name": "compiler-cee",
+                    "name": "rust-compiler",
                     "kind": "bin"
                 }
             },
-            "args": ["./data/example1.txt"],
+            "args": ["./data/example3.txt"],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'compiler-cee'",
+            "name": "Debug unit tests in executable 'rust-compiler'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=compiler-cee",
-                    "--package=compiler-cee"
+                    "--bin=rust-compiler",
+                    "--package=rust-compiler"
                 ],
                 "filter": {
-                    "name": "compiler-cee",
+                    "name": "rust-compiler",
                     "kind": "bin"
                 }
             },

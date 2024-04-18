@@ -1,6 +1,7 @@
 let x = 5;
-let y = 6;
-if (10 - 2) + 5 * x < y {
+let y = 5;
+let z = (10 - 2) + 5;
+if x == y && z == 13 || 12 + 1 == 5 {
     exit(x);
 }
 exit(y);

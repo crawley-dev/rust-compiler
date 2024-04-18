@@ -1,4 +1,4 @@
-use crate::parser::*;
+use crate::{lexer::TokenKind, parser::*};
 use std::{collections::HashMap, io::Write};
 
 const WORD_SIZE: usize = 8;
@@ -107,7 +107,7 @@ impl Generator {
             asm += &self.gen_stmt(stmt)?;
         }
 
-        if self.vars_map.len() > 0 && !scope.inherits_stms {
+        if self.vars_map.len() > 0 && !scope.inherits_stmts {
             let pop_amt = self.vars_map.len() - self.scopes.last().unwrap();
             asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
             self.stk_ptr -= pop_amt;
@@ -129,11 +129,13 @@ impl Generator {
         match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
             NodeExpr::BinExpr(box_bin_expr) => {
-                let (lhs_inp, rhs_inp, operation_asm) = match *box_bin_expr {
-                    NodeBinExpr::Divide(lhs, rhs) => (lhs, rhs, "    div rbx\n"),
-                    NodeBinExpr::Multiply(lhs, rhs) => (lhs, rhs, "    mul rbx\n"),
-                    NodeBinExpr::Subtract(lhs, rhs) => (lhs, rhs, "    sub rax, rbx\n"),
-                    NodeBinExpr::Add(lhs, rhs) => (lhs, rhs, "    add rax, rbx\n"),
+                let bin_expr = *box_bin_expr;
+                let (lhs_inp, rhs_inp, operation_asm) = match bin_expr.kind {
+                    TokenKind::Divide => (bin_expr.lhs, bin_expr.rhs, "    div rbx\n"),
+                    TokenKind::Multiply => (bin_expr.lhs, bin_expr.rhs, "    mul rbx\n"),
+                    TokenKind::Subtract => (bin_expr.lhs, bin_expr.rhs, "    sub rax, rbx\n"),
+                    TokenKind::Add => (bin_expr.lhs, bin_expr.rhs, "    add rax, rbx\n"),
+                    _ => return Err("Unable to generate binary expression"),
                 };
                 let lhs = self.gen_expr(rhs_inp)?; // these are flipped, for asm reasons
                 let rhs = self.gen_expr(lhs_inp)?;
@@ -150,7 +152,9 @@ impl Generator {
                 ));
             }
             NodeExpr::BoolExpr(box_bool_expr) => {
-                todo!("");
+                // todo!("");
+
+                Err("ooops")
             }
         }
     }

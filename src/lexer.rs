@@ -13,21 +13,22 @@ pub enum TokenKind {
     Assign, // e.g =
     Ident,  // e.g: dwa  | a variable name
     IntLit, // e.g: 55123
-
-    // Operators
-    Multiply,
-    Divide,
-    Add,
-    Subtract,
-
-    Not,
+    // Logical
+    LogicalOr, // { prec: i32 }
+    LogicalNot,
+    LogicalAnd,
+    // Comparison
     Equal,
     NotEqual,
     LessThan,
     LessEqual,
     GreaterThan,
     GreaterEqual,
-
+    // Binary
+    Multiply,
+    Divide,
+    Add,
+    Subtract,
     // keywords
     KeywordExit,
     KeywordLet,
@@ -79,22 +80,76 @@ impl TokenKind {
             TokenKind::Assign => 6,
             TokenKind::Ident => 5,
             TokenKind::IntLit => 6,
-            TokenKind::Multiply => 8,
-            TokenKind::Divide => 6,
-            TokenKind::Add => 3,
-            TokenKind::Subtract => 8,
-            TokenKind::Not => 3,
+            // Logical
+            TokenKind::LogicalOr => 9,
+            TokenKind::LogicalNot => 10,
+            TokenKind::LogicalAnd => 10,
+            // Comparison
             TokenKind::Equal => 5,
             TokenKind::NotEqual => 8,
             TokenKind::LessThan => 8,
             TokenKind::LessEqual => 9,
             TokenKind::GreaterThan => 11,
             TokenKind::GreaterEqual => 12,
+            // Binary
+            TokenKind::Multiply => 8,
+            TokenKind::Divide => 6,
+            TokenKind::Add => 3,
+            TokenKind::Subtract => 8,
+            // Keywords
             TokenKind::KeywordExit => 11,
             TokenKind::KeywordLet => 10,
             TokenKind::KeywordFunction => 15,
             TokenKind::KeywordIf => 9,
         }
+    }
+
+    // Precedence hierarchy: higher = done first
+    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
+    pub fn get_prec(&self) -> i32 {
+        return match self {
+            // Logical
+            TokenKind::LogicalOr => 3,
+            TokenKind::LogicalNot => 13,
+            TokenKind::LogicalAnd => 4, // "&&" should be done last.
+            // Comparison
+            TokenKind::Equal
+            | TokenKind::NotEqual
+            | TokenKind::LessThan
+            | TokenKind::LessEqual
+            | TokenKind::GreaterThan
+            | TokenKind::GreaterEqual => 8,
+            // Binary Operators
+            TokenKind::Divide | TokenKind::Multiply => 12,
+            TokenKind::Subtract | TokenKind::Add => 11,
+            _ => -1000, // i32 option takes up more space! && an .unwrap nightmare
+        };
+    }
+
+    pub fn is_logical(&self) -> bool {
+        return match self {
+            TokenKind::LogicalOr | TokenKind::LogicalNot | TokenKind::LogicalAnd => true,
+            _ => false,
+        };
+    }
+
+    pub fn is_comparison(&self) -> bool {
+        return match self {
+            TokenKind::Equal
+            | TokenKind::NotEqual
+            | TokenKind::LessThan
+            | TokenKind::LessEqual
+            | TokenKind::GreaterEqual
+            | TokenKind::GreaterThan => true,
+            _ => false,
+        };
+    }
+
+    pub fn is_bin_op(&self) -> bool {
+        return match self {
+            TokenKind::Divide | TokenKind::Multiply | TokenKind::Add | TokenKind::Subtract => true,
+            _ => false,
+        };
     }
 }
 
@@ -137,23 +192,29 @@ impl Lexer {
                 ("if", TokenKind::KeywordIf),
             ]),
             symbols_hash: HashMap::from([
+                // Logical
+                ("||", TokenKind::LogicalOr),
+                ("!", TokenKind::LogicalNot),
+                ("&&", TokenKind::LogicalAnd),
+                // Comparison
                 ("==", TokenKind::Equal),
                 ("!=", TokenKind::NotEqual),
-                (">=", TokenKind::GreaterEqual),
-                ("<=", TokenKind::LessEqual),
-                ("!", TokenKind::Not),
-                (">", TokenKind::GreaterThan),
                 ("<", TokenKind::LessThan),
+                ("<=", TokenKind::LessEqual),
+                (">", TokenKind::GreaterThan),
+                (">=", TokenKind::GreaterEqual),
+                // Binary
                 ("/", TokenKind::Divide),
                 ("*", TokenKind::Multiply),
                 ("+", TokenKind::Add),
                 ("-", TokenKind::Subtract),
-                ("=", TokenKind::Assign),
+                // Stuff
                 ("{", TokenKind::OpenSquirly),
                 ("}", TokenKind::CloseSquirly),
                 ("(", TokenKind::OpenParen),
                 (")", TokenKind::CloseParen),
                 (";", TokenKind::SemiColon),
+                ("=", TokenKind::Assign),
                 (",", TokenKind::Comma),
             ]),
         };

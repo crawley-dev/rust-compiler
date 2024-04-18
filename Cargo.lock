@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "compiler-cee"
+name = "rust-compiler"
 version = "0.1.0"
