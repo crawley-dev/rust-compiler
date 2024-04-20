@@ -68,7 +68,7 @@ impl Generator {
             }
             NodeStmt::Let(ident, expr) => {
                 if self.vars_map.contains_key(ident.value.as_ref().unwrap()) {
-                    return Err("Identifier already used.");
+                    return Err("[COMPILER] Identifier already used.");
                 }
 
                 let var = Variable {
@@ -135,7 +135,7 @@ impl Generator {
                     TokenKind::Multiply => (bin_expr.lhs, bin_expr.rhs, "    mul rbx\n"),
                     TokenKind::Subtract => (bin_expr.lhs, bin_expr.rhs, "    sub rax, rbx\n"),
                     TokenKind::Add => (bin_expr.lhs, bin_expr.rhs, "    add rax, rbx\n"),
-                    _ => return Err("Unable to generate binary expression"),
+                    _ => return Err("[COMPILER] Unable to generate binary expression"),
                 };
                 let lhs = self.gen_expr(rhs_inp)?; // these are flipped, for asm reasons
                 let rhs = self.gen_expr(lhs_inp)?;
@@ -154,7 +154,7 @@ impl Generator {
             NodeExpr::BoolExpr(box_bool_expr) => {
                 // todo!("");
 
-                Err("ooops")
+                Err("[COMPILER] ooops")
             }
         }
     }
@@ -172,7 +172,7 @@ impl Generator {
             NodeTerm::Ident(token) => {
                 let ident = &token.value.unwrap();
                 if !self.vars_map.contains_key(ident) {
-                    return Err("Identifier doesn't exist.");
+                    return Err("[COMPILER] Identifier doesn't exist.");
                 }
 
                 let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;

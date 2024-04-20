@@ -1,8 +1,8 @@
-mod generator;
+// mod generator;
 mod lexer;
 mod misc;
 mod parser;
-use crate::generator::Generator;
+// use crate::generator::Generator;
 use crate::lexer::{Lexer, Token};
 use crate::parser::Parser;
 
@@ -31,9 +31,9 @@ fn main() {
     let nodes = parser.parse_prog().expect("Unable to parse program.");
     println!("\n{:#?}\n", nodes.stmts);
 
-    let output_path = format!("./output/{}.asm", file_name);
-    let mut generator = Generator::new(nodes, output_path.clone());
-    generator.generate_prog().expect("Unable to generate code.");
+    // let output_path = format!("./output/{}.asm", file_name);
+    // let mut generator = Generator::new(nodes, output_path.clone());
+    // generator.generate_prog().expect("Unable to generate code.");
 
     // UBUNTU bash script:
     // read file

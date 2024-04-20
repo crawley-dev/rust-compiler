@@ -2,14 +2,12 @@ use std::{collections::HashMap, fmt};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    Illegal,
     OpenSquirly,
     CloseSquirly,
     OpenParen,
     CloseParen,
-    SemiColon,
+    Separator,
     Comma,
-    Eof,    // End Of File
     Assign, // e.g =
     Ident,  // e.g: dwa  | a variable name
     IntLit, // e.g: 55123
@@ -34,6 +32,7 @@ pub enum TokenKind {
     KeywordLet,
     KeywordFunction,
     KeywordIf,
+    KeywordElse,
     // KeywordReturn,
     // KeywordBreak,
     // KeywordCase,
@@ -41,7 +40,6 @@ pub enum TokenKind {
     // KeywordContinue,
     // KeywordDefault,
     // KeywordDo,
-    // KeywordElse,
     // KeywordEnum,
     // KeywordFor,
     // KeywordSwitch,
@@ -69,14 +67,13 @@ impl fmt::Debug for Token {
 impl TokenKind {
     pub fn width(&self) -> usize {
         match self {
-            TokenKind::Illegal => 7,
+            // TokenKind::Illegal => 7,
             TokenKind::OpenSquirly => 11,
             TokenKind::CloseSquirly => 12,
             TokenKind::OpenParen => 9,
             TokenKind::CloseParen => 10,
-            TokenKind::SemiColon => 9,
+            TokenKind::Separator => 9,
             TokenKind::Comma => 5,
-            TokenKind::Eof => 3,
             TokenKind::Assign => 6,
             TokenKind::Ident => 5,
             TokenKind::IntLit => 6,
@@ -101,6 +98,7 @@ impl TokenKind {
             TokenKind::KeywordLet => 10,
             TokenKind::KeywordFunction => 15,
             TokenKind::KeywordIf => 9,
+            TokenKind::KeywordElse => 11,
         }
     }
 
@@ -122,18 +120,18 @@ impl TokenKind {
             // Binary Operators
             TokenKind::Divide | TokenKind::Multiply => 12,
             TokenKind::Subtract | TokenKind::Add => 11,
-            _ => -1000, // i32 option takes up more space! && an .unwrap nightmare
+            _ => -1000, // i32 option takes up more space! && .unwrap is a nightmare
         };
     }
 
-    pub fn is_logical(&self) -> bool {
+    pub fn is_logical_op(&self) -> bool {
         return match self {
             TokenKind::LogicalOr | TokenKind::LogicalNot | TokenKind::LogicalAnd => true,
             _ => false,
         };
     }
 
-    pub fn is_comparison(&self) -> bool {
+    pub fn is_comparison_op(&self) -> bool {
         return match self {
             TokenKind::Equal
             | TokenKind::NotEqual
@@ -190,6 +188,7 @@ impl Lexer {
                 ("let", TokenKind::KeywordLet),
                 ("fn", TokenKind::KeywordFunction),
                 ("if", TokenKind::KeywordIf),
+                ("else", TokenKind::KeywordElse),
             ]),
             symbols_hash: HashMap::from([
                 // Logical
@@ -213,70 +212,68 @@ impl Lexer {
                 ("}", TokenKind::CloseSquirly),
                 ("(", TokenKind::OpenParen),
                 (")", TokenKind::CloseParen),
-                (";", TokenKind::SemiColon),
+                (";", TokenKind::Separator),
                 ("=", TokenKind::Assign),
                 (",", TokenKind::Comma),
             ]),
         };
-        lex.read_char();
+        lex.read_char(); // load first character into self.ch
         return lex;
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
-        while tokens.is_empty() || tokens.last().unwrap().kind != TokenKind::Eof {
-            tokens.push(self.next_token());
+        while self.read_position < self.input.len() {
+            match self.next_token() {
+                Some(tok) => tokens.push(tok),
+                None => continue,
+            }
         }
-        tokens.pop(); // Removes Eof token
         return tokens;
     }
 
-    fn next_token(&mut self) -> Token {
-        if self.ch.is_ascii_whitespace() {
-            self.skip_whitespace();
-        }
+    fn next_token(&mut self) -> Option<Token> {
+        self.skip_whitespace();
 
         return match self.ch {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let ident = self.read_identifier();
                 if self.keywords_hash.contains_key(ident.as_str()) {
-                    return Token {
+                    return Some(Token {
                         kind: self.keywords_hash.get(ident.as_str()).unwrap().clone(),
                         value: None,
-                    };
+                    });
                 }
 
-                Token {
+                Some(Token {
                     kind: TokenKind::Ident,
                     value: Some(ident),
-                }
+                })
             }
             33..=47 | 58..=64 | 91..=96 | 123..=126 => {
                 let symbols = self.read_symbols();
-                if self.symbols_hash.contains_key(symbols.as_str()) {
-                    return Token {
-                        kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
-                        value: None,
-                    };
+                if symbols == "//" {
+                    self.skip_line();
+                    return None;
+                } else if symbols == "/*" {
+                    self.skip_multiline();
+                    return None;
                 }
 
-                Token {
-                    kind: TokenKind::Illegal,
-                    value: None,
+                if self.symbols_hash.contains_key(symbols.as_str()) {
+                    return Some(Token {
+                        kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
+                        value: None,
+                    });
                 }
+
+                panic!("Illegal token found! {}", symbols)
             }
-            b'0'..=b'9' => Token {
+            b'0'..=b'9' => Some(Token {
                 kind: TokenKind::IntLit,
                 value: Some(self.read_int_literal()),
-            },
-            0 => Token {
-                kind: TokenKind::Eof,
-                value: None,
-            },
-            _ => Token {
-                kind: TokenKind::Illegal,
-                value: None,
-            },
+            }),
+            _ => panic!("Invalid token! {}", self.ch as char),
         };
     }
 
@@ -293,7 +290,7 @@ impl Lexer {
         loop {
             match self.ch {
                 b'(' | b')' | b'{' | b'}' | b';' | b',' => {
-                    // these can't be multi symbol
+                    // not multi_symbols
                     self.read_char();
                     break;
                 }
@@ -318,13 +315,20 @@ impl Lexer {
         }
     }
 
-    fn read_char(&mut self) {
-        if self.read_position >= self.input.len() {
-            self.ch = 0;
-        } else {
-            // println!("char {} | {}", self.ch as char, self.ch);
-            self.ch = self.input[self.read_position];
+    fn skip_line(&mut self) {
+        while self.ch != b'\n' {
+            self.read_char();
         }
+    }
+
+    fn skip_multiline(&mut self) {
+        while self.read_symbols() != "*/".to_string() {
+            self.read_char();
+        }
+    }
+
+    fn read_char(&mut self) {
+        self.ch = self.input[self.read_position];
         self.position = self.read_position;
         self.read_position += 1;
     }
