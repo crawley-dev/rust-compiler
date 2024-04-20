@@ -1,11 +1,17 @@
 let x = 5;
 let y = 6;
+if x == 5 {
+    exit(x);
+}
+exit(y);
+
+// single-line comment
 //let z = (10 - 2) + 5;
+
 /* multi-line 
 comment
 test
 let dwa = 25;
-*/   
 let z = 22;
 if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
     exit(x);
@@ -18,3 +24,4 @@ if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
 } else {
     exit(10);
 }
+*/   

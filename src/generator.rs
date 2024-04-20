@@ -81,7 +81,8 @@ impl Generator {
 
                 return Ok(self.gen_expr(expr)?);
             }
-            NodeStmt::If(expr, scope) => {
+            NodeStmt::Scope(scope) => self.gen_scope(scope),
+            NodeStmt::If(expr, scope, branches) => {
                 return Ok(format!(
                     "{expr_asm}\
                      {pop_rax}    \
@@ -93,9 +94,11 @@ impl Generator {
                     pop_rax = self.pop("rax"),
                     jmp_label = self.create_label(),
                     scope_asm = self.gen_scope(scope)?
-                ))
+                ));
+                // todo!("implement else (if) branch gen")
             }
-            NodeStmt::Scope(scope) => return self.gen_scope(scope),
+            NodeStmt::ElseIf(_, _) => todo!("elif"),
+            NodeStmt::Else(_) => todo!("else"),
         }
     }
 
@@ -128,17 +131,17 @@ impl Generator {
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
         match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
-            NodeExpr::BinExpr(box_bin_expr) => {
-                let bin_expr = *box_bin_expr;
-                let (lhs_inp, rhs_inp, operation_asm) = match bin_expr.kind {
-                    TokenKind::Divide => (bin_expr.lhs, bin_expr.rhs, "    div rbx\n"),
-                    TokenKind::Multiply => (bin_expr.lhs, bin_expr.rhs, "    mul rbx\n"),
-                    TokenKind::Subtract => (bin_expr.lhs, bin_expr.rhs, "    sub rax, rbx\n"),
-                    TokenKind::Add => (bin_expr.lhs, bin_expr.rhs, "    add rax, rbx\n"),
+            NodeExpr::BinExpr { op, lhs, rhs } => {
+                let (lhs_inp, rhs_inp, operation_asm) = match op {
+                    TokenKind::Divide => (*lhs, *rhs, "    div rbx\n"),
+                    TokenKind::Multiply => (*lhs, *rhs, "    mul rbx\n"),
+                    TokenKind::Subtract => (*lhs, *rhs, "    sub rax, rbx\n"),
+                    TokenKind::Add => (*lhs, *rhs, "    add rax, rbx\n"),
                     _ => return Err("[COMPILER] Unable to generate binary expression"),
                 };
                 let lhs = self.gen_expr(rhs_inp)?; // these are flipped, for asm reasons
                 let rhs = self.gen_expr(lhs_inp)?;
+
                 return Ok(format!(
                     "{lhs}\
                      {rhs}\
@@ -151,10 +154,9 @@ impl Generator {
                     push_rax = self.push("rax"),
                 ));
             }
-            NodeExpr::BoolExpr(box_bool_expr) => {
-                // todo!("");
-
-                Err("[COMPILER] ooops")
+            NodeExpr::BoolExpr { op, lhs, rhs } => {
+                todo!("bool comp");
+                // Err("[COMPILER] ooops")
             }
         }
     }
@@ -180,8 +182,8 @@ impl Generator {
 
                 return Ok(self.push(format!("QWORD [rsp + {}]", stk_offset).as_str()));
             }
-            NodeTerm::Paren(expr) => return self.gen_expr(expr),
-        };
+            NodeTerm::Paren(expr) => self.gen_expr(expr),
+        }
     }
 
     fn push(&mut self, reg: &str) -> String {

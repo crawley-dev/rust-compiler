@@ -273,6 +273,7 @@ impl Lexer {
                 kind: TokenKind::IntLit,
                 value: Some(self.read_int_literal()),
             }),
+            0 => None,
             _ => panic!("Invalid token! {}", self.ch as char),
         };
     }
@@ -291,7 +292,9 @@ impl Lexer {
             match self.ch {
                 b'(' | b')' | b'{' | b'}' | b';' | b',' => {
                     // not multi_symbols
-                    self.read_char();
+                    if pos == self.position {
+                        self.read_char();
+                    }
                     break;
                 }
                 33..=47 | 58..=64 | 91..=96 | 123..=126 => self.read_char(),
@@ -328,7 +331,10 @@ impl Lexer {
     }
 
     fn read_char(&mut self) {
-        self.ch = self.input[self.read_position];
+        self.ch = match self.input.get(self.read_position) {
+            Some(char) => *char,
+            None => 0,
+        };
         self.position = self.read_position;
         self.read_position += 1;
     }

@@ -123,7 +123,7 @@ impl Parser {
                     println!("{:#?}", stmt);
                     return Err("[COMPILER] Separator ';' not found");
                 }
-                return Ok(stmt);
+                Ok(stmt)
             }
             _ => Ok(stmt),
         };
@@ -146,29 +146,25 @@ impl Parser {
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
         let term = self.parse_term()?;
         let mut lhs = NodeExpr::Term(Box::new(term));
+        let mut prec = -100;
 
-        loop {
-            let prec = match self.peek(0) {
+        while prec < min_prec {
+            prec = match self.peek(0) {
                 Some(tok) => tok.kind.get_prec(),
                 None => return Err("[COMPILER] No token to parse"),
             };
-            if prec < min_prec {
-                break;
-            }
 
             let next_prec = prec + 1;
-            let op = self.consume().kind; // consume operand, checked in match so don't check again
+            let op = self.consume().kind;
             let rhs = self.parse_expr(next_prec)?;
 
             if op.is_bin_op() {
-                // lhs = NodeExpr::BinExpr(Box::new(NodeBinExpr { kind, lhs, rhs }));
                 lhs = NodeExpr::BinExpr {
                     op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                 };
             } else if op.is_logical_op() || op.is_comparison_op() {
-                // lhs = NodeExpr::BoolExpr(Box::new(NodeBoolExpr { kind, lhs, rhs }));
                 lhs = NodeExpr::BoolExpr {
                     op,
                     lhs: Box::new(lhs),
@@ -211,20 +207,17 @@ impl Parser {
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
         return match self.peek(offset) {
-            Some(tok) => match &tok.kind {
-                _ if tok.kind == kind => Ok(true),
-                _ => {
-                    if LOG_DEBUG_INFO {
-                        println!(
-                            "[COMPILER] Expected '{:?}', found '{:?}'",
-                            kind,
-                            self.peek(offset).unwrap()
-                        );
-                    }
-                    return Err("[COMPILER] token evaluation was false");
-                }
-            },
+            Some(tok) if tok.kind == kind => Ok(true),
             None => Err("[COMPILER] No token to evaluate"),
+            _ => {
+                if LOG_DEBUG_INFO {
+                    println!(
+                        "[COMPILER] Expected '{kind:?}', found '{:?}'",
+                        self.peek(offset).unwrap()
+                    );
+                }
+                Err("[COMPILER] token evaluation was false")
+            }
         };
     }
 
@@ -232,7 +225,7 @@ impl Parser {
         return self.tokens.get(self.position + offset);
     }
 
-    // remove item from vec? << no clone.
+    // remove item from vec? << no clone, linear complexity though..
     fn consume(&mut self) -> Token {
         if LOG_DEBUG_INFO {
             println!("consuming: {:?}", self.peek(0).unwrap());
