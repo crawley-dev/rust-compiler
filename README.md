@@ -7,11 +7,12 @@ an attempt at making a compiler in rust!
     - [x]  else & else if parsing
     - [ ] code generation
       - [x] invert 'jump' conditions
-      - [ ] rethink boolean expr, all should evaluate to 0,1.
       - [ ] unsigned vs signed comparison (diff jump instructions)
+      - [ ] binary expr conditions
+        - conditional expr, either has explicity bool comparison or implicit, expr = lhs: (lhs > 0)
     - [x] types of scope
-      - [x] inherits variables from parent scope (if, else if, else) 
-      - [x] doesn't (function)
+      - inherits variables from parent scope (if, else if, else) 
+      - doesn't (function)
   - [x] (kinda done) split 'TokenKind': 'Symbol' .. 'LogicalOp' .. 'BinaryOp' .. etc
   - [x] comments
   - [ ] dynamically place variables on stack if they are(nt) used immediately. 
@@ -20,7 +21,7 @@ an attempt at making a compiler in rust!
   - [ ] variable reassignement (mutability)
   - [ ] types
     - [ ] bools: true, false
-    
+
   - [ ] functions
 
 
