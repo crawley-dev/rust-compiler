@@ -1,17 +1,24 @@
-let x = 5;
-let y = 6;
-if x == 5 {
+let x = 69;
+let y = 70;
+if x == 69 {
     exit(x);
+} else if y == 70 {
+    exit(y);
 }
-exit(y);
+exit(10);
 
 // single-line comment
 //let z = (10 - 2) + 5;
 
-/* multi-line 
-comment
-test
-let dwa = 25;
+/* 
+    multi-line 
+    comment
+    test
+*/   
+
+/*
+let x = 5;
+let y = 10;
 let z = 22;
 if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
     exit(x);
@@ -24,4 +31,4 @@ if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
 } else {
     exit(10);
 }
-*/   
+*/

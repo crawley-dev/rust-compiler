@@ -1,5 +1,5 @@
 use crate::lexer::*;
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 
 #[derive(Debug, PartialEq)]
 pub struct NodeProg {
@@ -60,7 +60,8 @@ impl Parser {
         return parser;
     }
 
-    pub fn parse_prog(&mut self) -> Result<NodeProg, &'static str> {
+    // pub fn parse_prog(&mut self) -> Result<NodeProg, &'static str> {
+    pub fn parse_prog(&mut self) -> Result<NodeProg, String> {
         let mut prog = NodeProg { stmts: vec![] };
         while self.peek(0).is_some() {
             prog.stmts.push(self.parse_stmt()?);
@@ -68,12 +69,17 @@ impl Parser {
         return Ok(prog);
     }
 
-    fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
+    // fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
+    fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
+        let tok = match self.peek(0) {
+            Some(tok) => tok,
+            None => return Err(format!("[COMPILER] No statement to parse")),
+        };
         if LOG_DEBUG_INFO {
             println!("\nparsing statement: {:?}", self.peek(0).unwrap());
         }
 
-        let stmt = match self.peek(0).unwrap().kind {
+        let stmt = match tok.kind {
             TokenKind::KeywordExit => {
                 self.try_consume(TokenKind::KeywordExit)?;
                 self.try_consume(TokenKind::OpenParen)?;
@@ -113,7 +119,7 @@ impl Parser {
                 NodeStmt::If(expr, scope, branches)
             }
             TokenKind::OpenSquirly => NodeStmt::Scope(self.parse_scope()?),
-            _ => return Err("[COMPILER] Unable to parse statement"),
+            _ => return Err(format!("[COMPILER] Unable to parse statement: {tok:?}",)),
         };
 
         // statments that do/don't require a ';' to end.
@@ -121,7 +127,7 @@ impl Parser {
             NodeStmt::Let(_, _) | NodeStmt::Exit(_) => {
                 if self.try_consume(TokenKind::Separator).is_err() {
                     println!("{:#?}", stmt);
-                    return Err("[COMPILER] Separator ';' not found");
+                    return Err(format!("[COMPILER] Separator ';' not found"));
                 }
                 Ok(stmt)
             }
@@ -129,7 +135,8 @@ impl Parser {
         };
     }
 
-    fn parse_scope(&mut self) -> Result<NodeScope, &'static str> {
+    // fn parse_scope(&mut self) -> Result<NodeScope, &'static str> {
+    fn parse_scope(&mut self) -> Result<NodeScope, String> {
         self.try_consume(TokenKind::OpenSquirly)?;
         let mut stmts = Vec::new();
         // while not end of scope, will shit itself in parse_stmt if no CloseSquirly
@@ -137,50 +144,59 @@ impl Parser {
             stmts.push(self.parse_stmt()?);
         }
         self.try_consume(TokenKind::CloseSquirly)?;
+
         return Ok(NodeScope {
             stmts,
             inherits_stmts: true,
         });
     }
 
-    fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
+    // fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
+    fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
         let term = self.parse_term()?;
-        let mut lhs = NodeExpr::Term(Box::new(term));
-        let mut prec = -100;
+        let mut expr = NodeExpr::Term(Box::new(term));
 
-        while prec < min_prec {
-            prec = match self.peek(0) {
+        loop {
+            let prec = match self.peek(0) {
                 Some(tok) => tok.kind.get_prec(),
-                None => return Err("[COMPILER] No token to parse"),
+                None => return Err(format!("[COMPILER] No token to parse")),
             };
+            if prec < min_prec {
+                println!(
+                    "prec is lower {:?}:{prec} > {min_prec}",
+                    self.peek(0).unwrap()
+                );
+                break;
+            }
 
             let next_prec = prec + 1;
             let op = self.consume().kind;
             let rhs = self.parse_expr(next_prec)?;
 
             if op.is_bin_op() {
-                lhs = NodeExpr::BinExpr {
+                expr = NodeExpr::BinExpr {
                     op,
-                    lhs: Box::new(lhs),
+                    lhs: Box::new(expr),
                     rhs: Box::new(rhs),
                 };
             } else if op.is_logical_op() || op.is_comparison_op() {
-                lhs = NodeExpr::BoolExpr {
+                expr = NodeExpr::BoolExpr {
                     op,
-                    lhs: Box::new(lhs),
+                    lhs: Box::new(expr),
                     rhs: Box::new(rhs),
                 };
             } else {
-                return Err("[COMPILER] Invalid operator, unable to parse");
+                return Err(format!("[COMPILER] Invalid operator, unable to parse"));
             }
         }
-        return Ok(lhs);
+        return Ok(expr);
     }
 
-    fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
+    // fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
+    fn parse_term(&mut self) -> Result<NodeTerm, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
-            None => return Err("[COMPILER] No term to parse"),
+            None => return Err(format!("[COMPILER] No term to parse")),
         };
 
         if LOG_DEBUG_INFO {
@@ -197,26 +213,33 @@ impl Parser {
                 Ok(term)
             }
             _ => {
-                if LOG_DEBUG_INFO {
-                    println!("term: '{:?}'", self.peek(0).unwrap());
-                }
-                Err("[COMPILER] Unable to parse term")
+                // if LOG_DEBUG_INFO {
+                //     println!("term: '{:?}'", self.peek(0).unwrap());
+                // }
+                Err(format!(
+                    "[COMPILER] Unable to parse term: {tok:?}:{}",
+                    self.position
+                ))
             }
         };
     }
 
-    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
+    // fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
+    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, String> {
         return match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(true),
-            None => Err("[COMPILER] No token to evaluate"),
-            _ => {
-                if LOG_DEBUG_INFO {
-                    println!(
-                        "[COMPILER] Expected '{kind:?}', found '{:?}'",
-                        self.peek(offset).unwrap()
-                    );
-                }
-                Err("[COMPILER] token evaluation was false")
+            None => Err(format!("[COMPILER] No token to evaluate")),
+            tok @ _ => {
+                // if LOG_DEBUG_INFO {
+                //     println!(
+                //         "[COMPILER] Expected '{kind:?}', found '{:?}'",
+                //         self.peek(offset).unwrap()
+                //     );
+                // }
+                Err(format!(
+                    "[COMPILER] expected '{kind:?}', found {:?}",
+                    tok.unwrap().kind
+                ))
             }
         };
     }
@@ -235,7 +258,8 @@ impl Parser {
         return self.tokens[i].clone(); // this works aswell, but clones, ew.
     }
 
-    fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {
+    // fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {
+    fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         return Ok(self.consume());
     }

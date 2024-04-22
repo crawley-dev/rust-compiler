@@ -1,10 +1,14 @@
-mod generator;
-mod lexer;
 mod misc;
-mod parser;
-use crate::generator::Generator;
+// mod new_lexer;
+
+mod lexer;
 use crate::lexer::{Lexer, Token};
+
+mod parser;
 use crate::parser::Parser;
+
+mod generator;
+use crate::generator::Generator;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -19,12 +23,18 @@ fn main() {
     print_aligned_tokens(&tokens);
 
     let mut parser = Parser::new(tokens);
-    let nodes = parser.parse_prog().expect("Unable to parse program.");
+    let nodes = match parser.parse_prog() {
+        Ok(t) => t,
+        Err(e) => panic!("\n{e}\n"),
+    };
     println!("\n\n{:#?}\n\n", nodes.stmts);
 
     let output_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(nodes, output_path.clone());
-    generator.generate_prog().expect("Unable to generate code.");
+    match generator.generate_prog() {
+        Ok(_) => println!("[COMPILER] output placed in '{output_path}'"),
+        Err(e) => panic!("\n{e}\n"),
+    };
 
     // UBUNTU bash script:
     // read file

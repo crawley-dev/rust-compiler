@@ -252,10 +252,10 @@ impl Lexer {
             }
             33..=47 | 58..=64 | 91..=96 | 123..=126 => {
                 let symbols = self.read_symbols();
-                if symbols == "//" {
+                if symbols == "//".to_string() {
                     self.skip_line();
                     return None;
-                } else if symbols == "/*" {
+                } else if symbols == "/*".to_string() {
                     self.skip_multiline();
                     return None;
                 }
@@ -317,6 +317,23 @@ impl Lexer {
             self.read_char();
         }
     }
+
+    // fn skip_comments(&mut self, symbols: &String) {
+    //     match symbols.as_str() {
+    //         "//" => {
+    //             while self.ch != b'\n' {
+    //                 self.read_char();
+    //             }
+    //         }
+    //         "/*" => {
+    //             while self.read_symbols() != "*/".to_string() {
+    //                 self.read_char();
+    //             }
+    //         }
+    //         // "*/" => {}
+    //         _ => return,
+    //     }
+    // }
 
     fn skip_line(&mut self) {
         while self.ch != b'\n' {

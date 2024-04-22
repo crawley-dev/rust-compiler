@@ -44,9 +44,9 @@ impl Generator {
 
         while !self.prog.stmts.is_empty() {
             let stmt = self.prog.stmts.remove(0);
-            let dwa = self.gen_stmt(stmt)?;
+            let stmt_asm = self.gen_stmt(stmt)?;
 
-            file.write_all(dwa.as_bytes())
+            file.write_all(stmt_asm.as_bytes())
                 .expect("unable to write to file.");
         }
 
@@ -55,15 +55,16 @@ impl Generator {
 
     // TODO: BYTE ARRAYS!
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, &'static str> {
-        match stmt {
+        return match stmt {
             NodeStmt::Exit(expr) => {
-                return Ok(format!(
+                let expr_asm = self.gen_expr(expr)?;
+                let pop = self.pop("rdi");
+
+                Ok(format!(
                     "{expr_asm}    \
                      mov rax, 60\n\
                      {pop}    \
                      syscall\n",
-                    expr_asm = self.gen_expr(expr)?,
-                    pop = self.pop("rdi")
                 ))
             }
             NodeStmt::Let(ident, expr) => {
@@ -79,27 +80,74 @@ impl Generator {
                 self.vars_map.insert(var.ident.clone(), var.clone()); // yummy clones
                 self.vars_vec.push(var);
 
-                return Ok(self.gen_expr(expr)?);
+                Ok(self.gen_expr(expr)?)
             }
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::If(expr, scope, branches) => {
-                return Ok(format!(
-                    "{expr_asm}\
-                     {pop_rax}    \
-                     test rax, rax\n    \
-                     jz {jmp_label}\n\
+                // return Ok(format!(
+                //     "{expr_asm}\
+                //      {pop_rax}    \
+                //      test rax, rax\n    \
+                //      jz {jmp_label}\n\
+                //      {scope_asm}\
+                //      {jmp_label}:\n",
+                //     expr_asm = self.gen_expr(expr)?,
+                //     pop_rax = self.pop("rax"),
+                //     jmp_label = self.create_label(),
+                //     scope_asm = self.gen_scope(scope)?
+                // ));
+
+                // Asm Breakdown:
+                // generate expr for boolean comp lhs & rhs
+                // pop into rax, rbx
+                // cmp rax, rbx
+                // (jump instruction) (label)
+                // (label):
+                // generate scope asm
+
+                // To note:
+                // .. Format: if (expr) scope
+                // .. operand changes jump instruction, e.g je (jump if equal)
+                // .. .. do the inverse of the condition:
+                // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
+
+                let cmp_expr_asm = self.gen_expr(expr)?;
+                let label = self.create_label("if_false");
+                let scope_asm = self.gen_scope(scope)?;
+                let mut branches_asm = String::new();
+                for branch in branches {
+                    branches_asm += &self.gen_stmt(branch)?;
+                    // branches_asm = format!("{branches_asm}{}", self.gen_stmt(branch)?);
+                }
+
+                Ok(format!(
+                    "{cmp_expr_asm} {label}\n\
                      {scope_asm}\
-                     {jmp_label}:\n",
-                    expr_asm = self.gen_expr(expr)?,
-                    pop_rax = self.pop("rax"),
-                    jmp_label = self.create_label(),
-                    scope_asm = self.gen_scope(scope)?
-                ));
-                // todo!("implement else (if) branch gen")
+                     {label}:\n\
+                     {branches_asm}"
+                ))
             }
-            NodeStmt::ElseIf(_, _) => todo!("elif"),
-            NodeStmt::Else(_) => todo!("else"),
-        }
+            NodeStmt::ElseIf(expr, scope) => {
+                let cmp_expr_asm = self.gen_expr(expr)?;
+                let label = self.create_label("elif");
+                let scope_asm = self.gen_scope(scope)?;
+
+                Ok(format!(
+                    "{cmp_expr_asm} {label}\n\
+                     {scope_asm}\
+                     {label}:\n"
+                ))
+            }
+            NodeStmt::Else(scope) => {
+                let label = self.create_label("else");
+                let scope_asm = self.gen_scope(scope)?;
+                Ok(format!(
+                    "    jmp {label}\n\
+                     {label}:\n\
+                     {scope_asm}"
+                ))
+            }
+        };
     }
 
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, &'static str> {
@@ -129,36 +177,62 @@ impl Generator {
     }
 
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
-        match expr {
+        return match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
             NodeExpr::BinExpr { op, lhs, rhs } => {
-                let (lhs_inp, rhs_inp, operation_asm) = match op {
-                    TokenKind::Divide => (*lhs, *rhs, "    div rbx\n"),
-                    TokenKind::Multiply => (*lhs, *rhs, "    mul rbx\n"),
-                    TokenKind::Subtract => (*lhs, *rhs, "    sub rax, rbx\n"),
-                    TokenKind::Add => (*lhs, *rhs, "    add rax, rbx\n"),
+                let lhs_asm = self.gen_expr(*rhs)?; // these are flipped, for asm reasons
+                let rhs_asm = self.gen_expr(*lhs)?;
+                let pop_lhs = self.pop("rax");
+                let pop_rhs = self.pop("rbx");
+
+                let operation_asm = match op {
+                    TokenKind::Divide => "    div rbx\n",
+                    TokenKind::Multiply => "    mul rbx\n",
+                    TokenKind::Subtract => "    sub rax, rbx\n",
+                    TokenKind::Add => "    add rax, rbx\n",
                     _ => return Err("[COMPILER] Unable to generate binary expression"),
                 };
-                let lhs = self.gen_expr(rhs_inp)?; // these are flipped, for asm reasons
-                let rhs = self.gen_expr(lhs_inp)?;
 
-                return Ok(format!(
-                    "{lhs}\
-                     {rhs}\
-                     {pop_rax}\
-                     {pop_rbx}\
+                let push_ans = self.push("rax");
+
+                Ok(format!(
+                    "{lhs_asm}\
+                     {rhs_asm}\
+                     {pop_lhs}\
+                     {pop_rhs}\
                      {operation_asm}\
-                     {push_rax}",
-                    pop_rax = self.pop("rax"),
-                    pop_rbx = self.pop("rbx"),
-                    push_rax = self.push("rax"),
-                ));
+                     {push_ans}",
+                ))
             }
+            // boolean expression generates cmp && jump instruction?
+            // yeah I guess..
             NodeExpr::BoolExpr { op, lhs, rhs } => {
-                todo!("bool comp");
-                // Err("[COMPILER] ooops")
+                let lhs_asm = self.gen_expr(*rhs)?;
+                let rhs_asm = self.gen_expr(*lhs)?;
+
+                let pop_lhs = self.pop("rax");
+                let pop_rhs = self.pop("rbx");
+                let cmp_asm = "    cmp rax, rbx\n";
+
+                let jmp_asm = match op {
+                    TokenKind::Equal => "    jne",       // je
+                    TokenKind::GreaterThan => "    jle", // jg
+                    TokenKind::GreaterEqual => "    jl", // jge
+                    TokenKind::LessThan => "    jge",    // jl
+                    TokenKind::LessEqual => "    jg",    // jle
+                    _ => return Err("[COMPILER] Unable to generate comparison"),
+                };
+
+                Ok(format!(
+                    "{lhs_asm}\
+                     {rhs_asm}\
+                     {pop_lhs}\
+                     {pop_rhs}\
+                     {cmp_asm}\
+                     {jmp_asm}"
+                ))
             }
-        }
+        };
     }
 
     fn gen_term(&mut self, term: NodeTerm) -> Result<String, &'static str> {
@@ -182,8 +256,8 @@ impl Generator {
 
                 return Ok(self.push(format!("QWORD [rsp + {}]", stk_offset).as_str()));
             }
-            NodeTerm::Paren(expr) => self.gen_expr(expr),
-        }
+            NodeTerm::Paren(expr) => return self.gen_expr(expr),
+        };
     }
 
     fn push(&mut self, reg: &str) -> String {
@@ -196,7 +270,8 @@ impl Generator {
         return format!("    pop {}\n", reg);
     }
 
-    fn create_label(&self) -> String {
-        return format!("label{}", self.label_count);
+    fn create_label(&mut self, name: &'static str) -> String {
+        self.label_count += 1;
+        return format!("label{}_{name}", self.label_count);
     }
 }
