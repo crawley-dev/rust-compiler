@@ -21,7 +21,7 @@ an attempt at making a compiler in rust!
   - [ ] variable reassignement (mutability)
   - [ ] types
     - [ ] bools: true, false
-
+  - [ ] (Joke mode:) negative whitespace significance, the most nested piece of code has 0 indentations, everything out has an indentation.
   - [ ] functions
 
 
