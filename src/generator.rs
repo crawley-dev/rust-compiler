@@ -1,5 +1,5 @@
 use crate::{lexer::TokenKind, parser::*};
-use std::{collections::HashMap, io::Write};
+use std::{collections::HashMap, fmt::format, io::Write};
 
 const WORD_SIZE: usize = 8;
 
@@ -84,19 +84,6 @@ impl Generator {
             }
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::If(expr, scope, branches) => {
-                // return Ok(format!(
-                //     "{expr_asm}\
-                //      {pop_rax}    \
-                //      test rax, rax\n    \
-                //      jz {jmp_label}\n\
-                //      {scope_asm}\
-                //      {jmp_label}:\n",
-                //     expr_asm = self.gen_expr(expr)?,
-                //     pop_rax = self.pop("rax"),
-                //     jmp_label = self.create_label(),
-                //     scope_asm = self.gen_scope(scope)?
-                // ));
-
                 // Asm Breakdown:
                 // generate expr for boolean comp lhs & rhs
                 // pop into rax, rbx
@@ -111,29 +98,58 @@ impl Generator {
                 // .. .. do the inverse of the condition:
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
 
-                let cmp_expr_asm = self.gen_expr(expr)?;
+                // let cmp_expr_asm = self.gen_expr(expr)?;
+                // let label = self.create_label("if_false");
+                // let scope_asm = self.gen_scope(scope)?;
+                // let mut branches_asm = String::new();
+                // for branch in branches {
+                //     branches_asm += &self.gen_stmt(branch)?;
+                // }
+
+                // Ok(format!(
+                //     "{cmp_expr_asm} {label}\n\
+                //      {scope_asm}\
+                //      {label}:\n\
+                //      {branches_asm}"
+                // ))
+
+                let expr_asm = self.gen_expr(expr)?;
+                let pop_expr = self.pop("rax");
+                let cmp_asm = "    cmp rax, 0\n";
+                let jmp_asm = "    jle"; // jump if false | TODO: unsigned jump ??
                 let label = self.create_label("if_false");
+
                 let scope_asm = self.gen_scope(scope)?;
                 let mut branches_asm = String::new();
                 for branch in branches {
                     branches_asm += &self.gen_stmt(branch)?;
-                    // branches_asm = format!("{branches_asm}{}", self.gen_stmt(branch)?);
                 }
 
                 Ok(format!(
-                    "{cmp_expr_asm} {label}\n\
+                    "{expr_asm}\
+                     {pop_expr}\
+                     {cmp_asm}\
+                     {jmp_asm} {label}\n\
                      {scope_asm}\
                      {label}:\n\
                      {branches_asm}"
                 ))
             }
             NodeStmt::ElseIf(expr, scope) => {
-                let cmp_expr_asm = self.gen_expr(expr)?;
+                let expr_asm = self.gen_expr(expr)?;
+                let pop_expr = self.pop("rax");
+
+                let cmp_asm = "    cmp rax, 0\n";
+                let jmp_asm = "    jle"; // jump if false | TODO: unsigned jump ??
+
                 let label = self.create_label("elif");
                 let scope_asm = self.gen_scope(scope)?;
 
                 Ok(format!(
-                    "{cmp_expr_asm} {label}\n\
+                    "{expr_asm}\
+                     {pop_expr}\
+                     {cmp_asm}\
+                     {jmp_asm} {label}\n\
                      {scope_asm}\
                      {label}:\n"
                 ))
@@ -182,6 +198,7 @@ impl Generator {
             NodeExpr::BinExpr { op, lhs, rhs } => {
                 let lhs_asm = self.gen_expr(*rhs)?; // these are flipped, for asm reasons
                 let rhs_asm = self.gen_expr(*lhs)?;
+
                 let pop_lhs = self.pop("rax");
                 let pop_rhs = self.pop("rbx");
 
@@ -212,16 +229,20 @@ impl Generator {
 
                 let pop_lhs = self.pop("rax");
                 let pop_rhs = self.pop("rbx");
+
                 let cmp_asm = "    cmp rax, rbx\n";
 
-                let jmp_asm = match op {
-                    TokenKind::Equal => "    jne",       // je
-                    TokenKind::GreaterThan => "    jle", // jg
-                    TokenKind::GreaterEqual => "    jl", // jge
-                    TokenKind::LessThan => "    jge",    // jl
-                    TokenKind::LessEqual => "    jg",    // jle
-                    _ => return Err("[COMPILER] Unable to generate comparison"),
+                let set_asm = match op {
+                    TokenKind::Equal => "    sete al\n",
+                    TokenKind::GreaterThan => "    setg al\n",
+                    TokenKind::GreaterEqual => "    setge al\n",
+                    TokenKind::LessThan => "    setl al\n",
+                    TokenKind::LessEqual => "    setle al\n",
+                    _ => return Err("[COMPILER] Unable to generate bool comparison"),
                 };
+
+                let mov_asm = "    movzx rax, al\n";
+                let push_ans = self.push("rax");
 
                 Ok(format!(
                     "{lhs_asm}\
@@ -229,8 +250,28 @@ impl Generator {
                      {pop_lhs}\
                      {pop_rhs}\
                      {cmp_asm}\
-                     {jmp_asm}"
+                     {set_asm}\
+                     {mov_asm}\
+                     {push_ans}"
                 ))
+
+                // let jmp_asm = match op {
+                //     TokenKind::Equal => "    jne",       // je
+                //     TokenKind::GreaterThan => "    jle", // jg
+                //     TokenKind::GreaterEqual => "    jl", // jge
+                //     TokenKind::LessThan => "    jge",    // jl
+                //     TokenKind::LessEqual => "    jg",    // jle
+                //     _ => return Err("[COMPILER] Unable to generate comparison"),
+                // };
+
+                // Ok(format!(
+                //     "{lhs_asm}\
+                //      {rhs_asm}\
+                //      {pop_lhs}\
+                //      {pop_rhs}\
+                //      {cmp_asm}\
+                //      {jmp_asm}"
+                // ))
             }
         };
     }

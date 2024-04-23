@@ -6,11 +6,22 @@ _start:
     push rax
     mov rax, 69
     push rax
-    push QWORD [rsp + 16]
+    mov rax, 5
+    push rax
+    push QWORD [rsp + 24]
+    pop rax
+    pop rbx
+    add rax, rbx
+    push rax
     pop rax
     pop rbx
     cmp rax, rbx
-    jne label1_if_false
+    sete al
+    movzx rax, al
+    push rax
+    pop rax
+    cmp rax, 0
+    jle label1_if_false
     push QWORD [rsp + 8]
     mov rax, 60
     pop rdi
@@ -22,7 +33,12 @@ label1_if_false:
     pop rax
     pop rbx
     cmp rax, rbx
-    jne label2_elif
+    sete al
+    movzx rax, al
+    push rax
+    pop rax
+    cmp rax, 0
+    jle label2_elif
     push QWORD [rsp + 0]
     mov rax, 60
     pop rdi

@@ -1,6 +1,6 @@
 let x = 69;
 let y = 70;
-if x == 69 {
+if x+5 == 69 {
     exit(x);
 } else if y == 70 {
     exit(y);
