@@ -30,6 +30,7 @@ an attempt at making a compiler in rust!
     - [ ] u16: ax 
     - [ ] u32: eax 
     - [ ] u64: rax
+  - [ ] (Joke mode:) negative whitespace significance, the most nested piece of code has 0 indentations,    everything out has an indentation.
   - [ ] functions
 
 
