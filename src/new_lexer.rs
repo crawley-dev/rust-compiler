@@ -2,7 +2,7 @@
 *** WIP ***********************************
 ******************************************/
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperandKind {
@@ -47,7 +47,7 @@ pub enum KeywordKind {
     Function,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Symbol(SymbolKind),
     Operand(OperandKind),
@@ -154,13 +154,15 @@ impl Lexer {
                     Token::Symbol(SymbolKind::OpenMultiComment) => self.is_multicomment = true,
                     Token::Symbol(SymbolKind::CloseMultiComment) => self.is_multicomment = false,
                     _ if self.is_multicomment => (),
-                    _ => tokens.push(tok),
+                    _ => {
+                        tokens.push(tok);
+                        if LOG_DEBUG_INFO {
+                            println!("new tok: {:?} | pos {}\n", tokens.last(), self.pos);
+                        }
+                    }
                 },
                 None => continue,
             };
-            if LOG_DEBUG_INFO {
-                println!("new tok: {}", tokens.last().unwrap().debug_print())
-            }
         }
         return tokens;
     }
@@ -187,7 +189,16 @@ impl Lexer {
             if self.is_linecomment {
                 self.consume();
                 break;
-            } else if next_char.is_ascii_whitespace() {
+            }
+            // else if self.is_multicomment {
+            //     if next_char == b'*' && self.peek(1).is_some() && *self.peek(1).unwrap() == b'/' {
+            //         self.is_multicomment = false;
+            //     }
+            //     self.consume();
+            //     self.consume();
+            //     break;
+            // }
+            else if next_char.is_ascii_whitespace() {
                 self.consume();
                 break;
             }
@@ -207,13 +218,13 @@ impl Lexer {
             };
 
             if LOG_DEBUG_INFO {
-                println!(" .. char is: {:?}", char_type);
+                println!(" .. char is: {char_type:?}");
             }
 
             if self.buffer.is_empty() {
                 buf_type = char_type.clone();
                 if LOG_DEBUG_INFO {
-                    println!(" .. set buf_type: {:?}", buf_type);
+                    println!(" .. set buf_type: {buf_type:?}");
                 }
             }
             if char_type != buf_type {
@@ -232,63 +243,19 @@ impl Lexer {
         let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
 
         if LOG_DEBUG_INFO {
-            println!("buf: {}", buf_str);
+            println!("buf: {buf_str} | pos: {}", self.pos);
         }
 
-        // let mut symbol: Option<Token> = None;
         return match buf_type {
             BufKind::Illegal => None,
             BufKind::Word => self.match_word(buf_str),
             BufKind::Symbol => self.match_symbol(buf_str),
             BufKind::IntLit => Some(Token::IntLit(buf_str)),
-            // BufKind::Symbols => {
-            //     while !buf_str.is_empty() {
-            //         match self
-            //             .symbol_reg
-            //             .iter()
-            //             .rev()
-            //             .find(|(str, _)| *str == buf_str)
-            //         {
-            //             Some((_, tok)) => {
-            //                 symbol = Some(tok.clone());
-            //                 break;
-            //             }
-            //             None => {
-            //                 buf_str.pop();
-            //                 if LOG_DEBUG_INFO {
-            //                     println!("decrementing pos");
-            //                 }
-            //                 self.pos -= 1;
-            //             }
-            //         };
-            //     }
-            // }
         };
-
-        // match symbol {
-        //     Some(Token::Symbol(SymbolKind::LineComment)) => {
-        //         self.is_linecomment = true;
-        //         None
-        //     }
-        //     Some(Token::Symbol(SymbolKind::OpenMultiComment)) => {
-        //         self.is_multicomment = true;
-        //         symbol
-        //     }
-        //     Some(Token::Symbol(SymbolKind::CloseMultiComment)) => {
-        //         self.is_multicomment = false;
-        //         symbol
-        //     }
-        //     _ => {
-        //         if self.is_multicomment {
-        //             return None;
-        //         }
-        //         return symbol;
-        //     }
-        // }
     }
 
     fn match_word(&self, mut buf_str: String) -> Option<Token> {
-        let og_buf = buf_str.clone();
+        let imm_buf = buf_str.clone();
         while !buf_str.is_empty() {
             match self
                 .keyword_reg
@@ -300,10 +267,10 @@ impl Lexer {
                 None => buf_str.pop(),
             };
         }
-        return Some(Token::Ident(og_buf));
+        return Some(Token::Ident(imm_buf));
     }
 
-    fn match_symbol(&self, mut buf_str: String) -> Option<Token> {
+    fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
         while !buf_str.is_empty() {
             match self
                 .symbol_reg
@@ -314,21 +281,12 @@ impl Lexer {
                 Some((_, tok)) => return Some(tok.clone()),
                 None => {
                     buf_str.pop();
+                    self.pos -= 1;
+                    println!("reduce {} | new pos: {}", buf_str, self.pos);
                 }
             }
         }
         return None;
-    }
-
-    fn is_unwanted(&mut self, next_char: u8) -> bool {
-        if self.is_linecomment || next_char.is_ascii_whitespace() {
-            if next_char == b'\n' {
-                self.is_linecomment = false;
-            }
-            self.consume();
-            return true;
-        }
-        return false;
     }
 
     fn peek(&self, offset: usize) -> Option<&u8> {
@@ -338,43 +296,11 @@ impl Lexer {
     fn consume(&mut self) -> u8 {
         let i = self.pos;
         self.pos += 1;
-        // println!("consuming {}", self.input.get(i).copied().unwrap() as char);
+        println!(
+            "consuming '{}' | pos {}",
+            self.input.get(i).copied().unwrap() as char,
+            i
+        );
         return self.input.get(i).copied().unwrap();
     }
 }
-
-// match buf_type {
-//     BufKind::Word => {
-//         while !buf_str.is_empty() {
-//             match self
-//                 .keyword_reg
-//                 .iter()
-//                 .rev()
-//                 .find(|(str, _)| *str == buf_str)
-//             {
-//                 Some((_, tok)) => return Some(tok.clone()),
-//                 None => buf_str.pop(),
-//             };
-//         }
-//         return Some(Token::Ident(imm_buf_str));
-//     }
-//     BufKind::Symbols => {
-//         while !buf_str.is_empty() {
-//             match self
-//                 .symbol_reg
-//                 .iter()
-//                 .rev()
-//                 .find(|(str, _)| *str == buf_str)
-//             {
-//                 Some((_, tok)) => return Some(tok.clone()),
-//                 None => {
-//                     buf_str.pop();
-//                     self.pos -= 1;
-//                 }
-//             };
-//         }
-//         return None; // illegal.
-//     }
-//     BufKind::IntLit => return Some(Token::IntLit(imm_buf_str)),
-//     BufKind::Illegal => return None,
-// };
