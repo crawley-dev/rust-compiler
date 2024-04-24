@@ -1,4 +1,4 @@
-use crate::lexer::*;
+use crate::lexer::{Token, TokenKind};
 const LOG_DEBUG_INFO: bool = true;
 
 #[derive(Debug, PartialEq)]
@@ -35,8 +35,6 @@ pub enum NodeExpr {
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
     },
-    // BinExpr(TokenKind, Box<NodeExpr>, Box<NodeExpr>),
-    // BoolExpr(TokenKind, Box<NodeExpr>, Box<NodeExpr>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -162,10 +160,12 @@ impl Parser {
                 None => return Err(format!("[COMPILER] No token to parse")),
             };
             if prec < min_prec {
-                println!(
-                    "prec is lower {:?}:{prec} > {min_prec}",
-                    self.peek(0).unwrap()
-                );
+                if LOG_DEBUG_INFO {
+                    println!(
+                        "prec is lower {:?}:{prec} > {min_prec}",
+                        self.peek(0).unwrap()
+                    );
+                }
                 break;
             }
 
@@ -256,6 +256,7 @@ impl Parser {
         let i = self.position;
         self.position += 1;
         return self.tokens[i].clone(); // this works aswell, but clones, ew.
+                                       // return self.tokens.get(i).unwrap()
     }
 
     // fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {

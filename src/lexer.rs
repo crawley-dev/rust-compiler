@@ -224,6 +224,7 @@ impl Lexer {
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
         while self.read_position < self.input.len() {
+            self.skip_whitespace();
             match self.next_token() {
                 Some(tok) => tokens.push(tok),
                 None => continue,
@@ -233,8 +234,6 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Option<Token> {
-        self.skip_whitespace();
-
         return match self.ch {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let ident = self.read_identifier();
@@ -251,23 +250,93 @@ impl Lexer {
                 })
             }
             33..=47 | 58..=64 | 91..=96 | 123..=126 => {
-                let symbols = self.read_symbols();
-                if symbols == "//".to_string() {
+                // let symbols = self.read_symbols();
+                // if symbols == "//".to_string() {
+                //     self.skip_line();
+                //     return None;
+                // } else if symbols == "/*".to_string() {
+                //     self.skip_multiline();
+                //     return None;
+                // }
+
+                // if self.symbols_hash.contains_key(symbols.as_str()) {
+                //     return Some(Token {
+                //         kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
+                //         value: None,
+                //     });
+                // }
+
+                // panic!("Illegal token found! {}", symbols)
+
+                let pos = self.position;
+                'lol: loop {
+                    // println!("checking {}", self.position);
+                    // match self.ch {
+                    //     33..=47 | 58..=64 | 91..=96 | 123..=126 => self.read_char(),
+                    //     _ => break,
+                    // }
+                    match self.input.get(self.read_position) {
+                        Some(ch) => match ch {
+                            33..=47 | 58..=64 | 91..=96 | 123..=126 => {
+                                // self.position += 1;
+                                self.read_position += 1;
+                            }
+                            _ => {
+                                // if pos == self.position {
+                                // self.position += 1;
+                                self.read_position += 1;
+                                // }
+                                break 'lol;
+                            }
+                        },
+                        None => {
+                            // self.position += 1;
+                            self.read_position += 1;
+                            return None;
+                        }
+                    }
+                }
+
+                let selection = unsafe {
+                    String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec())
+                    // String::from_utf8_unchecked((&self.input[pos..(pos + count)]).to_vec())
+                };
+                let mut registry = [
+                    "{", "}", "(", ")", ";", "=", ",", "/", "*", "+", "-", "==", "!=", "<", "<=",
+                    ">", ">=", "||", "!", "&&",
+                ];
+                registry.sort_unstable();
+
+                let symbols = match registry
+                    .iter()
+                    .rev()
+                    .find(|x| selection.len() >= x.len() && &selection[..x.len()] == **x)
+                {
+                    Some(x) => x,
+                    None => return None,
+                };
+                // self.position -= selection.len() - symbols.len();
+
+                println!(
+                    "symbol found! '{}' from '{}' | pos:{}",
+                    symbols, selection, self.position
+                );
+
+                self.read_char();
+                println!("next char {:?}", self.ch as char);
+
+                if *symbols == "//" {
                     self.skip_line();
                     return None;
-                } else if symbols == "/*".to_string() {
+                } else if *symbols == "/*" {
                     self.skip_multiline();
                     return None;
                 }
 
-                if self.symbols_hash.contains_key(symbols.as_str()) {
-                    return Some(Token {
-                        kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
-                        value: None,
-                    });
-                }
-
-                panic!("Illegal token found! {}", symbols)
+                return Some(Token {
+                    kind: self.symbols_hash.get(symbols).unwrap().clone(),
+                    value: None,
+                });
             }
             b'0'..=b'9' => Some(Token {
                 kind: TokenKind::IntLit,
@@ -277,6 +346,32 @@ impl Lexer {
             _ => panic!("Invalid token! {}", self.ch as char),
         };
     }
+
+    // single-line comment
+    //let z = (10 - 2) + 5;
+
+    /*
+        multi-line
+        comment
+        test
+    */
+
+    /*
+    let x = 5;
+    let y = 10;
+    let z = 22;
+    if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
+        exit(x);
+    } else if x == x {
+        if x + 1 == y {
+            exit(20);
+        } else {
+            exit(33);
+        }
+    } else {
+        exit(10);
+    }
+    */
 
     fn read_identifier(&mut self) -> String {
         let pos = self.position;
@@ -348,12 +443,17 @@ impl Lexer {
     }
 
     fn read_char(&mut self) {
-        self.ch = match self.input.get(self.read_position) {
+        self.ch = match self.input.get(self.position) {
             Some(char) => *char,
             None => 0,
         };
-        self.position = self.read_position;
-        self.read_position += 1;
+        self.position += 1;
+        // self.ch = match self.input.get(self.read_position) {
+        //     Some(char) => *char,
+        //     None => 0,
+        // };
+        // self.position = self.read_position;
+        // self.read_position += 1;
     }
 }
 

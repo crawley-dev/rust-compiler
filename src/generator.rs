@@ -1,5 +1,5 @@
 use crate::{lexer::TokenKind, parser::*};
-use std::{collections::HashMap, fmt::format, io::Write};
+use std::{collections::HashMap, io::Write};
 
 const WORD_SIZE: usize = 8;
 

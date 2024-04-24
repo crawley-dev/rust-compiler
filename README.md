@@ -1,7 +1,16 @@
 an attempt at making a compiler in rust!
 
+          hhh {
+        eee {
+      aaa {
+   ddd {
+aaa }
+  ccc } 
+    hhh }
+      eee }
+
 ### Currently working on: 
-  - [ ] if
+  - [x] if
     - [x] rework lexer to handle multi-symbol keywords (i.e "==" or "<=")
     - [x] parse boolean comparison 
     - [x]  else & else if parsing
@@ -21,7 +30,7 @@ an attempt at making a compiler in rust!
   - [ ] dynamically place variables on stack if they are(nt) used immediately. 
     - use multiple registers to store arguments for a binary expr
     - add stack values at top level (expr, stmt), not term. do ^^
-  - [ ] redesign Lexer, Result<T> && self.read_char() returns char?, akin to self.consume()
+  - [ ] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
   - [ ] update grammar to match code. 
   - [ ] variable reassignement (mutability)
   - [ ] data types
@@ -30,7 +39,8 @@ an attempt at making a compiler in rust!
     - [ ] u16: ax 
     - [ ] u32: eax 
     - [ ] u64: rax
-  - [ ] (Joke mode:) negative whitespace significance, the most nested piece of code has 0 indentations,    everything out has an indentation.
   - [ ] functions
+  - [ ] (Joke mode:) negative whitespace significance, the most nested piece of code has 0 indentations,    everything out has an indentation.
+    - compiler error on uppercase
 
 
