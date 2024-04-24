@@ -1,7 +1,11 @@
 let x = 5;
-let y = 10;
+//let y = 10;
 
-if x*2 == y {
-    exit(10);
-} 
-exit(5);
+/* hello world! 
+let aaa = 25;
+dwa */
+
+/*let in_comment = 100;*/
+
+// this is a commnet YAY
+let after = 20;

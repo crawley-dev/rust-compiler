@@ -1,1 +1,1 @@
-C:\Users\Tom\Desktop\Coding\Rust\rust-compiler\target\debug\rust-compiler.exe: C:\Users\Tom\Desktop\Coding\Rust\rust-compiler\src\main.rs C:\Users\Tom\Desktop\Coding\Rust\rust-compiler\src\misc.rs C:\Users\Tom\Desktop\Coding\Rust\rust-compiler\src\new_lexer.rs
+C:\Users\User\Desktop\code\Rust\rust-compiler\target\debug\rust-compiler.exe: C:\Users\User\Desktop\code\Rust\rust-compiler\src\main.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\misc.rs C:\Users\User\Desktop\code\Rust\rust-compiler\src\new_lexer.rs

@@ -21,6 +21,6 @@ pub fn get_file_contents(file_path: String) -> Vec<String> {
         .unwrap_or_else(|_| panic!("[COMPILER] Error opening file\n"));
     return io::BufReader::new(file)
         .lines()
-        .map(|line| line.unwrap()) //  + "\n" // string literal
+        .map(|line| line.unwrap() + "\n") //  + "\n" // string literal
         .collect::<Vec<String>>();
 }

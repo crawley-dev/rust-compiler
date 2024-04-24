@@ -73,11 +73,11 @@ fn lex(input: String) -> Vec<new_lexer::Token> {
 fn print_aligned_tokens_v2(tokens: &Vec<Token>) {
     let max_len = tokens
         .iter()
-        .map(|tok| format!("{}", tok.dwa()).len())
+        .map(|tok| format!("{}", tok.debug_print()).len())
         .max()
         .unwrap_or(0);
     for tok in tokens {
-        let str = tok.dwa();
+        let str = tok.debug_print();
         let whitespace = " ".repeat(max_len - str.len());
         println!("{} {whitespace}}}", str);
     }
