@@ -1,4 +1,4 @@
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{KeywordKind, OperandKind, SymbolKind, Token};
 const LOG_DEBUG_INFO: bool = true;
 
 #[derive(Debug, PartialEq)]
@@ -26,12 +26,12 @@ pub enum NodeStmt {
 pub enum NodeExpr {
     Term(Box<NodeTerm>),
     BinExpr {
-        op: TokenKind,
+        op: OperandKind,
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
     },
     BoolExpr {
-        op: TokenKind,
+        op: OperandKind,
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
     },
@@ -58,7 +58,6 @@ impl Parser {
         return parser;
     }
 
-    // pub fn parse_prog(&mut self) -> Result<NodeProg, &'static str> {
     pub fn parse_prog(&mut self) -> Result<NodeProg, String> {
         let mut prog = NodeProg { stmts: vec![] };
         while self.peek(0).is_some() {
@@ -67,7 +66,6 @@ impl Parser {
         return Ok(prog);
     }
 
-    // fn parse_stmt(&mut self) -> Result<NodeStmt, &'static str> {
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
@@ -133,7 +131,6 @@ impl Parser {
         };
     }
 
-    // fn parse_scope(&mut self) -> Result<NodeScope, &'static str> {
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
         self.try_consume(TokenKind::OpenSquirly)?;
         let mut stmts = Vec::new();
@@ -149,7 +146,6 @@ impl Parser {
         });
     }
 
-    // fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, &'static str> {
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
         let term = self.parse_term()?;
         let mut expr = NodeExpr::Term(Box::new(term));
@@ -192,7 +188,6 @@ impl Parser {
         return Ok(expr);
     }
 
-    // fn parse_term(&mut self) -> Result<NodeTerm, &'static str> {
     fn parse_term(&mut self) -> Result<NodeTerm, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
@@ -212,35 +207,21 @@ impl Parser {
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(term)
             }
-            _ => {
-                // if LOG_DEBUG_INFO {
-                //     println!("term: '{:?}'", self.peek(0).unwrap());
-                // }
-                Err(format!(
-                    "[COMPILER] Unable to parse term: {tok:?}:{}",
-                    self.position
-                ))
-            }
+            _ => Err(format!(
+                "[COMPILER] Unable to parse term: {tok:?}:{}",
+                self.position
+            )),
         };
     }
 
-    // fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, &'static str> {
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, String> {
         return match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(true),
             None => Err(format!("[COMPILER] No token to evaluate")),
-            tok @ _ => {
-                // if LOG_DEBUG_INFO {
-                //     println!(
-                //         "[COMPILER] Expected '{kind:?}', found '{:?}'",
-                //         self.peek(offset).unwrap()
-                //     );
-                // }
-                Err(format!(
-                    "[COMPILER] expected '{kind:?}', found {:?}",
-                    tok.unwrap().kind
-                ))
-            }
+            tok @ _ => Err(format!(
+                "[COMPILER] expected '{kind:?}', found {:?}",
+                tok.unwrap().kind
+            )),
         };
     }
 
@@ -259,7 +240,6 @@ impl Parser {
                                        // return self.tokens.get(i).unwrap()
     }
 
-    // fn try_consume(&mut self, kind: TokenKind) -> Result<Token, &'static str> {
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         return Ok(self.consume());

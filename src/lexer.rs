@@ -1,18 +1,12 @@
-use std::{collections::HashMap, fmt};
+/******************************************
+*** WIP ***********************************
+******************************************/
+
+const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
-    OpenSquirly,
-    CloseSquirly,
-    OpenParen,
-    CloseParen,
-    Separator,
-    Comma,
-    Assign, // e.g =
-    Ident,  // e.g: dwa  | a variable name
-    IntLit, // e.g: 55123
-    // Logical
-    LogicalOr, // { prec: i32 }
+pub enum OperandKind {
+    LogicalOr,
     LogicalNot,
     LogicalAnd,
     // Comparison
@@ -27,464 +21,286 @@ pub enum TokenKind {
     Divide,
     Add,
     Subtract,
-    // keywords
-    KeywordExit,
-    KeywordLet,
-    KeywordFunction,
-    KeywordIf,
-    KeywordElse,
-    // KeywordReturn,
-    // KeywordBreak,
-    // KeywordCase,
-    // KeywordConst,
-    // KeywordContinue,
-    // KeywordDefault,
-    // KeywordDo,
-    // KeywordEnum,
-    // KeywordFor,
-    // KeywordSwitch,
-    // KeywordVoid,
-    // KeywordWhile,
-    // KeywordInt,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub value: Option<String>,
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolKind {
+    LineComment,
+    OpenMultiComment,
+    CloseMultiComment,
+    OpenSquirly,
+    CloseSquirly,
+    OpenParen,
+    CloseParen,
+    Separator,
+    StmtEnd,
+    Assign,
+    Arrow,
 }
 
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Token {{ kind: {:?}, value: {:?} }}",
-            self.kind, self.value
-        )
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeywordKind {
+    Exit,
+    Let,
+    If,
+    Else,
+    Function,
 }
 
-impl TokenKind {
-    pub fn width(&self) -> usize {
-        match self {
-            // TokenKind::Illegal => 7,
-            TokenKind::OpenSquirly => 11,
-            TokenKind::CloseSquirly => 12,
-            TokenKind::OpenParen => 9,
-            TokenKind::CloseParen => 10,
-            TokenKind::Separator => 9,
-            TokenKind::Comma => 5,
-            TokenKind::Assign => 6,
-            TokenKind::Ident => 5,
-            TokenKind::IntLit => 6,
-            // Logical
-            TokenKind::LogicalOr => 9,
-            TokenKind::LogicalNot => 10,
-            TokenKind::LogicalAnd => 10,
-            // Comparison
-            TokenKind::Equal => 5,
-            TokenKind::NotEqual => 8,
-            TokenKind::LessThan => 8,
-            TokenKind::LessEqual => 9,
-            TokenKind::GreaterThan => 11,
-            TokenKind::GreaterEqual => 12,
-            // Binary
-            TokenKind::Multiply => 8,
-            TokenKind::Divide => 6,
-            TokenKind::Add => 3,
-            TokenKind::Subtract => 8,
-            // Keywords
-            TokenKind::KeywordExit => 11,
-            TokenKind::KeywordLet => 10,
-            TokenKind::KeywordFunction => 15,
-            TokenKind::KeywordIf => 9,
-            TokenKind::KeywordElse => 11,
-        }
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Symbol(SymbolKind),
+    Operand(OperandKind),
+    Keyword(KeywordKind),
+    Ident(String),
+    IntLit(String),
+}
 
-    // Precedence hierarchy: higher = done first
-    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
-    pub fn get_prec(&self) -> i32 {
-        return match self {
-            // Logical
-            TokenKind::LogicalOr => 3,
-            TokenKind::LogicalNot => 13,
-            TokenKind::LogicalAnd => 4, // "&&" should be done last.
-            // Comparison
-            TokenKind::Equal
-            | TokenKind::NotEqual
-            | TokenKind::LessThan
-            | TokenKind::LessEqual
-            | TokenKind::GreaterThan
-            | TokenKind::GreaterEqual => 8,
-            // Binary Operators
-            TokenKind::Divide | TokenKind::Multiply => 12,
-            TokenKind::Subtract | TokenKind::Add => 11,
-            _ => -1000, // i32 option takes up more space! && .unwrap is a nightmare
-        };
-    }
-
-    pub fn is_logical_op(&self) -> bool {
-        return match self {
-            TokenKind::LogicalOr | TokenKind::LogicalNot | TokenKind::LogicalAnd => true,
-            _ => false,
-        };
-    }
-
-    pub fn is_comparison_op(&self) -> bool {
-        return match self {
-            TokenKind::Equal
-            | TokenKind::NotEqual
-            | TokenKind::LessThan
-            | TokenKind::LessEqual
-            | TokenKind::GreaterEqual
-            | TokenKind::GreaterThan => true,
-            _ => false,
-        };
-    }
-
-    pub fn is_bin_op(&self) -> bool {
-        return match self {
-            TokenKind::Divide | TokenKind::Multiply | TokenKind::Add | TokenKind::Subtract => true,
-            _ => false,
-        };
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BufKind {
+    Word,
+    IntLit,
+    Symbol,
+    Illegal,
 }
 
 impl Token {
-    pub fn debug_print(&self, longest_tok: usize, longest_ident: usize) {
-        let padding = longest_tok - self.kind.width();
-        let binding = " ".repeat(longest_ident - format!("{:?}", self.value).len());
+    pub fn debug_print(&self) -> String {
+        let contents = match self {
+            Token::Symbol(kind) => format!("{:?}", kind),
+            Token::Operand(kind) => format!("{:?}", kind),
+            Token::Keyword(kind) => format!("{:?}", kind),
+            Token::Ident(val) | Token::IntLit(val) => format!("Val({})", val),
+        };
+        return format!("Token {{ {}", contents);
+    }
+}
 
-        println!(
-            "Token {{ kind: {:?}{:width$}, value: {:?}{value_padding} }}",
-            self.kind,
-            "",
-            self.value,
-            width = padding,
-            value_padding = binding,
-        );
+bitflags::bitflags! {
+    pub struct Flags: u8 {
+        const LINE_COMMENT = 1 << 0;
+        const MULTI_COMMENT = 1 << 1;
     }
 }
 
 pub struct Lexer {
-    position: usize,
-    read_position: usize,
-    ch: u8,
+    pos: usize,
     input: Vec<u8>,
-    keywords_hash: HashMap<&'static str, TokenKind>,
-    symbols_hash: HashMap<&'static str, TokenKind>,
+    buffer: Vec<u8>,
+    symbol_reg: [(&'static str, Token); 24],
+    keyword_reg: [(&'static str, Token); 5],
+    is_linecomment: bool,
+    is_multicomment: bool,
+    // flags: u8,
 }
 
 impl Lexer {
     pub fn new(input: String) -> Lexer {
-        let mut lex = Lexer {
-            position: 0,
-            read_position: 0,
-            ch: 0,
+        // TODO: dynamically create & populate HashMaps of same len keys.
+        let mut symbol_reg = [
+            ("{", Token::Symbol(SymbolKind::OpenSquirly)),
+            ("}", Token::Symbol(SymbolKind::CloseSquirly)),
+            ("(", Token::Symbol(SymbolKind::OpenParen)),
+            (")", Token::Symbol(SymbolKind::CloseParen)),
+            (";", Token::Symbol(SymbolKind::StmtEnd)),
+            ("=", Token::Symbol(SymbolKind::Assign)),
+            (",", Token::Symbol(SymbolKind::Separator)),
+            ("/", Token::Operand(OperandKind::Divide)),
+            ("*", Token::Operand(OperandKind::Multiply)),
+            ("+", Token::Operand(OperandKind::Add)),
+            ("-", Token::Operand(OperandKind::Subtract)),
+            ("!", Token::Operand(OperandKind::LogicalNot)),
+            ("==", Token::Operand(OperandKind::Equal)),
+            ("!=", Token::Operand(OperandKind::NotEqual)),
+            ("<", Token::Operand(OperandKind::LessThan)),
+            ("<=", Token::Operand(OperandKind::LessEqual)),
+            (">", Token::Operand(OperandKind::GreaterThan)),
+            (">=", Token::Operand(OperandKind::GreaterEqual)),
+            ("||", Token::Operand(OperandKind::LogicalOr)),
+            ("&&", Token::Operand(OperandKind::LogicalAnd)),
+            ("=>", Token::Symbol(SymbolKind::Arrow)),
+            ("//", Token::Symbol(SymbolKind::LineComment)),
+            ("/*", Token::Symbol(SymbolKind::OpenMultiComment)),
+            ("*/", Token::Symbol(SymbolKind::CloseMultiComment)),
+        ];
+        let mut keyword_reg = [
+            ("exit", Token::Keyword(KeywordKind::Exit)),
+            ("let", Token::Keyword(KeywordKind::Let)),
+            ("fn", Token::Keyword(KeywordKind::Function)),
+            ("if", Token::Keyword(KeywordKind::If)),
+            ("else", Token::Keyword(KeywordKind::Else)),
+        ];
+        symbol_reg.sort_unstable_by_key(|(str, _)| str.len());
+        keyword_reg.sort_unstable_by_key(|(str, _)| str.len());
+
+        return Lexer {
+            pos: 0,
             input: input.into_bytes(),
-            keywords_hash: HashMap::from([
-                ("exit", TokenKind::KeywordExit),
-                ("let", TokenKind::KeywordLet),
-                ("fn", TokenKind::KeywordFunction),
-                ("if", TokenKind::KeywordIf),
-                ("else", TokenKind::KeywordElse),
-            ]),
-            symbols_hash: HashMap::from([
-                // Logical
-                ("||", TokenKind::LogicalOr),
-                ("!", TokenKind::LogicalNot),
-                ("&&", TokenKind::LogicalAnd),
-                // Comparison
-                ("==", TokenKind::Equal),
-                ("!=", TokenKind::NotEqual),
-                ("<", TokenKind::LessThan),
-                ("<=", TokenKind::LessEqual),
-                (">", TokenKind::GreaterThan),
-                (">=", TokenKind::GreaterEqual),
-                // Binary
-                ("/", TokenKind::Divide),
-                ("*", TokenKind::Multiply),
-                ("+", TokenKind::Add),
-                ("-", TokenKind::Subtract),
-                // Stuff
-                ("{", TokenKind::OpenSquirly),
-                ("}", TokenKind::CloseSquirly),
-                ("(", TokenKind::OpenParen),
-                (")", TokenKind::CloseParen),
-                (";", TokenKind::Separator),
-                ("=", TokenKind::Assign),
-                (",", TokenKind::Comma),
-            ]),
+            buffer: Vec::new(),
+            symbol_reg,
+            keyword_reg,
+            is_linecomment: false,
+            is_multicomment: false,
+            // flags: 0,
         };
-        lex.read_char(); // load first character into self.ch
-        return lex;
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
-        let mut tokens: Vec<Token> = Vec::new();
-        while self.read_position < self.input.len() {
-            self.skip_whitespace();
+        let mut tokens = Vec::new();
+        while self.pos < self.input.len() {
             match self.next_token() {
-                Some(tok) => tokens.push(tok),
+                Some(tok) => match tok {
+                    Token::Symbol(SymbolKind::LineComment) => self.is_linecomment = true,
+                    Token::Symbol(SymbolKind::OpenMultiComment) => self.is_multicomment = true,
+                    Token::Symbol(SymbolKind::CloseMultiComment) => self.is_multicomment = false,
+                    _ if self.is_multicomment => (),
+                    _ => {
+                        tokens.push(tok);
+                        if LOG_DEBUG_INFO {
+                            println!("new tok: {:?} | pos {}\n", tokens.last(), self.pos);
+                        }
+                    }
+                },
                 None => continue,
-            }
+            };
         }
         return tokens;
     }
 
     fn next_token(&mut self) -> Option<Token> {
-        return match self.ch {
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                let ident = self.read_identifier();
-                if self.keywords_hash.contains_key(ident.as_str()) {
-                    return Some(Token {
-                        kind: self.keywords_hash.get(ident.as_str()).unwrap().clone(),
-                        value: None,
-                    });
-                }
+        self.buffer = Vec::new();
+        let mut buf_type: BufKind = BufKind::Illegal;
 
-                Some(Token {
-                    kind: TokenKind::Ident,
-                    value: Some(ident),
-                })
-            }
-            33..=47 | 58..=64 | 91..=96 | 123..=126 => {
-                // let symbols = self.read_symbols();
-                // if symbols == "//".to_string() {
-                //     self.skip_line();
-                //     return None;
-                // } else if symbols == "/*".to_string() {
-                //     self.skip_multiline();
-                //     return None;
-                // }
-
-                // if self.symbols_hash.contains_key(symbols.as_str()) {
-                //     return Some(Token {
-                //         kind: self.symbols_hash.get(symbols.as_str()).unwrap().clone(),
-                //         value: None,
-                //     });
-                // }
-
-                // panic!("Illegal token found! {}", symbols)
-
-                let pos = self.position;
-                'lol: loop {
-                    // println!("checking {}", self.position);
-                    // match self.ch {
-                    //     33..=47 | 58..=64 | 91..=96 | 123..=126 => self.read_char(),
-                    //     _ => break,
-                    // }
-                    match self.input.get(self.read_position) {
-                        Some(ch) => match ch {
-                            33..=47 | 58..=64 | 91..=96 | 123..=126 => {
-                                // self.position += 1;
-                                self.read_position += 1;
-                            }
-                            _ => {
-                                // if pos == self.position {
-                                // self.position += 1;
-                                self.read_position += 1;
-                                // }
-                                break 'lol;
-                            }
-                        },
-                        None => {
-                            // self.position += 1;
-                            self.read_position += 1;
-                            return None;
-                        }
-                    }
-                }
-
-                let selection = unsafe {
-                    String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec())
-                    // String::from_utf8_unchecked((&self.input[pos..(pos + count)]).to_vec())
-                };
-                let mut registry = [
-                    "{", "}", "(", ")", ";", "=", ",", "/", "*", "+", "-", "==", "!=", "<", "<=",
-                    ">", ">=", "||", "!", "&&",
-                ];
-                registry.sort_unstable();
-
-                let symbols = match registry
-                    .iter()
-                    .rev()
-                    .find(|x| selection.len() >= x.len() && &selection[..x.len()] == **x)
-                {
-                    Some(x) => x,
-                    None => return None,
-                };
-                // self.position -= selection.len() - symbols.len();
-
-                println!(
-                    "symbol found! '{}' from '{}' | pos:{}",
-                    symbols, selection, self.position
-                );
-
-                self.read_char();
-                println!("next char {:?}", self.ch as char);
-
-                if *symbols == "//" {
-                    self.skip_line();
-                    return None;
-                } else if *symbols == "/*" {
-                    self.skip_multiline();
-                    return None;
-                }
-
-                return Some(Token {
-                    kind: self.symbols_hash.get(symbols).unwrap().clone(),
-                    value: None,
-                });
-            }
-            b'0'..=b'9' => Some(Token {
-                kind: TokenKind::IntLit,
-                value: Some(self.read_int_literal()),
-            }),
-            0 => None,
-            _ => panic!("Invalid token! {}", self.ch as char),
-        };
-    }
-
-    // single-line comment
-    //let z = (10 - 2) + 5;
-
-    /*
-        multi-line
-        comment
-        test
-    */
-
-    /*
-    let x = 5;
-    let y = 10;
-    let z = 22;
-    if x == y && z == 13 || ((12 + 1) - 5) / 3 == 5*2 {
-        exit(x);
-    } else if x == x {
-        if x + 1 == y {
-            exit(20);
-        } else {
-            exit(33);
-        }
-    } else {
-        exit(10);
-    }
-    */
-
-    fn read_identifier(&mut self) -> String {
-        let pos = self.position;
-        while self.ch.is_ascii_alphanumeric() || self.ch == b'_' {
-            self.read_char();
-        }
-        return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
-    }
-
-    fn read_symbols(&mut self) -> String {
-        let pos = self.position;
         loop {
-            match self.ch {
-                b'(' | b')' | b'{' | b'}' | b';' | b',' => {
-                    // not multi_symbols
-                    if pos == self.position {
-                        self.read_char();
-                    }
-                    break;
-                }
-                33..=47 | 58..=64 | 91..=96 | 123..=126 => self.read_char(),
+            if LOG_DEBUG_INFO {
+                print!("\n");
+            }
+
+            let next_char = match self.peek(0) {
+                Some(char) => *char,
+                None => break,
+            };
+
+            if next_char == b'\n' {
+                self.is_linecomment = false;
+                self.consume();
+                break;
+            }
+            if self.is_linecomment {
+                self.consume();
+                break;
+            }
+            // else if self.is_multicomment {
+            //     if next_char == b'*' && self.peek(1).is_some() && *self.peek(1).unwrap() == b'/' {
+            //         self.is_multicomment = false;
+            //     }
+            //     self.consume();
+            //     self.consume();
+            //     break;
+            // }
+            else if next_char.is_ascii_whitespace() {
+                self.consume();
+                break;
+            }
+
+            if LOG_DEBUG_INFO {
+                println!("next_char is some, '{}'", next_char as char);
+            }
+
+            let char_type = match next_char {
+                // b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'0'..=b'9' if buf_type == BufKind::Word => {
+                //     BufKind::Word
+                // }
+                b'a'..=b'z' | b'A'..=b'Z' | b'_' => BufKind::Word,
+                b'0'..=b'9' => BufKind::IntLit,
+                33..=47 | 58..=64 | 91..=96 | 123..=126 => BufKind::Symbol,
                 _ => break,
+            };
+
+            if LOG_DEBUG_INFO {
+                println!(" .. char is: {char_type:?}");
+            }
+
+            if self.buffer.is_empty() {
+                buf_type = char_type.clone();
+                if LOG_DEBUG_INFO {
+                    println!(" .. set buf_type: {buf_type:?}");
+                }
+            }
+            if char_type != buf_type {
+                break;
+            }
+
+            let ch = self.consume();
+
+            if LOG_DEBUG_INFO {
+                println!(" .. adding char {}", ch as char);
+            }
+
+            self.buffer.push(ch);
+        }
+
+        let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
+
+        if LOG_DEBUG_INFO {
+            println!("buf: {buf_str} | pos: {}", self.pos);
+        }
+
+        return match buf_type {
+            BufKind::Illegal => None,
+            BufKind::Word => self.match_word(buf_str),
+            BufKind::Symbol => self.match_symbol(buf_str),
+            BufKind::IntLit => Some(Token::IntLit(buf_str)),
+        };
+    }
+
+    fn match_word(&self, mut buf_str: String) -> Option<Token> {
+        let imm_buf = buf_str.clone();
+        while !buf_str.is_empty() {
+            match self
+                .keyword_reg
+                .iter()
+                .rev()
+                .find(|(str, _)| *str == buf_str)
+            {
+                Some((_, tok)) => return Some(tok.clone()),
+                None => buf_str.pop(),
+            };
+        }
+        return Some(Token::Ident(imm_buf));
+    }
+
+    fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
+        while !buf_str.is_empty() {
+            match self
+                .symbol_reg
+                .iter()
+                .rev()
+                .find(|(str, _)| *str == buf_str)
+            {
+                Some((_, tok)) => return Some(tok.clone()),
+                None => {
+                    buf_str.pop();
+                    self.pos -= 1;
+                    println!("reduce {} | new pos: {}", buf_str, self.pos);
+                }
             }
         }
-        return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
+        return None;
     }
 
-    fn read_int_literal(&mut self) -> String {
-        let pos = self.position;
-        while self.ch.is_ascii_digit() {
-            self.read_char();
-        }
-        return unsafe { String::from_utf8_unchecked((&self.input[pos..self.position]).to_vec()) };
+    fn peek(&self, offset: usize) -> Option<&u8> {
+        return self.input.get(self.pos + offset);
     }
 
-    fn skip_whitespace(&mut self) {
-        while self.ch.is_ascii_whitespace() {
-            self.read_char();
-        }
-    }
-
-    // fn skip_comments(&mut self, symbols: &String) {
-    //     match symbols.as_str() {
-    //         "//" => {
-    //             while self.ch != b'\n' {
-    //                 self.read_char();
-    //             }
-    //         }
-    //         "/*" => {
-    //             while self.read_symbols() != "*/".to_string() {
-    //                 self.read_char();
-    //             }
-    //         }
-    //         // "*/" => {}
-    //         _ => return,
-    //     }
-    // }
-
-    fn skip_line(&mut self) {
-        while self.ch != b'\n' {
-            self.read_char();
-        }
-    }
-
-    fn skip_multiline(&mut self) {
-        while self.read_symbols() != "*/".to_string() {
-            self.read_char();
-        }
-    }
-
-    fn read_char(&mut self) {
-        self.ch = match self.input.get(self.position) {
-            Some(char) => *char,
-            None => 0,
-        };
-        self.position += 1;
-        // self.ch = match self.input.get(self.read_position) {
-        //     Some(char) => *char,
-        //     None => 0,
-        // };
-        // self.position = self.read_position;
-        // self.read_position += 1;
+    fn consume(&mut self) -> u8 {
+        let i = self.pos;
+        self.pos += 1;
+        println!(
+            "consuming '{}' | pos {}",
+            self.input.get(i).copied().unwrap() as char,
+            i
+        );
+        return self.input.get(i).copied().unwrap();
     }
 }
-
-/*
-// DONT REMOVE THE HASHMAP!!
-    let keywords: HashMap<&str, TokenKind> = HashMap::from([
-        ("if", TokenKind::KeywordIf),
-        ("do", TokenKind::KeywordDo),
-        ("for", TokenKind::KeywordFor),
-        ("case", TokenKind::KeywordCase),
-        ("else", TokenKind::KeywordElse),
-        ("enum", TokenKind::KeywordEnum),
-        ("void", TokenKind::KeywordVoid),
-        ("const", TokenKind::KeywordConst),
-        ("while", TokenKind::KeywordWhile),
-        ("break", TokenKind::KeywordBreak),
-        ("switch", TokenKind::KeywordSwitch),
-        ("return", TokenKind::KeywordReturn),
-        ("default", TokenKind::KeywordDefault),
-        ("continue", TokenKind::KeywordContinue),
-        // Integers
-        ("i8", TokenKind::KeywordI8),
-        ("i16", TokenKind::KeywordI16),
-        ("i32", TokenKind::KeywordI32),
-        ("i64", TokenKind::KeywordI64),
-        ("u8", TokenKind::KeywordU8),
-        ("u16", TokenKind::KeywordU16),
-        ("u32", TokenKind::KeywordU32),
-        ("u64", TokenKind::KeywordU64),
-        // Floats
-        ("f32", TokenKind::KeywordF32),
-        ("f64", TokenKind::KeywordF64),
-    ]);
-*/

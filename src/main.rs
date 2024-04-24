@@ -1,12 +1,13 @@
 mod misc;
-mod new_lexer;
-use crate::new_lexer::*;
+
+mod lexer;
+use crate::lexer::*;
 
 // mod lexer;
 // use crate::lexer::*;
 
-// mod parser;
-// use crate::parser::*;
+mod parser;
+use crate::parser::*;
 
 // mod generator;
 // use crate::generator::*;
@@ -20,26 +21,26 @@ fn main() {
     let input = contents.into_iter().collect::<String>();
 
     let tokens = lex(input);
-    // let program = parse(tokens);
+    let program = parse(tokens);
     // generate(program, file_name);
 }
 
-fn lex(input: String) -> Vec<new_lexer::Token> {
-    let mut lexer = new_lexer::Lexer::new(input);
+fn lex(input: String) -> Vec<lexer::Token> {
+    let mut lexer = lexer::Lexer::new(input);
     let tokens = lexer.tokenize();
     print_aligned_tokens_v2(&tokens);
     return tokens;
 }
 
-// fn parse(tokens: Vec<Token>) -> NodeProg {
-//     let mut parser = Parser::new(tokens);
-//     let program = match parser.parse_prog() {
-//         Ok(t) => t,
-//         Err(e) => panic!("\n{e}\n"),
-//     };
-//     println!("\n\n{:#?}\n\n", program.stmts);
-//     return program;
-// }
+fn parse(tokens: Vec<Token>) -> NodeProg {
+    let mut parser = Parser::new(tokens);
+    let program = match parser.parse_prog() {
+        Ok(t) => t,
+        Err(e) => panic!("\n{e}\n"),
+    };
+    println!("\n\n{:#?}\n\n", program.stmts);
+    return program;
+}
 
 // fn generate(program: NodeProg, file_name: String) {
 //     let output_path = format!("./output/{}.asm", file_name);
@@ -49,6 +50,19 @@ fn lex(input: String) -> Vec<new_lexer::Token> {
 //         Err(e) => panic!("\n{e}\n"),
 //     };
 // }
+
+fn print_aligned_tokens_v2(tokens: &Vec<Token>) {
+    let max_len = tokens
+        .iter()
+        .map(|tok| format!("{}", tok.debug_print()).len())
+        .max()
+        .unwrap_or(0);
+    for tok in tokens {
+        let str = tok.debug_print();
+        let whitespace = " ".repeat(max_len - str.len());
+        println!("{} {whitespace}}}", str);
+    }
+}
 
 // fn print_aligned_tokens(tokens: &Vec<Token>) {
 //     let longest_tok = tokens.iter().map(|t| t.kind.width()).max().unwrap_or(0);
@@ -69,19 +83,6 @@ fn lex(input: String) -> Vec<new_lexer::Token> {
 //     print_aligned_tokens(&tokens);
 //     return tokens;
 // }
-
-fn print_aligned_tokens_v2(tokens: &Vec<Token>) {
-    let max_len = tokens
-        .iter()
-        .map(|tok| format!("{}", tok.debug_print()).len())
-        .max()
-        .unwrap_or(0);
-    for tok in tokens {
-        let str = tok.debug_print();
-        let whitespace = " ".repeat(max_len - str.len());
-        println!("{} {whitespace}}}", str);
-    }
-}
 
 // UBUNTU bash script:
 // read file
