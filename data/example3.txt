@@ -1,5 +1,4 @@
 let x = 5;
-let y = 10;
 
 
 /* WOW THIS IS SO ABSOLUTE_LYDW1234 COOL ****d-d-wadwaju4577djdmadjdw 
@@ -10,4 +9,9 @@ if x*2 == y {
 } else {
     exit(1);
 }
-;**dwa;*/
+;**dwa;*/ 
+
+/*;let y = 10 ; */
+
+let mut z123 = 20;
+z123 = 40;

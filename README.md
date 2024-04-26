@@ -30,9 +30,9 @@ aaa }
   - [ ] dynamically place variables on stack if they are(nt) used immediately. 
     - use multiple registers to store arguments for a binary expr
     - add stack values at top level (expr, stmt), not term. do ^^
-  - [ ] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
-  - [ ] update grammar to match code. 
-  - [ ] variable reassignement (mutability)
+  - [x] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
+  - [x] update grammar to match code. 
+  - [x] variable reassignment (mutability)
   - [ ] data types
     - [ ] bools: al register (8 bit)
     - [ ] u8: al

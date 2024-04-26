@@ -4,9 +4,10 @@ use std::{collections::HashMap, io::Write};
 const WORD_SIZE: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Variable {
+struct Variable {
     stk_pos: usize,
     ident: String,
+    mutable: bool,
 }
 
 pub struct Generator {
@@ -33,14 +34,14 @@ impl Generator {
         return generator;
     }
 
-    pub fn generate_prog(&mut self) -> Result<(), &'static str> {
+    pub fn generate_prog(&mut self) -> Result<(), String> {
         let mut file = std::fs::File::create(&self.file_path).expect("Invalid filepath given.");
 
         file.write_all(
             b"global _start\n\
                   _start:\n",
         )
-        .expect("unable to write to file.");
+        .expect("unable to do init write to file.");
 
         while !self.prog.stmts.is_empty() {
             let stmt = self.prog.stmts.remove(0);
@@ -54,7 +55,7 @@ impl Generator {
     }
 
     // TODO: BYTE ARRAYS!
-    fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, &'static str> {
+    fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
         return match stmt {
             NodeStmt::Exit(expr) => {
                 let expr_asm = self.gen_expr(expr)?;
@@ -67,20 +68,32 @@ impl Generator {
                      syscall\n",
                 ))
             }
-            NodeStmt::Let(ident, expr) => {
+            NodeStmt::Let(ident, assignment, mutable) => {
                 if self.vars_map.contains_key(ident.value.as_ref().unwrap()) {
-                    return Err("[COMPILER] Identifier already used.");
+                    return Err(format!("[COMPILER_GEN] Variable already exists."));
                 }
+
+                let assign_asm = self.gen_stmt(*assignment)?;
 
                 let var = Variable {
                     stk_pos: self.stk_ptr + 1,
-                    ident: ident.value.unwrap(),
+                    ident: ident.value.unwrap(), // << needs ident.
+                    mutable,
                 };
 
-                self.vars_map.insert(var.ident.clone(), var.clone()); // yummy clones
+                self.vars_map.insert(var.ident.clone(), var.clone()); // TODO: fix skill issue.
                 self.vars_vec.push(var);
 
-                Ok(self.gen_expr(expr)?)
+                Ok(assign_asm)
+            }
+            NodeStmt::Assign(ident, expr) => {
+                return match self.vars_map.get(ident.value.as_ref().unwrap()) {
+                    Some(var) if !var.mutable => Err(format!(
+                        "[COMPILER_GEN] Attempted re-assignment of constant '{}'",
+                        ident.value.unwrap()
+                    )),
+                    _ => Ok(self.gen_expr(expr)?),
+                }
             }
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::If(expr, scope, branches) => {
@@ -97,21 +110,6 @@ impl Generator {
                 // .. operand changes jump instruction, e.g je (jump if equal)
                 // .. .. do the inverse of the condition:
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
-
-                // let cmp_expr_asm = self.gen_expr(expr)?;
-                // let label = self.create_label("if_false");
-                // let scope_asm = self.gen_scope(scope)?;
-                // let mut branches_asm = String::new();
-                // for branch in branches {
-                //     branches_asm += &self.gen_stmt(branch)?;
-                // }
-
-                // Ok(format!(
-                //     "{cmp_expr_asm} {label}\n\
-                //      {scope_asm}\
-                //      {label}:\n\
-                //      {branches_asm}"
-                // ))
 
                 let expr_asm = self.gen_expr(expr)?;
                 let pop_expr = self.pop("rax");
@@ -166,7 +164,7 @@ impl Generator {
         };
     }
 
-    fn gen_scope(&mut self, scope: NodeScope) -> Result<String, &'static str> {
+    fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
         self.scopes.push(scope.stmts.len());
 
         let mut asm = String::new();
@@ -192,7 +190,7 @@ impl Generator {
         Ok(asm)
     }
 
-    fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, &'static str> {
+    fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, String> {
         return match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
             NodeExpr::BinExpr { op, lhs, rhs } => {
@@ -207,7 +205,11 @@ impl Generator {
                     TokenKind::Multiply => "    mul rbx\n",
                     TokenKind::Subtract => "    sub rax, rbx\n",
                     TokenKind::Add => "    add rax, rbx\n",
-                    _ => return Err("[COMPILER] Unable to generate binary expression"),
+                    _ => {
+                        return Err(format!(
+                            "[COMPILER_GEN] Unable to generate binary expression"
+                        ))
+                    }
                 };
 
                 let push_ans = self.push("rax");
@@ -238,7 +240,7 @@ impl Generator {
                     TokenKind::GreaterEqual => "    setge al\n",
                     TokenKind::LessThan => "    setl al\n",
                     TokenKind::LessEqual => "    setle al\n",
-                    _ => return Err("[COMPILER] Unable to generate bool comparison"),
+                    _ => return Err(format!("[COMPILER_GEN] Unable to generate bool comparison")),
                 };
 
                 let mov_asm = "    movzx rax, al\n";
@@ -254,29 +256,11 @@ impl Generator {
                      {mov_asm}\
                      {push_ans}"
                 ))
-
-                // let jmp_asm = match op {
-                //     TokenKind::Equal => "    jne",       // je
-                //     TokenKind::GreaterThan => "    jle", // jg
-                //     TokenKind::GreaterEqual => "    jl", // jge
-                //     TokenKind::LessThan => "    jge",    // jl
-                //     TokenKind::LessEqual => "    jg",    // jle
-                //     _ => return Err("[COMPILER] Unable to generate comparison"),
-                // };
-
-                // Ok(format!(
-                //     "{lhs_asm}\
-                //      {rhs_asm}\
-                //      {pop_lhs}\
-                //      {pop_rhs}\
-                //      {cmp_asm}\
-                //      {jmp_asm}"
-                // ))
             }
         };
     }
 
-    fn gen_term(&mut self, term: NodeTerm) -> Result<String, &'static str> {
+    fn gen_term(&mut self, term: NodeTerm) -> Result<String, String> {
         match term {
             NodeTerm::IntLit(token) => {
                 return Ok(format!(
@@ -289,7 +273,7 @@ impl Generator {
             NodeTerm::Ident(token) => {
                 let ident = &token.value.unwrap();
                 if !self.vars_map.contains_key(ident) {
-                    return Err("[COMPILER] Identifier doesn't exist.");
+                    return Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist."));
                 }
 
                 let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;

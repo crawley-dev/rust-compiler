@@ -22,7 +22,7 @@ $$
 		[\text{BoolExpr}] \\
 	\end{cases} \\
 
-	[\text{Atomic Term}] &\to
+	[\text{Term}] &\to
 	\begin{cases}
 		\text{ident} \\
 		\text{int\_lit} \\
@@ -31,10 +31,23 @@ $$
 
 	[\text{BinExpr}] &\to 
 	\begin{cases}
-		[\text{Expr}] * [\text{Expr}] & \text{prec} = 1 \\
-		[\text{Expr}] / [\text{Expr}] & \text{prec} = 1 \\
-		[\text{Expr}] + [\text{Expr}] & \text{prec} = 0 \\ 
-		[\text{Expr}] - [\text{Expr}] & \text{prec} = 0 \\
+		[\text{Expr}] * [\text{Expr}] & \text{prec} = 11 \\
+		[\text{Expr}] / [\text{Expr}] & \text{prec} = 11 \\
+		[\text{Expr}] - [\text{Expr}] & \text{prec} = 10 \\
+		[\text{Expr}] + [\text{Expr}] & \text{prec} = 10 \\ 
+	\end{cases} \\
+
+	[\text{BoolExpr}] &\to 
+	\begin{cases}
+		[\text{Expr}] & \text{!}  & [\text{Expr}] & \text{prec} = 13 \\
+		[\text{Expr}] & \text{==} & [\text{Expr}] & \text{prec} = 8  \\
+		[\text{Expr}] & \text{!=} & [\text{Expr}] & \text{prec} = 8  \\
+		[\text{Expr}] & \text{<=} & [\text{Expr}] & \text{prec} = 8  \\ 
+		[\text{Expr}] & \text{>=} & [\text{Expr}] & \text{prec} = 8  \\
+		[\text{Expr}] & \text{<}  & [\text{Expr}] & \text{prec} = 8  \\
+		[\text{Expr}] & \text{>}  & [\text{Expr}] & \text{prec} = 8  \\
+		[\text{Expr}] & \text{OR} & [\text{Expr}] & \text{prec} = 3  \\
+		[\text{Expr}] & \text{AND} & [\text{Expr}] & \text{prec} = 4  \\
 	\end{cases} \\
 
 

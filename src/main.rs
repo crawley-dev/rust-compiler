@@ -3,14 +3,11 @@ mod misc;
 mod lexer;
 use crate::lexer::*;
 
-// mod lexer;
-// use crate::lexer::*;
-
 mod parser;
 use crate::parser::*;
 
-// mod generator;
-// use crate::generator::*;
+mod generator;
+use crate::generator::*;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -22,7 +19,7 @@ fn main() {
 
     let tokens = lex(input);
     let program = parse(tokens);
-    // generate(program, file_name);
+    generate(program, file_name);
 }
 
 fn lex(input: String) -> Vec<lexer::Token> {
@@ -42,47 +39,28 @@ fn parse(tokens: Vec<Token>) -> NodeProg {
     return program;
 }
 
-// fn generate(program: NodeProg, file_name: String) {
-//     let output_path = format!("./output/{}.asm", file_name);
-//     let mut generator = Generator::new(program, output_path.clone());
-//     match generator.generate_prog() {
-//         Ok(_) => println!("[COMPILER] output placed in '{output_path}'"),
-//         Err(e) => panic!("\n{e}\n"),
-//     };
-// }
+fn generate(program: NodeProg, file_name: String) {
+    let output_path = format!("./output/{}.asm", file_name);
+    let mut generator = Generator::new(program, output_path.clone());
+    match generator.generate_prog() {
+        Ok(_) => println!("[COMPILER] output placed in '{output_path}'"),
+        Err(e) => panic!("\n{e}\n"),
+    };
+}
 
 fn print_aligned_tokens_v2(tokens: &Vec<Token>) {
+    // TODO: Improve.
     let max_len = tokens
         .iter()
-        .map(|tok| format!("{}", tok.debug_print()).len())
+        .map(|tok| format!("{}", format!("{tok:?}")).len())
         .max()
         .unwrap_or(0);
     for tok in tokens {
-        let str = tok.debug_print();
+        let str = format!("{tok:?}");
         let whitespace = " ".repeat(max_len - str.len());
-        println!("{} {whitespace}}}", str);
+        println!("Token {{ {str}{whitespace} }}")
     }
 }
-
-// fn print_aligned_tokens(tokens: &Vec<Token>) {
-//     let longest_tok = tokens.iter().map(|t| t.kind.width()).max().unwrap_or(0);
-//     let longest_ident = tokens
-//         .iter()
-//         .map(|t| format!("{:?}", t.value).len())
-//         .max()
-//         .unwrap_or(0);
-
-//     for token in tokens {
-//         token.debug_print(longest_tok, longest_ident);
-//     }
-// }
-
-// fn lex_v1(input: String) -> Vec<Token> {
-//     let mut lexer = lexer::Lexer::new(input);
-//     let tokens: Vec<Token> = lexer.tokenize();
-//     print_aligned_tokens(&tokens);
-//     return tokens;
-// }
 
 // UBUNTU bash script:
 // read file
