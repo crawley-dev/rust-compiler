@@ -193,26 +193,26 @@ impl Generator {
     fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, String> {
         return match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
-            NodeExpr::BinExpr { op, lhs, rhs } => {
+            NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let lhs_asm = self.gen_expr(*rhs)?; // these are flipped, for asm reasons
                 let rhs_asm = self.gen_expr(*lhs)?;
 
                 let pop_lhs = self.pop("rax");
                 let pop_rhs = self.pop("rbx");
+                let push_ans = self.push("rax");
 
                 let operation_asm = match op {
-                    TokenKind::Divide => "    div rbx\n",
-                    TokenKind::Multiply => "    mul rbx\n",
-                    TokenKind::Subtract => "    sub rax, rbx\n",
-                    TokenKind::Add => "    add rax, rbx\n",
+                    TokenKind::Divide => format!("    div rbx\n"),
+                    TokenKind::Multiply => format!("    mul rbx\n"),
+                    TokenKind::Subtract => format!("    sub rax, rbx\n"),
+                    TokenKind::Add => format!("    add rax, rbx\n"),
+                    _ if op.is_cmp_op() => self.gen_cmp(op)?,
                     _ => {
                         return Err(format!(
-                            "[COMPILER_GEN] Unable to generate binary expression"
+                            "[COMPILER_GEN] Unable to generate Binary expression"
                         ))
                     }
                 };
-
-                let push_ans = self.push("rax");
 
                 Ok(format!(
                     "{lhs_asm}\
@@ -223,40 +223,7 @@ impl Generator {
                      {push_ans}",
                 ))
             }
-            // boolean expression generates cmp && jump instruction?
-            // yeah I guess..
-            NodeExpr::BoolExpr { op, lhs, rhs } => {
-                let lhs_asm = self.gen_expr(*rhs)?;
-                let rhs_asm = self.gen_expr(*lhs)?;
-
-                let pop_lhs = self.pop("rax");
-                let pop_rhs = self.pop("rbx");
-
-                let cmp_asm = "    cmp rax, rbx\n";
-
-                let set_asm = match op {
-                    TokenKind::Equal => "    sete al\n",
-                    TokenKind::GreaterThan => "    setg al\n",
-                    TokenKind::GreaterEqual => "    setge al\n",
-                    TokenKind::LessThan => "    setl al\n",
-                    TokenKind::LessEqual => "    setle al\n",
-                    _ => return Err(format!("[COMPILER_GEN] Unable to generate bool comparison")),
-                };
-
-                let mov_asm = "    movzx rax, al\n";
-                let push_ans = self.push("rax");
-
-                Ok(format!(
-                    "{lhs_asm}\
-                     {rhs_asm}\
-                     {pop_lhs}\
-                     {pop_rhs}\
-                     {cmp_asm}\
-                     {set_asm}\
-                     {mov_asm}\
-                     {push_ans}"
-                ))
-            }
+            NodeExpr::UnaryExpr { op, operand } => todo!(""),
         };
     }
 
@@ -283,6 +250,29 @@ impl Generator {
             }
             NodeTerm::Paren(expr) => return self.gen_expr(expr),
         };
+    }
+
+    fn gen_cmp(&mut self, op: TokenKind) -> Result<String, String> {
+        let set_asm = match op {
+            TokenKind::Equal => "    sete al\n",
+            TokenKind::NotEqual => "    setne al\n",
+            TokenKind::GreaterThan => "    setg al\n",
+            TokenKind::GreaterEqual => "    setge al\n",
+            TokenKind::LessThan => "    setl al\n",
+            TokenKind::LessEqual => "    setle al\n",
+            _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
+        };
+
+        let cmp_asm = "    cmp rax, rbx\n";
+        let mov_asm = "    movzx rax, al\n";
+        let push_ans = self.push("rax");
+
+        Ok(format!(
+            "{cmp_asm}\
+             {set_asm}\
+             {mov_asm}\
+             {push_ans}"
+        ))
     }
 
     fn push(&mut self, reg: &str) -> String {

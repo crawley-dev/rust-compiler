@@ -16,34 +16,40 @@ enum BufKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // Comparison
-    LogicalOr,
-    LogicalNot,
-    LogicalAnd,
+    // symbols
+    StmtEnd,
+    Separator,
+    OpenParen,
+    CloseParen,
+    LineComment,
+    OpenSquirly,
+    CloseSquirly,
+    OpenMultiComment,
+    CloseMultiComment,
+
+    // operators
+    Assign,
+    Add,
+    Divide,
+    Subtract,
+    Multiply,
     Equal,
     NotEqual,
     LessThan,
     LessEqual,
     GreaterThan,
     GreaterEqual,
-    // Binary
-    Multiply,
-    Divide,
-    Add,
-    Subtract,
+    LogicalOr,
+    LogicalNot,
+    LogicalAnd,
+    BitwiseOr,
+    BitwiseNot,
+    BitwiseXor,
+    BitwiseAnd,
+    LeftShift,
+    RightShift,
 
-    LineComment,
-    OpenMultiComment,
-    CloseMultiComment,
-    OpenSquirly,
-    CloseSquirly,
-    OpenParen,
-    CloseParen,
-    Separator,
-    StmtEnd,
-    Assign,
-    Arrow,
-
+    // keywords
     Exit,
     Let,
     If,
@@ -78,41 +84,64 @@ impl TokenKind {
     // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
     pub fn get_prec(&self) -> i32 {
         return match self {
-            // Comparison
+            TokenKind::Assign => 1,
             TokenKind::LogicalOr => 3,
-            TokenKind::LogicalNot => 13,
-            TokenKind::LogicalAnd => 4, // "&&" should be done last.
+            TokenKind::BitwiseOr => 5,
+            TokenKind::LogicalAnd => 4,
+            TokenKind::BitwiseXor => 6,
+            TokenKind::BitwiseAnd => 7,
             TokenKind::Equal
             | TokenKind::NotEqual
             | TokenKind::LessThan
             | TokenKind::LessEqual
             | TokenKind::GreaterThan
             | TokenKind::GreaterEqual => 8,
-            // Binary Operators
-            TokenKind::Divide | TokenKind::Multiply => 12,
+            TokenKind::LeftShift | TokenKind::RightShift => 10,
             TokenKind::Subtract | TokenKind::Add => 11,
-            _ => -1000, // i32 option takes up more space! && .unwrap is a nightmare
+            TokenKind::Divide | TokenKind::Multiply => 12,
+            TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
+            _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
         };
     }
 
-    pub fn is_bin_op(&self) -> bool {
+    pub fn is_cmp_op(&self) -> bool {
         return match self {
-            TokenKind::Divide | TokenKind::Multiply | TokenKind::Add | TokenKind::Subtract => true,
+            TokenKind::Equal
+            | TokenKind::NotEqual
+            | TokenKind::GreaterThan
+            | TokenKind::GreaterEqual
+            | TokenKind::LessThan
+            | TokenKind::LessEqual => true,
             _ => false,
         };
     }
 
-    pub fn is_bool_op(&self) -> bool {
+    pub fn is_binary_op(&self) -> bool {
         return match self {
-            TokenKind::LogicalOr
-            | TokenKind::LogicalNot
+            TokenKind::Divide
+            | TokenKind::Multiply
+            | TokenKind::Add
+            | TokenKind::Subtract
+            | TokenKind::LogicalOr
             | TokenKind::LogicalAnd
+            | TokenKind::BitwiseOr
+            | TokenKind::BitwiseXor
+            | TokenKind::BitwiseAnd
             | TokenKind::Equal
             | TokenKind::NotEqual
             | TokenKind::LessThan
             | TokenKind::LessEqual
+            | TokenKind::GreaterThan
             | TokenKind::GreaterEqual
-            | TokenKind::GreaterThan => true,
+            | TokenKind::LeftShift
+            | TokenKind::RightShift => true,
+            _ => false,
+        };
+    }
+
+    pub fn is_unary_op(&self) -> bool {
+        return match self {
+            TokenKind::BitwiseNot | TokenKind::LogicalNot => true,
             _ => false,
         };
     }
@@ -130,30 +159,38 @@ pub struct Lexer {
 impl Lexer {
     pub fn new(input: String) -> Lexer {
         let reg: HashMap<&'static str, TokenKind> = HashMap::from([
-            ("{", TokenKind::OpenSquirly),
-            ("}", TokenKind::CloseSquirly),
+            // symbols
+            (";", TokenKind::StmtEnd),
+            (",", TokenKind::Separator),
             ("(", TokenKind::OpenParen),
             (")", TokenKind::CloseParen),
-            (";", TokenKind::StmtEnd),
+            ("{", TokenKind::OpenSquirly),
+            ("}", TokenKind::CloseSquirly),
+            ("//", TokenKind::LineComment),
+            ("/*", TokenKind::OpenMultiComment),
+            ("*/", TokenKind::CloseMultiComment),
+            // operators
             ("=", TokenKind::Assign),
-            (",", TokenKind::Separator),
-            ("/", TokenKind::Divide),
-            ("*", TokenKind::Multiply),
             ("+", TokenKind::Add),
+            ("/", TokenKind::Divide),
             ("-", TokenKind::Subtract),
-            ("!", TokenKind::LogicalNot),
+            ("*", TokenKind::Multiply),
             ("==", TokenKind::Equal),
             ("!=", TokenKind::NotEqual),
             ("<", TokenKind::LessThan),
             ("<=", TokenKind::LessEqual),
             (">", TokenKind::GreaterThan),
             (">=", TokenKind::GreaterEqual),
+            ("!", TokenKind::LogicalNot),
             ("||", TokenKind::LogicalOr),
             ("&&", TokenKind::LogicalAnd),
-            ("=>", TokenKind::Arrow),
-            ("//", TokenKind::LineComment),
-            ("/*", TokenKind::OpenMultiComment),
-            ("*/", TokenKind::CloseMultiComment),
+            ("|", TokenKind::BitwiseOr),
+            ("~", TokenKind::BitwiseNot),
+            ("^", TokenKind::BitwiseXor),
+            ("&", TokenKind::BitwiseAnd),
+            (">>", TokenKind::LeftShift),
+            ("<<", TokenKind::RightShift),
+            // keywords
             ("exit", TokenKind::Exit),
             ("let", TokenKind::Let),
             ("fn", TokenKind::Function),

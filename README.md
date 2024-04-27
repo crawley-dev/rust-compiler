@@ -9,6 +9,14 @@ aaa }
     hhh }
       eee }
 
+
+## Core Functionality Required:
+- [x] variables WITH DATA TYPES 
+- [x] operations: (boolean, logical//bitwise, binary)
+- [x] control flow branches: (if/else)
+- [ ] loops: (while/for)
+- [ ] functions: (recursion << should be free?)
+
 ### Currently working on: 
   - [x] if
     - [x] rework lexer to handle multi-symbol keywords (i.e "==" or "<=")
@@ -33,6 +41,14 @@ aaa }
   - [x] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
   - [x] update grammar to match code. 
   - [x] variable reassignment (mutability)
+  - [ ] Operators
+    - [x] binary
+    - [] logical
+      - i.e: if (5)  | 5 != 0 so -> if (true) 
+      - i.e: if (!5) | 5 == 0 so -> if (false)  
+    - [] bitwise
+    - [] unary
+    - [ ] Associativity
   - [ ] data types
     - [ ] bools: al register (8 bit)
     - [ ] u8: al
@@ -40,6 +56,21 @@ aaa }
     - [ ] u32: eax 
     - [ ] u64: rax
   - [ ] functions
+    - return type
+    - arguments 
+    - body
+    - program entry point ("main")
+  - [ ] Implement C equivalent operators:
+    - [ ] comma: ','
+    - [ ] assignment: '=' | '+=' | '/=' | .. 
+    - [ ] modulus: %
+    - [ ] logical not: !
+    - [ ] unary minus: i.e -10
+    - [ ] function call: '()'
+    - [ ] array subscript: '[]'
+    - [ ] struct member: '.' | '->'
+    - [ ] Increment/Decrement (OPTIONAL)
+    - cast: (type)
   - [ ] (Joke mode:) negative whitespace significance, the most nested piece of code has 0 indentations,    everything out has an indentation.
     - compiler error on uppercase
 

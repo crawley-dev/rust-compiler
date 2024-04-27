@@ -27,12 +27,11 @@ pub enum NodeStmt {
 #[derive(Debug, PartialEq)]
 pub enum NodeExpr {
     Term(Box<NodeTerm>),
-    BinExpr {
+    UnaryExpr {
         op: TokenKind,
-        lhs: Box<NodeExpr>,
-        rhs: Box<NodeExpr>,
+        operand: Box<NodeExpr>,
     },
-    BoolExpr {
+    BinaryExpr {
         op: TokenKind,
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
@@ -134,7 +133,7 @@ impl Parser {
             NodeStmt::Exit(_) | NodeStmt::Assign(_, _) => {
                 if self.try_consume(TokenKind::StmtEnd).is_err() {
                     println!("{:#?}", stmt);
-                    return Err(format!("[COMPILER_PARSE] Separator ';' not found"));
+                    return Err(format!("[COMPILER_PARSE] ';' not found"));
                 }
                 Ok(stmt)
             }
@@ -158,43 +157,60 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
-        let term = self.parse_term()?;
-        let mut expr = NodeExpr::Term(Box::new(term));
+        // lhs expr parse: (everything else lol)
+        // .. lhs op rhs
+        // rhs expr parse: (NOT, unary minus, deref)
+        // .. op expr
+
+        // let term = self.parse_term()?;
+        // let mut expr = NodeExpr::Term(Box::new(term));
+
+        if let None = self.peek(0) {
+            return Err(format!("[COMPILER_PARSE] No token to parse"));
+        }
+
+        let mut expr: NodeExpr;
+
+        if self.peek(0).unwrap().kind.is_unary_op() {
+            let op = self.consume().kind;
+            let operand = self.parse_expr(op.get_prec() + 1)?;
+
+            expr = NodeExpr::UnaryExpr {
+                op,
+                operand: Box::new(operand),
+            };
+        } else {
+            expr = NodeExpr::Term(Box::new(self.parse_term()?));
+        }
 
         loop {
-            let prec = match self.peek(0) {
-                Some(tok) => tok.kind.get_prec(),
+            let tok = match self.peek(0) {
+                Some(tok) => tok,
                 None => return Err(format!("[COMPILER_PARSE] No token to parse")),
             };
+            let prec = tok.kind.get_prec();
             if prec < min_prec {
                 if LOG_DEBUG_INFO {
-                    println!(
-                        "prec is lower {:?}:{prec} > {min_prec}",
-                        self.peek(0).unwrap()
-                    );
+                    println!("prec is lower {tok:?}:{prec} > {min_prec}",);
                 }
                 break;
             }
 
-            let next_prec = prec + 1;
-            let op = self.consume().kind;
-            let rhs = self.parse_expr(next_prec)?;
-
-            if op.is_bin_op() {
-                expr = NodeExpr::BinExpr {
-                    op,
+            if tok.kind.is_unary_op() {
+                expr = NodeExpr::UnaryExpr {
+                    op: self.consume().kind,
+                    operand: Box::new(self.parse_expr(prec + 1)?),
+                }
+            } else if tok.kind.is_binary_op() {
+                expr = NodeExpr::BinaryExpr {
+                    op: self.consume().kind,
                     lhs: Box::new(expr),
-                    rhs: Box::new(rhs),
-                };
-            } else if op.is_bool_op() {
-                expr = NodeExpr::BoolExpr {
-                    op,
-                    lhs: Box::new(expr),
-                    rhs: Box::new(rhs),
+                    rhs: Box::new(self.parse_expr(prec + 1)?),
                 };
             } else {
                 return Err(format!(
-                    "[COMPILER_PARSE] Invalid operator, unable to parse"
+                    "[COMPILER_PARSE] Invalid operator '{:?}', unable to parse",
+                    tok.kind
                 ));
             }
         }

@@ -1,17 +1,8 @@
-let x = 5;
+let a = ~x;
+let b = a & b;
+let c = a^b;      
+let d = a | b;
+let e = a >> 2;
+let f = a << 3;
 
-
-/* WOW THIS IS SO ABSOLUTE_LYDW1234 COOL ****d-d-wadwaju4577djdmadjdw 
-if x*2 == y {
-    exit(2)
-} else if x*3 == 15 {
-    exit(3); 
-} else {
-    exit(1);
-}
-;**dwa;*/ 
-
-/*;let y = 10 ; */
-
-let mut z123 = 20;
-z123 = 40;
+let j = 5 < 10 && 10 > 5;
