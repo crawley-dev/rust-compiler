@@ -14,8 +14,8 @@ pub struct NodeScope {
 
 #[derive(Debug, PartialEq)]
 pub enum NodeStmt {
-    Let(Token, Box<NodeStmt>, bool), // Assignment, Ident, Mutability.
-    Assign(Token, NodeExpr),         // Ident, Expr
+    Let(Box<NodeStmt>, bool), // Ident, Mutability.
+    Assign(Token, NodeExpr),  // Ident, Expr
 
     Exit(NodeExpr), // a template for functions (kinda)
     Scope(NodeScope),
@@ -89,8 +89,9 @@ impl Parser {
                 self.try_consume(TokenKind::Let)?;
                 let mutable = self.try_consume(TokenKind::Mutable).is_ok();
                 self.token_equals(TokenKind::Ident, 0)?;
-                let ident = self.peek(0).unwrap().clone(); // TODO: fix skill issue
-                NodeStmt::Let(ident, Box::new(self.parse_stmt()?), mutable)
+                // let ident = self.peek(0).unwrap().clone(); // TODO: fix skill issue
+                // NodeStmt::Let(ident, Box::new(self.parse_stmt()?), mutable)
+                NodeStmt::Let(Box::new(self.parse_stmt()?), mutable)
             }
             TokenKind::Ident => {
                 let ident = self.try_consume(TokenKind::Ident)?;

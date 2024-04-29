@@ -1,8 +1,16 @@
-let a = ~x;
-let b = a & b;
-let c = a^b;      
-let d = a | b;
-let e = a >> 2;
-let f = a << 3;
+/*
+let x = 5;
 
+let a = ~x;
+let mut b = a & b;
+let mut c = a^b;      
+let d = a | b;
+let e = b >> 2;
+let f = c << 3;
 let j = 5 < 10 && 10 > 5;
+*/
+
+let mut b = 10 > 20;
+b = 20;
+
+exit(b);

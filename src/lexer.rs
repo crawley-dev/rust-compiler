@@ -116,6 +116,25 @@ impl TokenKind {
         };
     }
 
+    pub fn is_bitwise_op(&self) -> bool {
+        return match self {
+            TokenKind::LeftShift
+            | TokenKind::RightShift
+            | TokenKind::BitwiseOr
+            | TokenKind::BitwiseXor
+            | TokenKind::BitwiseAnd
+            | TokenKind::BitwiseNot => true,
+            _ => false,
+        };
+    }
+
+    pub fn is_logical_op(&self) -> bool {
+        return match self {
+            TokenKind::LogicalOr | TokenKind::LogicalAnd | TokenKind::LogicalNot => true,
+            _ => false,
+        };
+    }
+
     pub fn is_binary_op(&self) -> bool {
         return match self {
             TokenKind::Divide

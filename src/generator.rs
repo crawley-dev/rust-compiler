@@ -6,7 +6,7 @@ const WORD_SIZE: usize = 8;
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
     stk_pos: usize,
-    ident: String,
+    ident: Option<String>,
     mutable: bool,
 }
 
@@ -68,32 +68,46 @@ impl Generator {
                      syscall\n",
                 ))
             }
-            NodeStmt::Let(ident, assignment, mutable) => {
-                if self.vars_map.contains_key(ident.value.as_ref().unwrap()) {
-                    return Err(format!("[COMPILER_GEN] Variable already exists."));
-                }
-
-                let assign_asm = self.gen_stmt(*assignment)?;
-
-                let var = Variable {
-                    stk_pos: self.stk_ptr + 1,
-                    ident: ident.value.unwrap(), // << needs ident.
+            NodeStmt::Let(assignment, mutable) => {
+                self.vars_vec.push(Variable {
+                    stk_pos: self.stk_ptr,
+                    ident: None,
                     mutable,
-                };
+                });
 
-                self.vars_map.insert(var.ident.clone(), var.clone()); // TODO: fix skill issue.
-                self.vars_vec.push(var);
-
-                Ok(assign_asm)
+                Ok(self.gen_stmt(*assignment)?)
             }
             NodeStmt::Assign(ident, expr) => {
-                return match self.vars_map.get(ident.value.as_ref().unwrap()) {
-                    Some(var) if !var.mutable => Err(format!(
-                        "[COMPILER_GEN] Attempted re-assignment of constant '{}'",
-                        ident.value.unwrap()
-                    )),
-                    _ => Ok(self.gen_expr(expr)?),
+                if let Some(var) = self.vars_map.get(ident.value.as_ref().unwrap()) {
+                    if !var.mutable {
+                        return Err(format!(
+                            "[COMPILER_GEN] Attempted re-assignment of constant {:?}",
+                            ident.value.unwrap()
+                        ));
+                    }
+                    return Ok(self.gen_expr(expr)?);
                 }
+
+                if let Some(var) = self.vars_vec.last_mut() {
+                    // TODO: ident: Option<String> is not nice.
+                    if var.ident == None {
+                        // println!(
+                        //     "init var: '{:?}' => '{}'",
+                        //     var.ident,
+                        //     ident.value.as_ref().unwrap()
+                        // );
+                        self.vars_map
+                            .insert(ident.value.clone().unwrap(), var.clone()); // TODO: fix skill issue
+                        var.ident = Some(ident.value.unwrap());
+
+                        return Ok(self.gen_expr(expr)?);
+                    }
+                };
+
+                return Err(format!(
+                    "[COMPILER_GEN] Variable '{}' doesn't exist, cannot assign",
+                    ident.value.unwrap()
+                ));
             }
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::If(expr, scope, branches) => {
@@ -114,7 +128,7 @@ impl Generator {
                 let expr_asm = self.gen_expr(expr)?;
                 let pop_expr = self.pop("rax");
                 let cmp_asm = "    cmp rax, 0\n";
-                let jmp_asm = "    jle"; // jump if false | TODO: unsigned jump ??
+                let jmp_asm = "    je"; // eval true if non-zero
                 let label = self.create_label("if_false");
 
                 let scope_asm = self.gen_scope(scope)?;
@@ -138,7 +152,7 @@ impl Generator {
                 let pop_expr = self.pop("rax");
 
                 let cmp_asm = "    cmp rax, 0\n";
-                let jmp_asm = "    jle"; // jump if false | TODO: unsigned jump ??
+                let jmp_asm = "    je"; // TODO: unsigned jump ??
 
                 let label = self.create_label("elif");
                 let scope_asm = self.gen_scope(scope)?;
@@ -179,7 +193,7 @@ impl Generator {
 
             for _ in 0..pop_amt {
                 if let Some(var) = self.vars_vec.pop() {
-                    self.vars_map.remove(&var.ident);
+                    self.vars_map.remove(&var.ident.unwrap());
                 } else {
                     break;
                 }
@@ -201,15 +215,18 @@ impl Generator {
                 let pop_rhs = self.pop("rbx");
                 let push_ans = self.push("rax");
 
+                // TODO: remove hardcoded "rax,rbx"
                 let operation_asm = match op {
-                    TokenKind::Divide => format!("    div rbx\n"),
-                    TokenKind::Multiply => format!("    mul rbx\n"),
-                    TokenKind::Subtract => format!("    sub rax, rbx\n"),
-                    TokenKind::Add => format!("    add rax, rbx\n"),
+                    TokenKind::Divide => "    div rbx\n".to_owned(),
+                    TokenKind::Multiply => "    mul rbx\n".to_owned(),
+                    TokenKind::Subtract => "    sub rax, rbx\n".to_owned(),
+                    TokenKind::Add => "    add rax, rbx\n".to_owned(),
                     _ if op.is_cmp_op() => self.gen_cmp(op)?,
+                    _ if op.is_bitwise_op() => self.gen_bitwise(op)?,
+                    _ if op.is_logical_op() => self.gen_logical(op)?,
                     _ => {
                         return Err(format!(
-                            "[COMPILER_GEN] Unable to generate Binary expression"
+                            "[COMPILER_GEN] Unable to generate Binary expression: '{op:?}'"
                         ))
                     }
                 };
@@ -223,7 +240,23 @@ impl Generator {
                      {push_ans}",
                 ))
             }
-            NodeExpr::UnaryExpr { op, operand } => todo!(""),
+            NodeExpr::UnaryExpr { op, operand } => {
+                let op_asm = match op {
+                    TokenKind::BitwiseNot => self.gen_bitwise(op)?,
+                    _ => todo!("logical not."),
+                };
+
+                let expr_asm = self.gen_expr(*operand)?;
+                let pop_expr = self.pop("rax");
+                let push_ans = self.push("rax");
+
+                Ok(format!(
+                    "{expr_asm}\
+                     {pop_expr}\
+                     {op_asm}\
+                     {push_ans}"
+                ))
+            }
         };
     }
 
@@ -239,11 +272,13 @@ impl Generator {
             }
             NodeTerm::Ident(token) => {
                 let ident = &token.value.unwrap();
+                println!("ident: '{ident}'");
                 if !self.vars_map.contains_key(ident) {
                     return Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist."));
                 }
 
                 let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;
+                // println!("stk_ptr: {} - stk_index: {stk_index}", self.stk_ptr);
                 let stk_offset = (self.stk_ptr - stk_index) * WORD_SIZE;
 
                 return Ok(self.push(format!("QWORD [rsp + {}]", stk_offset).as_str()));
@@ -273,6 +308,28 @@ impl Generator {
              {mov_asm}\
              {push_ans}"
         ))
+    }
+
+    fn gen_bitwise(&self, op: TokenKind) -> Result<String, String> {
+        let asm = match op {
+            TokenKind::LeftShift => "    sal rax, rbx\n",
+            TokenKind::RightShift => "    sar rax, rbx\n",
+            TokenKind::BitwiseOr => "    or rax, rbx\n",
+            TokenKind::BitwiseXor => "    xor rax, rbx\n",
+            TokenKind::BitwiseAnd => "    and rax, rbx\n",
+            TokenKind::BitwiseNot => "    not rax, rbx\n",
+            _ => {
+                return Err(format!(
+                    "[COMPILER_GEN] Unable to generate bitwise operation"
+                ));
+            }
+        };
+
+        Ok(format!("{asm}"))
+    }
+
+    fn gen_logical(&self, op: TokenKind) -> Result<String, String> {
+        panic!("aaaa")
     }
 
     fn push(&mut self, reg: &str) -> String {

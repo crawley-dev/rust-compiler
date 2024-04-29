@@ -14,6 +14,8 @@ aaa }
 - [x] variables WITH DATA TYPES 
 - [x] operations: (boolean, logical//bitwise, binary)
 - [x] control flow branches: (if/else)
+- [ ] array
+- [ ] user defined struct
 - [ ] loops: (while/for)
 - [ ] functions: (recursion << should be free?)
 
@@ -43,11 +45,12 @@ aaa }
   - [x] variable reassignment (mutability)
   - [ ] Operators
     - [x] binary
-    - [] logical
+    - [ ] logical
       - i.e: if (5)  | 5 != 0 so -> if (true) 
       - i.e: if (!5) | 5 == 0 so -> if (false)  
-    - [] bitwise
-    - [] unary
+      - eval expr, jump if zero. << un-optimal, uses 'al' reg when not necessary
+    - [ ] bitwise
+    - [ ] unary
     - [ ] Associativity
   - [ ] data types
     - [ ] bools: al register (8 bit)
