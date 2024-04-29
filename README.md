@@ -52,6 +52,7 @@ aaa }
     - [ ] bitwise
     - [ ] unary
     - [ ] Associativity
+  - [ ] Proper Testing!
   - [ ] data types
     - [ ] bools: al register (8 bit)
     - [ ] u8: al

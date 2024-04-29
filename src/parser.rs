@@ -1,18 +1,18 @@
 use crate::lexer::{Token, TokenKind};
 const LOG_DEBUG_INFO: bool = false;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeProg {
     pub stmts: Vec<NodeStmt>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeScope {
     pub stmts: Vec<NodeStmt>,
     pub inherits_stmts: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
     Let(Box<NodeStmt>, bool), // Ident, Mutability.
     Assign(Token, NodeExpr),  // Ident, Expr
@@ -24,7 +24,7 @@ pub enum NodeStmt {
     Else(NodeScope),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeExpr {
     Term(Box<NodeTerm>),
     UnaryExpr {
@@ -38,7 +38,7 @@ pub enum NodeExpr {
     },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeTerm {
     Ident(Token),
     IntLit(Token),

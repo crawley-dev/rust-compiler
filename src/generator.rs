@@ -215,15 +215,17 @@ impl Generator {
                 let pop_rhs = self.pop("rbx");
                 let push_ans = self.push("rax");
 
+                let comment = op.clone();
+
                 // TODO: remove hardcoded "rax,rbx"
                 let operation_asm = match op {
                     TokenKind::Divide => "    div rbx\n".to_owned(),
                     TokenKind::Multiply => "    mul rbx\n".to_owned(),
                     TokenKind::Subtract => "    sub rax, rbx\n".to_owned(),
                     TokenKind::Add => "    add rax, rbx\n".to_owned(),
-                    _ if op.is_cmp_op() => self.gen_cmp(op)?,
-                    _ if op.is_bitwise_op() => self.gen_bitwise(op)?,
                     _ if op.is_logical_op() => self.gen_logical(op)?,
+                    _ if op.is_bitwise_op() => self.gen_bitwise(op)?,
+                    _ if op.is_cmp_op() => self.gen_cmp(op)?,
                     _ => {
                         return Err(format!(
                             "[COMPILER_GEN] Unable to generate Binary expression: '{op:?}'"
@@ -231,11 +233,14 @@ impl Generator {
                     }
                 };
 
+                // logical needs lhs_asm -> lhs_cmp
+
                 Ok(format!(
                     "{lhs_asm}\
                      {rhs_asm}\
                      {pop_lhs}\
                      {pop_rhs}\
+                     ; Binary Expr: {comment:?}\n\
                      {operation_asm}\
                      {push_ans}",
                 ))
@@ -243,36 +248,41 @@ impl Generator {
             NodeExpr::UnaryExpr { op, operand } => {
                 let op_asm = match op {
                     TokenKind::BitwiseNot => self.gen_bitwise(op)?,
-                    _ => todo!("logical not."),
+                    _ => todo!("logical not."), // need to invert cmp.. to later.
                 };
+
+                let comment = *operand.clone();
 
                 let expr_asm = self.gen_expr(*operand)?;
                 let pop_expr = self.pop("rax");
                 let push_ans = self.push("rax");
 
                 Ok(format!(
-                    "{expr_asm}\
+                    "; Unary Expr: {comment:?}\
+                     {expr_asm}\
                      {pop_expr}\
                      {op_asm}\
-                     {push_ans}"
+                     {push_ans}",
                 ))
             }
         };
     }
 
     fn gen_term(&mut self, term: NodeTerm) -> Result<String, String> {
-        match term {
+        return match term {
             NodeTerm::IntLit(token) => {
-                return Ok(format!(
-                    "    mov rax, {int_lit}\n\
-                     {push_rax}",
-                    int_lit = token.value.unwrap(),
-                    push_rax = self.push("rax")
+                let int_lit = token.value.clone().unwrap();
+                let push_rax = self.push("rax");
+
+                Ok(format!(
+                    ";     {:?}\n    \
+                    mov rax, {int_lit}\n\
+                    {push_rax}",
+                    token
                 ))
             }
             NodeTerm::Ident(token) => {
-                let ident = &token.value.unwrap();
-                println!("ident: '{ident}'");
+                let ident = &token.value.clone().unwrap();
                 if !self.vars_map.contains_key(ident) {
                     return Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist."));
                 }
@@ -280,10 +290,56 @@ impl Generator {
                 let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;
                 // println!("stk_ptr: {} - stk_index: {stk_index}", self.stk_ptr);
                 let stk_offset = (self.stk_ptr - stk_index) * WORD_SIZE;
+                let push_copy = self.push(format!("QWORD [rsp + {}]", stk_offset).as_str());
 
-                return Ok(self.push(format!("QWORD [rsp + {}]", stk_offset).as_str()));
+                Ok(format!(
+                    ";     {token:?}\n\
+                     {push_copy}"
+                ))
             }
-            NodeTerm::Paren(expr) => return self.gen_expr(expr),
+            NodeTerm::Paren(expr) => self.gen_expr(expr),
+        };
+    }
+
+    fn gen_logical(&mut self, op: TokenKind) -> Result<String, String> {
+        return match op {
+            TokenKind::LogicalAnd => {
+                // cmp lhs
+                // jmp on false to __LABEL1
+                // cmp rhs
+                // jmp on false to __LABEL2
+                // mov rax, 1
+                // jmp __LABEL2
+
+                // __LABEL1:
+                // mov rax, 0
+
+                // __LABLEL2:
+                // mov rax, al ; when was 'al' set?? magic.
+                // push rax; put var onto stack
+                Ok(format!("; 'LogicalAnd' comparison HERE <--"))
+            }
+            TokenKind::LogicalOr => {
+                // cmp lhs
+                // jmp on true to __LABEL1
+                // cmp rhs
+                // jmp on false to __LABEL2
+
+                // __LABEL1:
+                // mov rax, 1
+                // jmp __LABEL3
+
+                // __LABEL2:
+                // mov rax, 0
+
+                // __LABEL3:
+                // mov rax, al ; wizardry is afoot.
+                // push rax; put var onto stack
+                Ok(format!("; 'LogicalOr' comparison HERE <--"))
+            }
+            _ => Err(format!(
+                "[COMPILER_GEN] Unable to generate logical operation"
+            )),
         };
     }
 
@@ -326,10 +382,6 @@ impl Generator {
         };
 
         Ok(format!("{asm}"))
-    }
-
-    fn gen_logical(&self, op: TokenKind) -> Result<String, String> {
-        panic!("aaaa")
     }
 
     fn push(&mut self, reg: &str) -> String {
