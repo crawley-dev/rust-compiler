@@ -1,44 +1,51 @@
 global _start
 _start:
-; Var: IntLit(5)
-    mov rax, 5
-    push rax
-; Var: IntLit(10)
     mov rax, 10
-    push rax
-; Var: Ident('a')
-    push QWORD [rsp + 16]
-; Var: Ident('b')
-    push QWORD [rsp + 16]
-; Var: Ident('a')
-    push QWORD [rsp + 32]
-    pop rax
-    pop rbx
-; Binary Expr: BitwiseOr
-    or rax, rbx
-    push rax
-; Var: IntLit(2)
+    push rax ; IntLit(10)
+    mov rax, 20
+    push rax ; IntLit(20)
+    mov rax, 30
+    push rax ; IntLit(30)
+    mov rax, 40
+    push rax ; IntLit(40)
+    mov rax, 50
+    push rax ; IntLit(50)
+; Binary Expr: GreaterThan
     mov rax, 2
-    push rax
-; Var: Ident('b')
-    push QWORD [rsp + 32]
+    push rax ; IntLit(2)
+    mov rax, 1
+    push rax ; IntLit(1)
     pop rax
-    pop rbx
-; Binary Expr: LeftShift
-    sal rax, rbx    
+    pop rdx
+    cmp rax, rdx
+    setg al
+    movzx rax, al
     push rax
-; Var: IntLit(3)
+    pop rax
+    cmp rax, 0
+    je label1_AND1
+; Binary Expr: LessThan
     mov rax, 3
-    push rax
-; Var: Ident('c')
-    push QWORD [rsp + 32]
+    push rax ; IntLit(3)
+    mov rax, 2
+    push rax ; IntLit(2)
     pop rax
-    pop rbx
-; Binary Expr: RightShift
-    sar rax, rbx
+    pop rdx
+    cmp rax, rdx
+    setl al
+    movzx rax, al
     push rax
-; Var: Ident('b')
-    push QWORD [rsp + 40]
+    pop rax
+    cmp rax, 0
+    je label1_AND1
+    mov rax, 1
+    jmp label2_AND2
+label1_AND1:
+    mov rax, 0
+label2_AND2:
+    push rax
+; Exit Program
+    push QWORD [rsp + 0] ; Ident('x')
     mov rax, 60
     pop rdi
     syscall

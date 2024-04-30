@@ -4,15 +4,18 @@ let x = 5;
 let a = ~x;
 let mut b = a & b;
 let mut c = a^b;      
-let j = 5 < 10 && 10 > 5;
-*/
-
-let a = 5;
-let b = 10;
-let c = a;
-
 let d = a | b;
 let e = b >> 2;
 let f = c << 3;
+let j = 5 < 10 && 10 > 5;
+*/
 
-exit(b);
+let a = 10;
+let b = 20;
+let c = 30;
+let d = 40;
+let e = 50;
+
+let x = 1 > 2 && 2 < 3;
+
+exit(x);

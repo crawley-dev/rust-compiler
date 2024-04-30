@@ -44,15 +44,18 @@ aaa }
   - [x] update grammar to match code. 
   - [x] variable reassignment (mutability)
   - [ ] Operators
+    - [ ] Associativity
     - [x] binary
     - [ ] logical
       - i.e: if (5)  | 5 != 0 so -> if (true) 
       - i.e: if (!5) | 5 == 0 so -> if (false)  
       - eval expr, jump if zero. << un-optimal, uses 'al' reg when not necessary
-    - [ ] bitwise
+    - [x] bitwise
     - [ ] unary
-    - [ ] Associativity
-  - [ ] Proper Testing!
+      - [ ] LogicalNot
+      - [x] BitwiseNot
+  - [ ] Proper Testing infrastructure.
+
   - [ ] data types
     - [ ] bools: al register (8 bit)
     - [ ] u8: al

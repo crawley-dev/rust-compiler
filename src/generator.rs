@@ -15,7 +15,7 @@ pub struct Generator {
     file_path: String,
     stk_ptr: usize,
     label_count: usize,
-    scopes: Vec<usize>, // could try Vec<Vec<Variable>>
+    scopes: Vec<usize>,
     vars_map: HashMap<String, Variable>,
     vars_vec: Vec<Variable>,
 }
@@ -58,13 +58,17 @@ impl Generator {
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
         return match stmt {
             NodeStmt::Exit(expr) => {
+                if self.stk_ptr > 0 {
+                    self.stk_ptr -= 1; // because indexing starts at 1, not 0
+                }
                 let expr_asm = self.gen_expr(expr)?;
                 let pop = self.pop("rdi");
 
                 Ok(format!(
-                    "{expr_asm}    \
+                    "; Exit Program\n\
+                     {expr_asm}    \
                      mov rax, 60\n\
-                     {pop}    \
+                     {pop}\n    \
                      syscall\n",
                 ))
             }
@@ -75,7 +79,7 @@ impl Generator {
                     mutable,
                 });
 
-                Ok(self.gen_stmt(*assignment)?)
+                self.gen_stmt(*assignment)
             }
             NodeStmt::Assign(ident, expr) => {
                 if let Some(var) = self.vars_map.get(ident.value.as_ref().unwrap()) {
@@ -85,22 +89,17 @@ impl Generator {
                             ident.value.unwrap()
                         ));
                     }
-                    return Ok(self.gen_expr(expr)?);
+                    return self.gen_expr(expr);
                 }
 
+                // TODO: remove this mess..
                 if let Some(var) = self.vars_vec.last_mut() {
-                    // TODO: ident: Option<String> is not nice.
                     if var.ident == None {
-                        // println!(
-                        //     "init var: '{:?}' => '{}'",
-                        //     var.ident,
-                        //     ident.value.as_ref().unwrap()
-                        // );
                         self.vars_map
                             .insert(ident.value.clone().unwrap(), var.clone()); // TODO: fix skill issue
                         var.ident = Some(ident.value.unwrap());
 
-                        return Ok(self.gen_expr(expr)?);
+                        return self.gen_expr(expr);
                     }
                 };
 
@@ -113,8 +112,8 @@ impl Generator {
             NodeStmt::If(expr, scope, branches) => {
                 // Asm Breakdown:
                 // generate expr for boolean comp lhs & rhs
-                // pop into rax, rbx
-                // cmp rax, rbx
+                // pop into rax, rdx
+                // cmp rax, rdx
                 // (jump instruction) (label)
                 // (label):
                 // generate scope asm
@@ -139,7 +138,7 @@ impl Generator {
 
                 Ok(format!(
                     "{expr_asm}\
-                     {pop_expr}\
+                     {pop_expr}\n\
                      {cmp_asm}\
                      {jmp_asm} {label}\n\
                      {scope_asm}\
@@ -159,7 +158,7 @@ impl Generator {
 
                 Ok(format!(
                     "{expr_asm}\
-                     {pop_expr}\
+                     {pop_expr}\n\
                      {cmp_asm}\
                      {jmp_asm} {label}\n\
                      {scope_asm}\
@@ -208,24 +207,17 @@ impl Generator {
         return match expr {
             NodeExpr::Term(term) => return self.gen_term(*term),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let lhs_asm = self.gen_expr(*rhs)?; // these are flipped, for asm reasons
-                let rhs_asm = self.gen_expr(*lhs)?;
-
-                let pop_lhs = self.pop("rax");
-                let pop_rhs = self.pop("rbx");
-                let push_ans = self.push("rax");
-
                 let comment = op.clone();
 
-                // TODO: remove hardcoded "rax,rbx"
+                // // TODO: remove hardcoded "rax,rdx"
                 let operation_asm = match op {
-                    TokenKind::Divide => "    div rbx\n".to_owned(),
-                    TokenKind::Multiply => "    mul rbx\n".to_owned(),
-                    TokenKind::Subtract => "    sub rax, rbx\n".to_owned(),
-                    TokenKind::Add => "    add rax, rbx\n".to_owned(),
-                    _ if op.is_logical_op() => self.gen_logical(op)?,
+                    _ if op.is_logical_op() => return self.gen_logical(op, *lhs, *rhs),
                     _ if op.is_bitwise_op() => self.gen_bitwise(op)?,
                     _ if op.is_cmp_op() => self.gen_cmp(op)?,
+                    TokenKind::Divide => "    div rdx\n".to_owned(),
+                    TokenKind::Multiply => "    mul rdx\n".to_owned(),
+                    TokenKind::Subtract => "    sub rax, rdx\n".to_owned(),
+                    TokenKind::Add => "    add rax, rdx\n".to_owned(),
                     _ => {
                         return Err(format!(
                             "[COMPILER_GEN] Unable to generate Binary expression: '{op:?}'"
@@ -233,16 +225,22 @@ impl Generator {
                     }
                 };
 
-                // logical needs lhs_asm -> lhs_cmp
+                let lhs_asm = self.gen_expr(*rhs)?; // flipped because its a stack.
+                let rhs_asm = self.gen_expr(*lhs)?;
 
+                let get_lhs = self.pop("rax");
+                let get_rhs = self.pop("rdx");
+                let push_ans = self.push("rax");
+
+                // TODO: try flipping lhs,rhs expr & pop
                 Ok(format!(
-                    "{lhs_asm}\
-                     {rhs_asm}\
-                     {pop_lhs}\
-                     {pop_rhs}\
-                     ; Binary Expr: {comment:?}\n\
-                     {operation_asm}\
-                     {push_ans}",
+                    "; Binary Expr: {comment:?}\n\
+                        {lhs_asm}\
+                        {rhs_asm}\
+                        {get_lhs}\n\
+                        {get_rhs}\n\
+                        {operation_asm}\
+                        {push_ans}\n",
                 ))
             }
             NodeExpr::UnaryExpr { op, operand } => {
@@ -260,9 +258,9 @@ impl Generator {
                 Ok(format!(
                     "; Unary Expr: {comment:?}\
                      {expr_asm}\
-                     {pop_expr}\
+                     {pop_expr}\n\
                      {op_asm}\
-                     {push_ans}",
+                     {push_ans}\n",
                 ))
             }
         };
@@ -272,13 +270,11 @@ impl Generator {
         return match term {
             NodeTerm::IntLit(token) => {
                 let int_lit = token.value.clone().unwrap();
-                let push_rax = self.push("rax");
+                let push_int = self.push("rax");
 
                 Ok(format!(
-                    ";     {:?}\n    \
-                    mov rax, {int_lit}\n\
-                    {push_rax}",
-                    token
+                    "    mov rax, {int_lit}\n\
+                     {push_int} ; {token:?}\n"
                 ))
             }
             NodeTerm::Ident(token) => {
@@ -288,20 +284,21 @@ impl Generator {
                 }
 
                 let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;
-                // println!("stk_ptr: {} - stk_index: {stk_index}", self.stk_ptr);
                 let stk_offset = (self.stk_ptr - stk_index) * WORD_SIZE;
-                let push_copy = self.push(format!("QWORD [rsp + {}]", stk_offset).as_str());
+                let push_copy = self.push(format!("QWORD [rsp + {stk_offset}]").as_str());
 
-                Ok(format!(
-                    ";     {token:?}\n\
-                     {push_copy}"
-                ))
+                Ok(format!("{push_copy} ; {token:?}\n"))
             }
             NodeTerm::Paren(expr) => self.gen_expr(expr),
         };
     }
 
-    fn gen_logical(&mut self, op: TokenKind) -> Result<String, String> {
+    fn gen_logical(
+        &mut self,
+        op: TokenKind,
+        lhs: NodeExpr,
+        rhs: NodeExpr,
+    ) -> Result<String, String> {
         return match op {
             TokenKind::LogicalAnd => {
                 // cmp lhs
@@ -317,7 +314,39 @@ impl Generator {
                 // __LABLEL2:
                 // mov rax, al ; when was 'al' set?? magic.
                 // push rax; put var onto stack
-                Ok(format!("; 'LogicalAnd' comparison HERE <--"))
+
+                let lhs_asm = self.gen_expr(lhs)?;
+                let rhs_asm = self.gen_expr(rhs)?;
+                println!("{lhs_asm}\n{rhs_asm}");
+
+                let get_lhs = self.pop("rax");
+                let lhs_cmp = "    cmp rax, 0\n";
+                let lhs_jmp = "    je";
+                let false_label = self.create_label("AND1");
+
+                let get_rhs = self.pop("rax");
+                let rhs_cmp = "    cmp rax, 0\n";
+                let rhs_jmp = "    je";
+                let true_label = self.create_label("AND2");
+
+                let push_ans = self.push("rax");
+
+                Ok(format!(
+                    "{lhs_asm}\
+                     {get_lhs}\n\
+                     {lhs_cmp}\
+                     {lhs_jmp} {false_label}\n\
+                     {rhs_asm}\
+                     {get_rhs}\n\
+                     {rhs_cmp}\
+                     {rhs_jmp} {false_label}\n    \
+                     mov rax, 1\n    \
+                     jmp {true_label}\n\
+                     {false_label}:\n    \
+                     mov rax, 0\n\
+                     {true_label}:\n\
+                     {push_ans}\n"
+                ))
             }
             TokenKind::LogicalOr => {
                 // cmp lhs
@@ -335,7 +364,7 @@ impl Generator {
                 // __LABEL3:
                 // mov rax, al ; wizardry is afoot.
                 // push rax; put var onto stack
-                Ok(format!("; 'LogicalOr' comparison HERE <--"))
+                Ok(format!("; 'LogicalOr' comparison HERE <--\n"))
             }
             _ => Err(format!(
                 "[COMPILER_GEN] Unable to generate logical operation"
@@ -344,36 +373,49 @@ impl Generator {
     }
 
     fn gen_cmp(&mut self, op: TokenKind) -> Result<String, String> {
-        let set_asm = match op {
-            TokenKind::Equal => "    sete al\n",
-            TokenKind::NotEqual => "    setne al\n",
-            TokenKind::GreaterThan => "    setg al\n",
-            TokenKind::GreaterEqual => "    setge al\n",
-            TokenKind::LessThan => "    setl al\n",
-            TokenKind::LessEqual => "    setle al\n",
-            _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
-        };
+        let set_asm = format!(
+            "    {} al\n",
+            match op {
+                TokenKind::Equal => "sete",
+                TokenKind::NotEqual => "setne",
+                TokenKind::GreaterThan => "setg",
+                TokenKind::GreaterEqual => "setge",
+                TokenKind::LessThan => "setl",
+                TokenKind::LessEqual => "setle",
+                _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
+            }
+        );
 
-        let cmp_asm = "    cmp rax, rbx\n";
+        let cmp_asm = "    cmp rax, rdx\n";
         let mov_asm = "    movzx rax, al\n";
-        let push_ans = self.push("rax");
 
         Ok(format!(
             "{cmp_asm}\
              {set_asm}\
-             {mov_asm}\
-             {push_ans}"
+             {mov_asm}"
         ))
+    }
+
+    fn gen_jmp(&mut self, op: TokenKind) -> Result<&str, String> {
+        return match op {
+            TokenKind::Equal => Ok("je"),
+            TokenKind::NotEqual => Ok("jne"),
+            TokenKind::GreaterThan => Ok("jg"),
+            TokenKind::GreaterEqual => Ok("jge"),
+            TokenKind::LessThan => Ok("jl"),
+            TokenKind::LessEqual => Ok("jle"),
+            _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
+        };
     }
 
     fn gen_bitwise(&self, op: TokenKind) -> Result<String, String> {
         let asm = match op {
-            TokenKind::LeftShift => "    sal rax, rbx\n",
-            TokenKind::RightShift => "    sar rax, rbx\n",
-            TokenKind::BitwiseOr => "    or rax, rbx\n",
-            TokenKind::BitwiseXor => "    xor rax, rbx\n",
-            TokenKind::BitwiseAnd => "    and rax, rbx\n",
-            TokenKind::BitwiseNot => "    not rax, rbx\n",
+            TokenKind::LeftShift => "sal",
+            TokenKind::RightShift => "sar",
+            TokenKind::BitwiseOr => "or",
+            TokenKind::BitwiseXor => "xor",
+            TokenKind::BitwiseAnd => "and",
+            TokenKind::BitwiseNot => "not",
             _ => {
                 return Err(format!(
                     "[COMPILER_GEN] Unable to generate bitwise operation"
@@ -381,17 +423,19 @@ impl Generator {
             }
         };
 
-        Ok(format!("{asm}"))
+        Ok(format!("    {asm} rax, rdx\n"))
     }
 
     fn push(&mut self, reg: &str) -> String {
         self.stk_ptr += 1;
-        return format!("    push {}\n", reg);
+        // println!("+1, stk: {}", self.stk_ptr);
+        return format!("    push {}", reg);
     }
 
     fn pop(&mut self, reg: &str) -> String {
         self.stk_ptr -= 1;
-        return format!("    pop {}\n", reg);
+        // println!("-1, stk: {}", self.stk_ptr);
+        return format!("    pop {}", reg);
     }
 
     fn create_label(&mut self, name: &'static str) -> String {
