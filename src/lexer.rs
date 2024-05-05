@@ -4,7 +4,7 @@
 
 use std::{collections::HashMap, fmt};
 
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufKind {
@@ -33,6 +33,7 @@ pub enum TokenKind {
     Divide,
     Subtract,
     Multiply,
+    Remainder,
     Equal,
     NotEqual,
     LessThan,
@@ -42,12 +43,16 @@ pub enum TokenKind {
     LogicalOr,
     LogicalNot,
     LogicalAnd,
+    // ArithmeticLeftShift, // Arithmetic Shifting
+    // ArithmeticRightShift,
     BitwiseOr,
     BitwiseNot,
     BitwiseXor,
     BitwiseAnd,
     LeftShift,
     RightShift,
+    // BitwiseLeftShift, // Technically Logical shifting, but too confusing.
+    // BitwiseRightShift,
 
     // keywords
     Exit,
@@ -98,13 +103,24 @@ impl TokenKind {
             | TokenKind::GreaterEqual => 8,
             TokenKind::LeftShift | TokenKind::RightShift => 10,
             TokenKind::Subtract | TokenKind::Add => 11,
-            TokenKind::Divide | TokenKind::Multiply => 12,
+            TokenKind::Divide | TokenKind::Multiply | TokenKind::Remainder => 12,
             TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
             _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
         };
     }
 
-    pub fn is_cmp_op(&self) -> bool {
+    pub fn is_arithmetic(&self) -> bool {
+        return match self {
+            TokenKind::Add
+            | TokenKind::Subtract
+            | TokenKind::Divide
+            | TokenKind::Multiply
+            | TokenKind::Remainder => true,
+            _ => false,
+        };
+    }
+
+    pub fn is_comparison(&self) -> bool {
         return match self {
             TokenKind::Equal
             | TokenKind::NotEqual
@@ -116,29 +132,30 @@ impl TokenKind {
         };
     }
 
-    pub fn is_bitwise_op(&self) -> bool {
+    pub fn is_bitwise(&self) -> bool {
         return match self {
-            TokenKind::LeftShift
-            | TokenKind::RightShift
-            | TokenKind::BitwiseOr
+            TokenKind::BitwiseOr
             | TokenKind::BitwiseXor
             | TokenKind::BitwiseAnd
-            | TokenKind::BitwiseNot => true,
+            | TokenKind::BitwiseNot
+            | TokenKind::LeftShift
+            | TokenKind::RightShift => true,
             _ => false,
         };
     }
 
-    pub fn is_logical_op(&self) -> bool {
+    pub fn is_logical(&self) -> bool {
         return match self {
             TokenKind::LogicalOr | TokenKind::LogicalAnd | TokenKind::LogicalNot => true,
             _ => false,
         };
     }
 
-    pub fn is_binary_op(&self) -> bool {
+    pub fn is_binary(&self) -> bool {
         return match self {
             TokenKind::Divide
             | TokenKind::Multiply
+            | TokenKind::Remainder
             | TokenKind::Add
             | TokenKind::Subtract
             | TokenKind::LogicalOr
@@ -146,19 +163,19 @@ impl TokenKind {
             | TokenKind::BitwiseOr
             | TokenKind::BitwiseXor
             | TokenKind::BitwiseAnd
+            | TokenKind::LeftShift
+            | TokenKind::RightShift
             | TokenKind::Equal
             | TokenKind::NotEqual
             | TokenKind::LessThan
             | TokenKind::LessEqual
             | TokenKind::GreaterThan
-            | TokenKind::GreaterEqual
-            | TokenKind::LeftShift
-            | TokenKind::RightShift => true,
+            | TokenKind::GreaterEqual => true,
             _ => false,
         };
     }
 
-    pub fn is_unary_op(&self) -> bool {
+    pub fn is_unary(&self) -> bool {
         return match self {
             TokenKind::BitwiseNot | TokenKind::LogicalNot => true,
             _ => false,
@@ -194,6 +211,7 @@ impl Lexer {
             ("/", TokenKind::Divide),
             ("-", TokenKind::Subtract),
             ("*", TokenKind::Multiply),
+            ("%", TokenKind::Remainder),
             ("==", TokenKind::Equal),
             ("!=", TokenKind::NotEqual),
             ("<", TokenKind::LessThan),
@@ -233,7 +251,10 @@ impl Lexer {
         while self.pos < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {
-                    TokenKind::LineComment => self.is_linecomment = true,
+                    TokenKind::LineComment => {
+                        println!("found line comment.");
+                        self.is_linecomment = true
+                    }
                     TokenKind::OpenMultiComment => self.is_multicomment = true,
                     TokenKind::CloseMultiComment => self.is_multicomment = false,
                     _ if self.is_multicomment => (),
@@ -260,24 +281,16 @@ impl Lexer {
                 None => break,
             };
 
+            // TODO: requires (line + " \n"), e.g "//"
+            // hits "//", consumes next.. " ", break
+            // next iter: hits '\n', stop linecomment. CORRECT!
+            // .. otherwise, it would consume "//" && \n, then: linecomment = true. BAD!
             if next_char == b'\n' {
                 self.is_linecomment = false;
-                // println!("removing {:?}", self.input.get(self.pos));
                 self.input.remove(self.pos);
-                // self.pos -= 1;
                 break;
-            }
-            if self.is_linecomment {
-                // self.consume();
-                // println!("removing {:?}", self.input.get(self.pos));
+            } else if self.is_linecomment || next_char.is_ascii_whitespace() {
                 self.input.remove(self.pos);
-                // self.pos -= 1;
-                break;
-            } else if next_char.is_ascii_whitespace() {
-                // self.consume();
-                // println!("removing {:?}", self.input.get(self.pos));
-                self.input.remove(self.pos);
-                // self.pos -= 1;
                 break;
             }
 

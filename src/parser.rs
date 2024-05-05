@@ -172,7 +172,7 @@ impl Parser {
 
         let mut expr: NodeExpr;
 
-        if self.peek(0).unwrap().kind.is_unary_op() {
+        if self.peek(0).unwrap().kind.is_unary() {
             let op = self.consume().kind;
             let operand = self.parse_expr(op.get_prec() + 1)?;
 
@@ -197,12 +197,12 @@ impl Parser {
                 break;
             }
 
-            if tok.kind.is_unary_op() {
+            if tok.kind.is_unary() {
                 expr = NodeExpr::UnaryExpr {
                     op: self.consume().kind,
                     operand: Box::new(self.parse_expr(prec + 1)?),
                 }
-            } else if tok.kind.is_binary_op() {
+            } else if tok.kind.is_binary() {
                 expr = NodeExpr::BinaryExpr {
                     op: self.consume().kind,
                     lhs: Box::new(expr),

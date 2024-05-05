@@ -20,6 +20,10 @@ fn main() {
     let tokens = lex(input);
     let program = parse(tokens);
     generate(program, file_name);
+
+    let x: u8 = 5;
+    let y: u8 = 20 & 45;
+    println!("x: {x}, y: {y}");
 }
 
 fn lex(input: String) -> Vec<lexer::Token> {

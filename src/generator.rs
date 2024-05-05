@@ -2,6 +2,7 @@ use crate::{lexer::TokenKind, parser::*};
 use std::{collections::HashMap, io::Write};
 
 const WORD_SIZE: usize = 8;
+const SPACE: &'static str = "    ";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
@@ -17,7 +18,7 @@ pub struct Generator {
     label_count: usize,
     scopes: Vec<usize>,
     vars_map: HashMap<String, Variable>,
-    vars_vec: Vec<Variable>,
+    stack: Vec<Variable>,
 }
 
 impl Generator {
@@ -29,51 +30,55 @@ impl Generator {
             label_count: 0,
             scopes: vec![],
             vars_map: HashMap::new(),
-            vars_vec: Vec::new(),
+            stack: Vec::new(),
         };
         return generator;
     }
 
     pub fn generate_prog(&mut self) -> Result<(), String> {
         let mut file = std::fs::File::create(&self.file_path).expect("Invalid filepath given.");
+        let expect_msg = "unable to write to file.";
 
         file.write_all(
             b"global _start\n\
-                  _start:\n",
+                  _start:\n\
+                 ; setup stack frame\n    \
+                 push rbp\n    \
+                 mov rbp, rsp\n",
         )
-        .expect("unable to do init write to file.");
+        .expect(expect_msg);
+        file.write_all(b"; Program Start\n").expect(expect_msg);
 
         while !self.prog.stmts.is_empty() {
             let stmt = self.prog.stmts.remove(0);
             let stmt_asm = self.gen_stmt(stmt)?;
 
-            file.write_all(stmt_asm.as_bytes())
-                .expect("unable to write to file.");
+            file.write_all(stmt_asm.as_bytes()).expect(expect_msg);
         }
 
         return Ok(());
     }
 
     // TODO: BYTE ARRAYS!
+    // TODO: subtract
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
         return match stmt {
+            NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::Exit(expr) => {
-                if self.stk_ptr > 0 {
-                    self.stk_ptr -= 1; // because indexing starts at 1, not 0
-                }
-                let expr_asm = self.gen_expr(expr)?;
-                let pop = self.pop("rdi");
-
+                let expr_asm = self.gen_expr(expr, "rdi")?;
                 Ok(format!(
                     "; Exit Program\n\
-                     {expr_asm}    \
-                     mov rax, 60\n\
-                     {pop}\n    \
-                     syscall\n",
+                     {expr_asm}\
+                     {SPACE}mov rax, 60\n\
+                     {SPACE}syscall\n"
                 ))
             }
+
             NodeStmt::Let(assignment, mutable) => {
-                self.vars_vec.push(Variable {
+                if self.stack.len() != 0 {
+                    self.stk_ptr += 1;
+                }
+                self.stack.push(Variable {
                     stk_pos: self.stk_ptr,
                     ident: None,
                     mutable,
@@ -82,98 +87,98 @@ impl Generator {
                 self.gen_stmt(*assignment)
             }
             NodeStmt::Assign(ident, expr) => {
-                if let Some(var) = self.vars_map.get(ident.value.as_ref().unwrap()) {
-                    if !var.mutable {
-                        return Err(format!(
-                            "[COMPILER_GEN] Attempted re-assignment of constant {:?}",
+                return match self.vars_map.get(ident.value.as_ref().unwrap()) {
+                    Some(var) if var.mutable => {
+                        let reg = format!("QWORD [rsp+{}]", var.stk_pos * WORD_SIZE,);
+                        self.gen_expr(expr, reg.as_str())
+                    }
+                    None => match self.stack.last_mut() {
+                        Some(new_var) if new_var.ident.is_none() => {
+                            new_var.ident = ident.value.clone();
+                            self.vars_map.insert(ident.value.unwrap(), new_var.clone());
+
+                            let reg = format!("QWORD [rsp+{}]", new_var.stk_pos * WORD_SIZE,);
+                            self.gen_expr(expr, reg.as_str())
+                        }
+                        _ => Err(format!(
+                            "[COMPILER_GEN] Variable '{}' doesn't exit, cannot assign",
                             ident.value.unwrap()
-                        ));
-                    }
-                    return self.gen_expr(expr);
-                }
-
-                // TODO: remove this mess..
-                if let Some(var) = self.vars_vec.last_mut() {
-                    if var.ident == None {
-                        self.vars_map
-                            .insert(ident.value.clone().unwrap(), var.clone()); // TODO: fix skill issue
-                        var.ident = Some(ident.value.unwrap());
-
-                        return self.gen_expr(expr);
-                    }
+                        )),
+                    },
+                    _ => Err(format!(
+                        "[COMPILER_GEN] Re-assignment of constant '{:?}'",
+                        ident.value.unwrap()
+                    )),
                 };
-
-                return Err(format!(
-                    "[COMPILER_GEN] Variable '{}' doesn't exist, cannot assign",
-                    ident.value.unwrap()
-                ));
             }
-            NodeStmt::Scope(scope) => self.gen_scope(scope),
-            NodeStmt::If(expr, scope, branches) => {
-                // Asm Breakdown:
-                // generate expr for boolean comp lhs & rhs
-                // pop into rax, rdx
-                // cmp rax, rdx
-                // (jump instruction) (label)
-                // (label):
-                // generate scope asm
+            _ => todo!("if"), /*
+                                            NodeStmt::If(expr, scope, branches) => {
+                                                // Asm Breakdown:
+                                                // generate expr for boolean comp lhs & rhs
+                                                // pop into rax, rcx
+                                                // cmp rax, rcx
+                                                // (jump instruction) (label)
+                                                // (label):
+                                                // generate scope asm
 
-                // To note:
-                // .. Format: if (expr) scope
-                // .. operand changes jump instruction, e.g je (jump if equal)
-                // .. .. do the inverse of the condition:
-                // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
+                                                // To note:
+                                                // .. Format: if (expr) scope
+                                                // .. operand changes jump instruction, e.g je (jump if equal)
+                                                // .. .. do the inverse of the condition:
+                                                // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
+                                                todo!("change if");
 
-                let expr_asm = self.gen_expr(expr)?;
-                let pop_expr = self.pop("rax");
-                let cmp_asm = "    cmp rax, 0\n";
-                let jmp_asm = "    je"; // eval true if non-zero
-                let label = self.create_label("if_false");
+                                                let expr_asm = self.gen_expr(expr)?;
+                                                let pop_expr = self.pop("rax");
+                                                let cmp_asm = "    cmp rax, 0\n";
+                                                let jmp_asm = "    je"; // eval true if non-zero
+                                                let label = self.create_label("if_false");
 
-                let scope_asm = self.gen_scope(scope)?;
-                let mut branches_asm = String::new();
-                for branch in branches {
-                    branches_asm += &self.gen_stmt(branch)?;
-                }
+                                                let scope_asm = self.gen_scope(scope)?;
+                                                let mut branches_asm = String::new();
+                                                for branch in branches {
+                                                    branches_asm += &self.gen_stmt(branch)?;
+                                                }
 
-                Ok(format!(
-                    "{expr_asm}\
-                     {pop_expr}\n\
-                     {cmp_asm}\
-                     {jmp_asm} {label}\n\
-                     {scope_asm}\
-                     {label}:\n\
-                     {branches_asm}"
-                ))
-            }
-            NodeStmt::ElseIf(expr, scope) => {
-                let expr_asm = self.gen_expr(expr)?;
-                let pop_expr = self.pop("rax");
+                                                Ok(format!(
+                                                    "{expr_asm}\
+                                                     {pop_expr}\n\
+                                                     {cmp_asm}\
+                                                     {jmp_asm} {label}\n\
+                                                     {scope_asm}\
+                                                     {label}:\n\
+                                                     {branches_asm}"
+                                                ))
+                                            }
+                                            NodeStmt::ElseIf(expr, scope) => {
+                                                let expr_asm = self.gen_expr(expr)?;
+                                                let pop_expr = self.pop("rax");
 
-                let cmp_asm = "    cmp rax, 0\n";
-                let jmp_asm = "    je"; // TODO: unsigned jump ??
+                                                let cmp_asm = "    cmp rax, 0\n";
+                                                let jmp_asm = "    je"; // TODO: unsigned jump ??
 
-                let label = self.create_label("elif");
-                let scope_asm = self.gen_scope(scope)?;
+                                                let label = self.create_label("elif");
+                                                let scope_asm = self.gen_scope(scope)?;
 
-                Ok(format!(
-                    "{expr_asm}\
-                     {pop_expr}\n\
-                     {cmp_asm}\
-                     {jmp_asm} {label}\n\
-                     {scope_asm}\
-                     {label}:\n"
-                ))
-            }
-            NodeStmt::Else(scope) => {
-                let label = self.create_label("else");
-                let scope_asm = self.gen_scope(scope)?;
-                Ok(format!(
-                    "    jmp {label}\n\
-                     {label}:\n\
-                     {scope_asm}"
-                ))
-            }
+                                                Ok(format!(
+                                                    "{expr_asm}\
+                                                     {pop_expr}\n\
+                                                     {cmp_asm}\
+                                                     {jmp_asm} {label}\n\
+                                                     {scope_asm}\
+                                                     {label}:\n"
+                                                ))
+                                            }
+                                            NodeStmt::Else(scope) => {
+                                                let label = self.create_label("else");
+                                                let scope_asm = self.gen_scope(scope)?;
+                                                Ok(format!(
+                                                    "    jmp {label}\n\
+                                                     {label}:\n\
+                                                     {scope_asm}"
+                                                ))
+                                            }
+                              */
         };
     }
 
@@ -191,7 +196,7 @@ impl Generator {
             self.stk_ptr -= pop_amt;
 
             for _ in 0..pop_amt {
-                if let Some(var) = self.vars_vec.pop() {
+                if let Some(var) = self.stack.pop() {
                     self.vars_map.remove(&var.ident.unwrap());
                 } else {
                     break;
@@ -203,79 +208,62 @@ impl Generator {
         Ok(asm)
     }
 
-    fn gen_expr(&mut self, expr: NodeExpr) -> Result<String, String> {
+    fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
         return match expr {
-            NodeExpr::Term(term) => return self.gen_term(*term),
+            NodeExpr::Term(term) => return self.gen_term(*term, reg),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let comment = op.clone();
+                let reg1 = "rax";
+                let reg2 = "rcx";
 
-                // // TODO: remove hardcoded "rax,rdx"
-                let operation_asm = match op {
-                    _ if op.is_logical_op() => return self.gen_logical(op, *lhs, *rhs),
-                    _ if op.is_bitwise_op() => self.gen_bitwise(op)?,
-                    _ if op.is_cmp_op() => self.gen_cmp(op)?,
-                    TokenKind::Divide => "    div rdx\n".to_owned(),
-                    TokenKind::Multiply => "    mul rdx\n".to_owned(),
-                    TokenKind::Subtract => "    sub rax, rdx\n".to_owned(),
-                    TokenKind::Add => "    add rax, rdx\n".to_owned(),
+                let op_asm = match op {
+                    _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
+                    _ if op.is_bitwise() => self.gen_bitwise(op, reg1, reg2)?,
+                    _ if op.is_logical() => self.gen_logical(op)?,
+                    _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
                     _ => {
                         return Err(format!(
-                            "[COMPILER_GEN] Unable to generate Binary expression: '{op:?}'"
+                            "[COMPILER_GEN] Unable to generate binary expression"
                         ))
                     }
                 };
 
-                let lhs_asm = self.gen_expr(*rhs)?; // flipped because its a stack.
-                let rhs_asm = self.gen_expr(*lhs)?;
+                let lhs_asm = self.gen_expr(*lhs, reg1)?;
+                let rhs_asm = self.gen_expr(*rhs, reg2)?;
 
-                let get_lhs = self.pop("rax");
-                let get_rhs = self.pop("rdx");
-                let push_ans = self.push("rax");
-
-                // TODO: try flipping lhs,rhs expr & pop
                 Ok(format!(
-                    "; Binary Expr: {comment:?}\n\
-                        {lhs_asm}\
-                        {rhs_asm}\
-                        {get_lhs}\n\
-                        {get_rhs}\n\
-                        {operation_asm}\
-                        {push_ans}\n",
+                    "; {comment:?}\n\
+                     {lhs_asm}\
+                     {rhs_asm}\
+                     {op_asm}\
+                     {SPACE}mov {reg}, rax\n"
                 ))
             }
             NodeExpr::UnaryExpr { op, operand } => {
+                let comment = op.clone();
                 let op_asm = match op {
-                    TokenKind::BitwiseNot => self.gen_bitwise(op)?,
-                    _ => todo!("logical not."), // need to invert cmp.. to later.
+                    TokenKind::BitwiseNot => format!("{SPACE}not rax\n"),
+                    _ => todo!("logical not."), // need to invert cmp.. do later.
                 };
 
-                let comment = *operand.clone();
-
-                let expr_asm = self.gen_expr(*operand)?;
-                let pop_expr = self.pop("rax");
-                let push_ans = self.push("rax");
+                let expr_asm = self.gen_expr(*operand, "rax")?;
 
                 Ok(format!(
-                    "; Unary Expr: {comment:?}\
+                    "; {comment:?}\n\
                      {expr_asm}\
-                     {pop_expr}\n\
                      {op_asm}\
-                     {push_ans}\n",
+                     {SPACE}mov {reg}, rax\n"
                 ))
             }
         };
     }
 
-    fn gen_term(&mut self, term: NodeTerm) -> Result<String, String> {
+    fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
         return match term {
             NodeTerm::IntLit(token) => {
                 let int_lit = token.value.clone().unwrap();
-                let push_int = self.push("rax");
-
-                Ok(format!(
-                    "    mov rax, {int_lit}\n\
-                     {push_int} ; {token:?}\n"
-                ))
+                // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
+                Ok(format!("{SPACE}mov {reg}, {int_lit}\n"))
             }
             NodeTerm::Ident(token) => {
                 let ident = &token.value.clone().unwrap();
@@ -283,22 +271,16 @@ impl Generator {
                     return Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist."));
                 }
 
-                let stk_index = &self.vars_map.get(ident).unwrap().stk_pos;
-                let stk_offset = (self.stk_ptr - stk_index) * WORD_SIZE;
-                let push_copy = self.push(format!("QWORD [rsp + {stk_offset}]").as_str());
-
-                Ok(format!("{push_copy} ; {token:?}\n"))
+                let stk_index = &self.vars_map.get(ident).unwrap().stk_pos * WORD_SIZE;
+                Ok(format!(
+                    "{SPACE}mov {reg}, QWORD [rsp+{stk_index}] ; {token:?}\n"
+                ))
             }
-            NodeTerm::Paren(expr) => self.gen_expr(expr),
+            NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
         };
     }
 
-    fn gen_logical(
-        &mut self,
-        op: TokenKind,
-        lhs: NodeExpr,
-        rhs: NodeExpr,
-    ) -> Result<String, String> {
+    fn gen_logical(&mut self, op: TokenKind) -> Result<String, String> {
         return match op {
             TokenKind::LogicalAnd => {
                 // cmp lhs
@@ -315,37 +297,45 @@ impl Generator {
                 // mov rax, al ; when was 'al' set?? magic.
                 // push rax; put var onto stack
 
-                let lhs_asm = self.gen_expr(lhs)?;
-                let rhs_asm = self.gen_expr(rhs)?;
-                println!("{lhs_asm}\n{rhs_asm}");
+                // let lhs_asm = self.gen_expr(lhs, "rax")?;
+                // let rhs_asm = self.gen_expr(rhs, "rcx")?;
+                // println!("{lhs_asm}\n{rhs_asm}");
 
-                let get_lhs = self.pop("rax");
-                let lhs_cmp = "    cmp rax, 0\n";
-                let lhs_jmp = "    je";
+                // let lhs_cmp = "    cmp rax, 0\n";
+                // let lhs_jmp = "    je";
+
+                // let rhs_cmp = "    cmp rax, 0\n";
+                // let rhs_jmp = "    je";
+
                 let false_label = self.create_label("AND1");
-
-                let get_rhs = self.pop("rax");
-                let rhs_cmp = "    cmp rax, 0\n";
-                let rhs_jmp = "    je";
                 let true_label = self.create_label("AND2");
 
-                let push_ans = self.push("rax");
-
+                // Ok(format!(
+                //     "{lhs_asm}\
+                //     {lhs_cmp}\
+                //      {lhs_jmp} {false_label}\n\
+                //      {rhs_asm}\
+                //      {rhs_cmp}\
+                //      {rhs_jmp} {false_label}\n    \
+                //      mov rax, 1\n    \
+                //      jmp {true_label}\n\
+                //      {false_label}:\n    \
+                //      mov rax, 0\n\
+                //      {true_label}:\n\
+                //      {push_ans}\n"
+                // ))
                 Ok(format!(
-                    "{lhs_asm}\
-                     {get_lhs}\n\
-                     {lhs_cmp}\
-                     {lhs_jmp} {false_label}\n\
-                     {rhs_asm}\
-                     {get_rhs}\n\
-                     {rhs_cmp}\
-                     {rhs_jmp} {false_label}\n    \
-                     mov rax, 1\n    \
-                     jmp {true_label}\n\
-                     {false_label}:\n    \
-                     mov rax, 0\n\
-                     {true_label}:\n\
-                     {push_ans}\n"
+                    "__LHS-ASM__\n\
+                     {SPACE}cmp rax, 0\n\
+                     {SPACE}je {false_label}\n\
+                     __RHS-ASM__\n\
+                     {SPACE}cmp rcx, 0\n\
+                     {SPACE}je {true_label}\n\
+                     {SPACE}mov rax, 1\n\
+                     {SPACE}jmp {true_label}\n\
+                     {false_label}:\n\
+                     {SPACE}mov rax, 0\n\
+                     {true_label}:\n"
                 ))
             }
             TokenKind::LogicalOr => {
@@ -367,75 +357,70 @@ impl Generator {
                 Ok(format!("; 'LogicalOr' comparison HERE <--\n"))
             }
             _ => Err(format!(
-                "[COMPILER_GEN] Unable to generate logical operation"
+                "[COMPILER_GEN] Unable to generate Logical comparison"
             )),
         };
     }
 
-    fn gen_cmp(&mut self, op: TokenKind) -> Result<String, String> {
-        let set_asm = format!(
-            "    {} al\n",
-            match op {
-                TokenKind::Equal => "sete",
-                TokenKind::NotEqual => "setne",
-                TokenKind::GreaterThan => "setg",
-                TokenKind::GreaterEqual => "setge",
-                TokenKind::LessThan => "setl",
-                TokenKind::LessEqual => "setle",
-                _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
-            }
-        );
-
-        let cmp_asm = "    cmp rax, rdx\n";
-        let mov_asm = "    movzx rax, al\n";
+    fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+        let set_asm = format!("set{}", self.gen_cmp_asm(op)?);
 
         Ok(format!(
-            "{cmp_asm}\
-             {set_asm}\
-             {mov_asm}"
+            "{SPACE}cmp {reg1}, {reg2}\n\
+             {SPACE}{set_asm} al\n\
+             {SPACE}mov {reg1}, al\n"
         ))
     }
 
-    fn gen_jmp(&mut self, op: TokenKind) -> Result<&str, String> {
-        return match op {
-            TokenKind::Equal => Ok("je"),
-            TokenKind::NotEqual => Ok("jne"),
-            TokenKind::GreaterThan => Ok("jg"),
-            TokenKind::GreaterEqual => Ok("jge"),
-            TokenKind::LessThan => Ok("jl"),
-            TokenKind::LessEqual => Ok("jle"),
-            _ => return Err(format!("[COMPILER_GEN] Unable to generate comparison")),
+    fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+        let operation_asm = match op {
+            TokenKind::Divide => format!("xor rdx,rdx\n{SPACE}idiv {reg2}"), // TODO: this qword business..
+            TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
+            TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
+            TokenKind::Add => format!("add {reg1}, {reg2}"),
+            TokenKind::Remainder => todo!("modulus operator.."), // div + mov rax, rdx
+            _ => {
+                return Err(format!(
+                    "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
+                ))
+            }
         };
+
+        Ok(format!("{SPACE}{operation_asm}\n"))
     }
 
-    fn gen_bitwise(&self, op: TokenKind) -> Result<String, String> {
+    fn gen_bitwise(&self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
         let asm = match op {
-            TokenKind::LeftShift => "sal",
-            TokenKind::RightShift => "sar",
             TokenKind::BitwiseOr => "or",
             TokenKind::BitwiseXor => "xor",
             TokenKind::BitwiseAnd => "and",
-            TokenKind::BitwiseNot => "not",
+            TokenKind::LeftShift => "sal",
+            TokenKind::RightShift => "sar",
+            // TODO: (Types) Unsigned shift: shl, shr
             _ => {
                 return Err(format!(
-                    "[COMPILER_GEN] Unable to generate bitwise operation"
+                    "[COMPILER_GEN] Unable to generate Bitwise operation"
                 ));
             }
         };
 
-        Ok(format!("    {asm} rax, rdx\n"))
+        Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
     }
 
-    fn push(&mut self, reg: &str) -> String {
-        self.stk_ptr += 1;
-        // println!("+1, stk: {}", self.stk_ptr);
-        return format!("    push {}", reg);
-    }
-
-    fn pop(&mut self, reg: &str) -> String {
-        self.stk_ptr -= 1;
-        // println!("-1, stk: {}", self.stk_ptr);
-        return format!("    pop {}", reg);
+    fn gen_cmp_asm(&self, op: TokenKind) -> Result<&str, String> {
+        return match op {
+            TokenKind::Equal => Ok("e"),
+            TokenKind::NotEqual => Ok("ne"),
+            TokenKind::GreaterThan => Ok("g"),
+            TokenKind::GreaterEqual => Ok("ge"),
+            TokenKind::LessThan => Ok("l"),
+            TokenKind::LessEqual => Ok("le"),
+            _ => {
+                return Err(format!(
+                    "[COMPILER_GEN] Unable to generate comparison modifier"
+                ))
+            }
+        };
     }
 
     fn create_label(&mut self, name: &'static str) -> String {
@@ -443,3 +428,13 @@ impl Generator {
         return format!("label{}_{name}", self.label_count);
     }
 }
+
+// fn push(&mut self, reg: &str) -> String {
+//     self.stk_ptr += 1;
+//     return format!("{SPACE}push {}", reg);
+// }
+
+// fn pop(&mut self, reg: &str) -> String {
+//     self.stk_ptr -= 1;
+//     return format!("{SPACE}pop {}", reg);
+// }

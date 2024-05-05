@@ -1,21 +1,17 @@
-/*
-let x = 5;
+let x = 20;
 
-let a = ~x;
-let mut b = a & b;
-let mut c = a^b;      
-let d = a | b;
-let e = b >> 2;
-let f = c << 3;
-let j = 5 < 10 && 10 > 5;
-*/
+let a = x + 30; // Addition
+let b = x - 10; // Subtraction
+let c = x * 2;  // Multiply
+let d = x / 2;  // Divide
 
-let a = 10;
-let b = 20;
-let c = 30;
-let d = 40;
-let e = 50;
+let e = ~x;     // Bitwise NOT
+let f = x | a;  // Bitwise Or
+let g = x & a;  // Bitwise And
+let h = x ^ 2;  // Bitwise Xor
+let i = x << 2; // Left Shift
+let j = x >> 3; // Right Shift 
 
-let x = 1 > 2 && 2 < 3;
+let n = 4 > 2 && 2 == 2;
 
-exit(x);
+exit(n);
