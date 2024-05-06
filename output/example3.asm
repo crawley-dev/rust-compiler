@@ -4,38 +4,21 @@ _start:
     push rbp
     mov rbp, rsp
 ; Program Start
+    mov QWORD [rsp+0], 20
 ; LogicalOr
-; NotEqual
-    mov rax, 10
-    mov rcx, 10
-    cmp rax, rcx
-    setne al
-    movzx rax, al
-    mov rax, rax
-; Equal
-    mov rax, 5
-    mov rcx, 4
-    cmp rax, rcx
-    sete al
-    movzx rax, al
-    mov rcx, rax
-; LogicalOr
-; NotEqual
-    mov rax, 10
-    mov rcx, 10
-    cmp rax, rcx
-    setne al
-    movzx rax, al
-    mov rax, rax
+    mov rax, 0
     cmp rax, 0
     jne label2_OR_TRUE
-; Equal
+; GreaterThan
+; Add
     mov rax, 5
-    mov rcx, 4
+    mov rcx, 1
+    add rax, rcx
+    mov rcx, 6
     cmp rax, rcx
-    sete al
+    setg al
     movzx rax, al
-    mov rcx, rax
+    mov rcx, rax; test
     cmp rcx, 0
     je label1_OR_FALSE
 label2_OR_TRUE:
@@ -45,8 +28,7 @@ label1_OR_FALSE:
     mov rax, 0
 label3_OR_FINAL:
     movzx rax, al
-    mov QWORD [rsp+0], rax
 ; Exit Program
-    mov rdi, QWORD [rsp+0] ; Ident('o')
+    mov rdi, QWORD [rsp+8] ; Ident('n')
     mov rax, 60
     syscall

@@ -1,4 +1,4 @@
-//let x = 20;
+let x = 20;
 
 //let a = x + 30; // Addition
 //let b = x - 10; // Subtraction
@@ -12,8 +12,8 @@
 //let i = x << 2; // Left Shift
 //let j = x >> 3; // Right Shift 
 
-//let n = 4 > 2 && 2 == 2; // LogicalAnd expr
-//let o = 10 != 10 || 5 == 4; // LogicalOr expr
+//let l = 4 > 2 && 2 == 2; // LogicalAnd expr
+//let m = 10 != 10 || 5 == 4; // LogicalOr expr
+let n = 0 || 5 + 1 > 6;
 
-
-exit(o);
+exit(n);

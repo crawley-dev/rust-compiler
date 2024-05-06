@@ -208,6 +208,7 @@ impl Generator {
         Ok(asm)
     }
 
+    // TODO: logical or/and bug, causes duplicate asm.
     fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
         return match expr {
             NodeExpr::Term(term) => return self.gen_term(*term, reg),
@@ -219,10 +220,12 @@ impl Generator {
                 let lhs_asm = self.gen_expr(*lhs, reg1)?;
                 let rhs_asm = self.gen_expr(*rhs, reg2)?;
                 let op_asm = match op {
-                    _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
                     _ if op.is_bitwise() => self.gen_bitwise(op, reg1, reg2)?,
-                    _ if op.is_logical() => self.gen_logical(op, reg1, reg2, &lhs_asm, &rhs_asm)?,
+                    _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
                     _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
+                    _ if op.is_logical() => {
+                        return self.gen_logical(op, reg1, reg2, &lhs_asm, &rhs_asm)
+                    }
                     _ => {
                         return Err(format!(
                             "[COMPILER_GEN] Unable to generate binary expression"
@@ -230,12 +233,18 @@ impl Generator {
                     }
                 };
 
+                let mov_ans = if reg != "rax" {
+                    format!("{SPACE}mov {reg}, rax; \n")
+                } else {
+                    format!("")
+                };
+
                 Ok(format!(
                     "; {comment:?}\n\
                      {lhs_asm}\
                      {rhs_asm}\
                      {op_asm}\
-                     {SPACE}mov {reg}, rax\n"
+                     {mov_ans}"
                 ))
             }
             NodeExpr::UnaryExpr { op, operand } => {
@@ -348,16 +357,6 @@ impl Generator {
         };
     }
 
-    fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-        let set_asm = format!("set{}", self.gen_cmp_asm(op)?);
-
-        Ok(format!(
-            "{SPACE}cmp {reg1}, {reg2}\n\
-             {SPACE}{set_asm} al\n\
-             {SPACE}movzx {reg1}, al\n"
-        ))
-    }
-
     fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
         let operation_asm = match op {
             TokenKind::Divide => format!("xor rdx,rdx\n{SPACE}idiv {reg2}"), // TODO: this qword business..
@@ -393,7 +392,17 @@ impl Generator {
         Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
     }
 
-    fn gen_cmp_asm(&self, op: TokenKind) -> Result<&str, String> {
+    fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+        let set_asm = format!("set{}", self.gen_cmp_modifier(op)?);
+
+        Ok(format!(
+            "{SPACE}cmp {reg1}, {reg2}\n\
+             {SPACE}{set_asm} al\n\
+             {SPACE}movzx {reg1}, al\n"
+        ))
+    }
+
+    fn gen_cmp_modifier(&self, op: TokenKind) -> Result<&str, String> {
         return match op {
             TokenKind::Equal => Ok("e"),
             TokenKind::NotEqual => Ok("ne"),
