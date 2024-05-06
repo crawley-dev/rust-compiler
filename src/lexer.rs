@@ -84,7 +84,7 @@ impl TokenKind {
     // Precedence hierarchy: higher = done first
     // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
     pub fn get_prec(&self) -> i32 {
-        return match self {
+        match self {
             TokenKind::Assign => 1,
             TokenKind::LogicalOr => 3,
             TokenKind::BitwiseOr => 5,
@@ -102,22 +102,22 @@ impl TokenKind {
             TokenKind::Divide | TokenKind::Multiply | TokenKind::Remainder => 12,
             TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
             _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
-        };
+        }
     }
 
     pub fn is_arithmetic(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::Add
             | TokenKind::Subtract
             | TokenKind::Divide
             | TokenKind::Multiply
             | TokenKind::Remainder => true,
             _ => false,
-        };
+        }
     }
 
     pub fn is_comparison(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::Equal
             | TokenKind::NotEqual
             | TokenKind::GreaterThan
@@ -125,11 +125,11 @@ impl TokenKind {
             | TokenKind::LessThan
             | TokenKind::LessEqual => true,
             _ => false,
-        };
+        }
     }
 
     pub fn is_bitwise(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::BitwiseOr
             | TokenKind::BitwiseXor
             | TokenKind::BitwiseAnd
@@ -137,18 +137,18 @@ impl TokenKind {
             | TokenKind::LeftShift
             | TokenKind::RightShift => true,
             _ => false,
-        };
+        }
     }
 
     pub fn is_logical(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::LogicalOr | TokenKind::LogicalAnd | TokenKind::LogicalNot => true,
             _ => false,
-        };
+        }
     }
 
     pub fn is_binary(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::Divide
             | TokenKind::Multiply
             | TokenKind::Remainder
@@ -168,14 +168,14 @@ impl TokenKind {
             | TokenKind::GreaterThan
             | TokenKind::GreaterEqual => true,
             _ => false,
-        };
+        }
     }
 
     pub fn is_unary(&self) -> bool {
-        return match self {
+        match self {
             TokenKind::BitwiseNot | TokenKind::LogicalNot => true,
             _ => false,
-        };
+        }
     }
 }
 
@@ -232,14 +232,14 @@ impl Lexer {
             ("mut", TokenKind::Mutable),
         ]);
 
-        return Lexer {
+        Lexer {
             pos: 0,
             input: input.into_bytes(),
             buffer: Vec::new(),
             reg,
             is_linecomment: false,
             is_multicomment: false,
-        };
+        }
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
@@ -264,7 +264,7 @@ impl Lexer {
                 None => continue,
             };
         }
-        return tokens;
+        tokens
     }
 
     fn next_token(&mut self) -> Option<Token> {
@@ -319,7 +319,7 @@ impl Lexer {
         // .. consumed tokens in loop != buffer size
         // .. if .is_whitespace() { self.consume() }
         // .. .. ^^ increments self.pos && not buffer.
-        return match buf_type {
+        match buf_type {
             BufKind::Illegal => None,
             BufKind::Word => self.match_word(buf_str),
             BufKind::Symbol => self.match_symbol(buf_str),
@@ -327,7 +327,7 @@ impl Lexer {
                 kind: TokenKind::IntLit,
                 value: Some(buf_str),
             }),
-        };
+        }
     }
 
     fn match_word(&self, mut buf_str: String) -> Option<Token> {
@@ -343,10 +343,10 @@ impl Lexer {
                 None => buf_str.pop(),
             };
         }
-        return Some(Token {
+        Some(Token {
             kind: TokenKind::Ident,
             value: Some(imm_buf),
-        });
+        })
     }
 
     fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
@@ -367,11 +367,11 @@ impl Lexer {
                 }
             }
         }
-        return None;
+        None
     }
 
     fn peek(&self, offset: usize) -> Option<&u8> {
-        return self.input.get(self.pos + offset);
+        self.input.get(self.pos + offset)
     }
 
     fn consume(&mut self) -> u8 {
@@ -381,10 +381,9 @@ impl Lexer {
             println!(
                 "consuming '{}' | new pos {}",
                 self.input.get(i).copied().unwrap() as char,
-                // i
                 self.pos
             );
         }
-        return self.input.get(i).copied().unwrap();
+        self.input.get(i).copied().unwrap()
     }
 }

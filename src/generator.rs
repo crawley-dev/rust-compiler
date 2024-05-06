@@ -6,7 +6,7 @@ const SPACE: &'static str = "    ";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
-    stk_pos: usize,
+    stk_index: usize,
     ident: Option<String>,
     mutable: bool,
 }
@@ -23,7 +23,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(prog: NodeProg, file_path: String) -> Generator {
-        let generator = Generator {
+        Generator {
             prog,
             file_path,
             stk_ptr: 0,
@@ -31,8 +31,7 @@ impl Generator {
             scopes: vec![],
             vars_map: HashMap::new(),
             stack: Vec::new(),
-        };
-        return generator;
+        }
     }
 
     pub fn generate_prog(&mut self) -> Result<(), String> {
@@ -62,7 +61,7 @@ impl Generator {
     // TODO: BYTE ARRAYS!
     // TODO: subtract
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
-        return match stmt {
+        match stmt {
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::Exit(expr) => {
                 let expr_asm = self.gen_expr(expr, "rdi")?;
@@ -79,7 +78,7 @@ impl Generator {
                     self.stk_ptr += 1;
                 }
                 self.stack.push(Variable {
-                    stk_pos: self.stk_ptr,
+                    stk_index: self.stk_ptr,
                     ident: None,
                     mutable,
                 });
@@ -87,17 +86,24 @@ impl Generator {
                 self.gen_stmt(*assignment)
             }
             NodeStmt::Assign(ident, expr) => {
-                return match self.vars_map.get(ident.value.as_ref().unwrap()) {
+                // TODO: what types of expr can a let statement handle ??
+                match self.vars_map.get(ident.value.as_ref().unwrap()) {
                     Some(var) if var.mutable => {
-                        let reg = format!("QWORD [rsp+{}]", var.stk_pos * WORD_SIZE,);
+                        let reg = self.gen_stk_pos(var.stk_index);
                         self.gen_expr(expr, reg.as_str())
                     }
+                    Some(_) => Err(format!(
+                        "[COMPILER_GEN] Re-assignment of constant '{:?}'",
+                        ident.value.unwrap()
+                    )),
                     None => match self.stack.last_mut() {
                         Some(new_var) if new_var.ident.is_none() => {
                             new_var.ident = ident.value.clone();
                             self.vars_map.insert(ident.value.unwrap(), new_var.clone());
 
-                            let reg = format!("QWORD [rsp+{}]", new_var.stk_pos * WORD_SIZE,);
+                            // let reg = self.gen_stk_pos(new_var.stk_index);
+                            // TODO: refactor.
+                            let reg = format!("QWORD [rsp+{}]", new_var.stk_index * WORD_SIZE);
                             self.gen_expr(expr, reg.as_str())
                         }
                         _ => Err(format!(
@@ -105,81 +111,54 @@ impl Generator {
                             ident.value.unwrap()
                         )),
                     },
-                    _ => Err(format!(
-                        "[COMPILER_GEN] Re-assignment of constant '{:?}'",
-                        ident.value.unwrap()
-                    )),
-                };
+                }
             }
-            _ => todo!("if"), /*
-                                            NodeStmt::If(expr, scope, branches) => {
-                                                // Asm Breakdown:
-                                                // generate expr for boolean comp lhs & rhs
-                                                // pop into rax, rcx
-                                                // cmp rax, rcx
-                                                // (jump instruction) (label)
-                                                // (label):
-                                                // generate scope asm
+            NodeStmt::If(expr, scope, branches) => {
+                // To note:
+                // .. Format: if (expr) scope
+                // .. operand changes jump instruction, e.g je (jump if equal)
+                // .. .. do the inverse of the condition:
+                // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
 
-                                                // To note:
-                                                // .. Format: if (expr) scope
-                                                // .. operand changes jump instruction, e.g je (jump if equal)
-                                                // .. .. do the inverse of the condition:
-                                                // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
-                                                todo!("change if");
+                let expr_asm = self.gen_expr(expr, "rax")?;
+                let skip_label = self.gen_label("IF_FALSE");
+                let scope_asm = self.gen_scope(scope)?;
+                let mut branches_asm = String::new();
+                for branch in branches {
+                    branches_asm += &self.gen_stmt(branch)?;
+                }
 
-                                                let expr_asm = self.gen_expr(expr)?;
-                                                let pop_expr = self.pop("rax");
-                                                let cmp_asm = "    cmp rax, 0\n";
-                                                let jmp_asm = "    je"; // eval true if non-zero
-                                                let label = self.create_label("if_false");
+                Ok(format!(
+                    "; If\n\
+                     {expr_asm}\
+                     {SPACE}cmp rax, 0 \n\
+                     {SPACE}je {skip_label}\
+                     {scope_asm}\
+                     {skip_label}:\n\
+                     {branches_asm}"
+                ))
+            }
+            NodeStmt::ElseIf(expr, scope) => {
+                let skip_label = self.gen_label("ELIF_FALSE");
+                let scope_asm = self.gen_scope(scope)?;
+                let expr_asm = self.gen_expr(expr, "rax")?;
 
-                                                let scope_asm = self.gen_scope(scope)?;
-                                                let mut branches_asm = String::new();
-                                                for branch in branches {
-                                                    branches_asm += &self.gen_stmt(branch)?;
-                                                }
-
-                                                Ok(format!(
-                                                    "{expr_asm}\
-                                                     {pop_expr}\n\
-                                                     {cmp_asm}\
-                                                     {jmp_asm} {label}\n\
-                                                     {scope_asm}\
-                                                     {label}:\n\
-                                                     {branches_asm}"
-                                                ))
-                                            }
-                                            NodeStmt::ElseIf(expr, scope) => {
-                                                let expr_asm = self.gen_expr(expr)?;
-                                                let pop_expr = self.pop("rax");
-
-                                                let cmp_asm = "    cmp rax, 0\n";
-                                                let jmp_asm = "    je"; // TODO: unsigned jump ??
-
-                                                let label = self.create_label("elif");
-                                                let scope_asm = self.gen_scope(scope)?;
-
-                                                Ok(format!(
-                                                    "{expr_asm}\
-                                                     {pop_expr}\n\
-                                                     {cmp_asm}\
-                                                     {jmp_asm} {label}\n\
-                                                     {scope_asm}\
-                                                     {label}:\n"
-                                                ))
-                                            }
-                                            NodeStmt::Else(scope) => {
-                                                let label = self.create_label("else");
-                                                let scope_asm = self.gen_scope(scope)?;
-                                                Ok(format!(
-                                                    "    jmp {label}\n\
-                                                     {label}:\n\
-                                                     {scope_asm}"
-                                                ))
-                                            }
-                              */
-        };
+                Ok(format!(
+                    "{expr_asm}\n\
+                     {SPACE}cmp rax, 0\n\
+                     {SPACE}je {skip_label}\
+                     {scope_asm}\
+                     {skip_label}:\n"
+                ))
+            }
+            NodeStmt::Else(scope) => {
+                let scope_asm = self.gen_scope(scope)?;
+                Ok(format!(
+                    "; Else\n\
+                     {scope_asm}"
+                ))
+            }
+        }
     }
 
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
@@ -210,8 +189,14 @@ impl Generator {
 
     // TODO: logical or/and bug, causes duplicate asm.
     fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
-        return match expr {
-            NodeExpr::Term(term) => return self.gen_term(*term, reg),
+        // TODO: remove if using int_lit, put directly in operation.
+        let mov_ans = if reg != "rax" {
+            format!("{SPACE}mov {reg}, rax; \n")
+        } else {
+            format!("")
+        };
+        match expr {
+            NodeExpr::Term(term) => self.gen_term(*term, reg),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let comment = op.clone();
                 let reg1 = "rax";
@@ -224,19 +209,13 @@ impl Generator {
                     _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
                     _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
                     _ if op.is_logical() => {
-                        return self.gen_logical(op, reg1, reg2, &lhs_asm, &rhs_asm)
+                        return self.gen_logical(op, mov_ans, reg1, reg2, &lhs_asm, &rhs_asm)
                     }
                     _ => {
                         return Err(format!(
                             "[COMPILER_GEN] Unable to generate binary expression"
                         ))
                     }
-                };
-
-                let mov_ans = if reg != "rax" {
-                    format!("{SPACE}mov {reg}, rax; \n")
-                } else {
-                    format!("")
                 };
 
                 Ok(format!(
@@ -260,46 +239,48 @@ impl Generator {
                     "; {comment:?}\n\
                      {expr_asm}\
                      {op_asm}\
-                     {SPACE}mov {reg}, rax\n"
+                     {mov_ans}"
                 ))
             }
-        };
+        }
     }
 
     fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
-        return match term {
+        match term {
             NodeTerm::IntLit(token) => {
-                let int_lit = token.value.clone().unwrap();
                 // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
+                let int_lit = token.value.unwrap();
                 Ok(format!("{SPACE}mov {reg}, {int_lit}\n"))
             }
             NodeTerm::Ident(token) => {
-                let ident = &token.value.clone().unwrap();
-                if !self.vars_map.contains_key(ident) {
-                    return Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist."));
+                let ident = token.value.clone().unwrap();
+                match self.vars_map.get(ident.as_str()) {
+                    Some(var) => {
+                        let stk_pos = self.gen_stk_pos(var.stk_index);
+                        Ok(format!("{SPACE}mov {reg}, {stk_pos}; {token:?}\n"))
+                    }
+                    None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
                 }
-
-                let stk_index = &self.vars_map.get(ident).unwrap().stk_pos * WORD_SIZE;
-                Ok(format!(
-                    "{SPACE}mov {reg}, QWORD [rsp+{stk_index}] ; {token:?}\n"
-                ))
             }
             NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
-        };
+        }
     }
 
+    // TODO: branchless comparisons (MENTAL IDEA !!), Remove excess 'cmp'
+    // "movzx {reg1},al" << zero inits reg && validates val is 1 or 0.
     fn gen_logical(
         &mut self,
         op: TokenKind,
+        mov_ans: String,
         reg1: &str,
         reg2: &str,
         lhs_asm: &str,
         rhs_asm: &str,
     ) -> Result<String, String> {
-        return match op {
+        match op {
             TokenKind::LogicalAnd => {
-                let false_label = self.create_label("AND_FALSE");
-                let true_label = self.create_label("AND_TRUE");
+                let false_label = self.gen_label("AND_FALSE");
+                let true_label = self.gen_label("AND_TRUE");
 
                 Ok(format!(
                     "; LogicalAnd\n\
@@ -313,26 +294,15 @@ impl Generator {
                      {SPACE}jmp {true_label}\n\
                      {false_label}:\n\
                      {SPACE}mov {reg1}, 0\n\
-                     {true_label}:\n"
+                     {true_label}:\n\
+                     {SPACE}movzx {reg1}, al\n\
+                     {mov_ans}"
                 ))
             }
             TokenKind::LogicalOr => {
-                // cmp lhs
-                // jmp on true to __LABEL1
-                // cmp rhs
-                // jmp on false to __LABEL2
-                // __LABEL1:
-                // mov rax, 1
-                // jmp __LABEL3
-                // __LABEL2:
-                // mov rax, 0
-                // __LABEL3:
-                // mov rax, al ; wizardry is afoot.
-                // push rax; put var onto stack
-
-                let false_label = self.create_label("OR_FALSE");
-                let true_label = self.create_label("OR_TRUE");
-                let final_label = self.create_label("OR_FINAL");
+                let false_label = self.gen_label("OR_FALSE");
+                let true_label = self.gen_label("OR_TRUE");
+                let final_label = self.gen_label("OR_FINAL");
 
                 Ok(format!(
                     "; LogicalOr\n\
@@ -348,13 +318,14 @@ impl Generator {
                      {false_label}:\n\
                      {SPACE}mov {reg1}, 0\n\
                      {final_label}:\n\
-                     {SPACE}movzx {reg1}, al\n"
+                     {SPACE}movzx {reg1}, al\n\
+                     {mov_ans}"
                 ))
             }
             _ => Err(format!(
                 "[COMPILER_GEN] Unable to generate Logical comparison"
             )),
-        };
+        }
     }
 
     fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
@@ -385,7 +356,7 @@ impl Generator {
             _ => {
                 return Err(format!(
                     "[COMPILER_GEN] Unable to generate Bitwise operation"
-                ));
+                ))
             }
         };
 
@@ -403,24 +374,27 @@ impl Generator {
     }
 
     fn gen_cmp_modifier(&self, op: TokenKind) -> Result<&str, String> {
-        return match op {
+        match op {
             TokenKind::Equal => Ok("e"),
             TokenKind::NotEqual => Ok("ne"),
             TokenKind::GreaterThan => Ok("g"),
             TokenKind::GreaterEqual => Ok("ge"),
             TokenKind::LessThan => Ok("l"),
             TokenKind::LessEqual => Ok("le"),
-            _ => {
-                return Err(format!(
-                    "[COMPILER_GEN] Unable to generate comparison modifier"
-                ))
-            }
-        };
+            _ => Err(format!(
+                "[COMPILER_GEN] Unable to generate comparison modifier"
+            )),
+        }
     }
 
-    fn create_label(&mut self, name: &'static str) -> String {
+    fn gen_label(&mut self, name: &'static str) -> String {
         self.label_count += 1;
-        return format!("label{}_{name}", self.label_count);
+        format!("label{}_{name}", self.label_count)
+    }
+
+    // TODO: this will change depending on the size of var, e.g u8 or u32
+    fn gen_stk_pos(&self, stk_index: usize) -> String {
+        format!("QWORD [rsp+{}]", stk_index * WORD_SIZE)
     }
 }
 

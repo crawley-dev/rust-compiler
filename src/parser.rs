@@ -52,11 +52,10 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(input: Vec<Token>) -> Parser {
-        let parser = Parser {
+        Parser {
             tokens: input,
             position: 0,
-        };
-        return parser;
+        }
     }
 
     pub fn parse_prog(&mut self) -> Result<NodeProg, String> {
@@ -64,7 +63,7 @@ impl Parser {
         while self.peek(0).is_some() {
             prog.stmts.push(self.parse_stmt()?);
         }
-        return Ok(prog);
+        Ok(prog)
     }
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
@@ -89,8 +88,6 @@ impl Parser {
                 self.try_consume(TokenKind::Let)?;
                 let mutable = self.try_consume(TokenKind::Mutable).is_ok();
                 self.token_equals(TokenKind::Ident, 0)?;
-                // let ident = self.peek(0).unwrap().clone(); // TODO: fix skill issue
-                // NodeStmt::Let(ident, Box::new(self.parse_stmt()?), mutable)
                 NodeStmt::Let(Box::new(self.parse_stmt()?), mutable)
             }
             TokenKind::Ident => {
@@ -130,7 +127,7 @@ impl Parser {
         };
 
         // statments that do/don't require a ';' to end.
-        return match stmt {
+        match stmt {
             NodeStmt::Exit(_) | NodeStmt::Assign(_, _) => {
                 if self.try_consume(TokenKind::StmtEnd).is_err() {
                     println!("{:#?}", stmt);
@@ -139,7 +136,7 @@ impl Parser {
                 Ok(stmt)
             }
             _ => Ok(stmt),
-        };
+        }
     }
 
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
@@ -151,10 +148,10 @@ impl Parser {
         }
         self.try_consume(TokenKind::CloseSquirly)?;
 
-        return Ok(NodeScope {
+        Ok(NodeScope {
             stmts,
             inherits_stmts: true,
-        });
+        })
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
@@ -162,11 +159,7 @@ impl Parser {
         // .. lhs op rhs
         // rhs expr parse: (NOT, unary minus, deref)
         // .. op expr
-
-        // let term = self.parse_term()?;
-        // let mut expr = NodeExpr::Term(Box::new(term));
-
-        if let None = self.peek(0) {
+        if self.peek(0).is_none() {
             return Err(format!("[COMPILER_PARSE] No token to parse"));
         }
 
@@ -215,7 +208,7 @@ impl Parser {
                 ));
             }
         }
-        return Ok(expr);
+        Ok(expr)
     }
 
     fn parse_term(&mut self) -> Result<NodeTerm, String> {
@@ -228,7 +221,7 @@ impl Parser {
             println!("\nparsing term: {:?}", tok);
         }
 
-        return match tok.kind {
+        match tok.kind {
             TokenKind::IntLit => Ok(NodeTerm::IntLit(self.consume())),
             TokenKind::Ident => Ok(NodeTerm::Ident(self.consume())),
             TokenKind::OpenParen => {
@@ -241,22 +234,22 @@ impl Parser {
                 "[COMPILER_PARSE] Unable to parse term: {tok:?}:{}",
                 self.position
             )),
-        };
+        }
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, String> {
-        return match self.peek(offset) {
+        match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(true),
             None => Err(format!("[COMPILER_PARSE] No token to evaluate")),
             tok @ _ => Err(format!(
                 "[COMPILER_PARSE] expected '{kind:?}', found {:?}",
                 tok.unwrap().kind
             )),
-        };
+        }
     }
 
     fn peek(&self, offset: usize) -> Option<&Token> {
-        return self.tokens.get(self.position + offset);
+        self.tokens.get(self.position + offset)
     }
 
     // remove item from vec? << no clone, linear complexity though..
@@ -266,11 +259,11 @@ impl Parser {
         }
         let i = self.position;
         self.position += 1;
-        return self.tokens.get(i).unwrap().clone();
+        self.tokens.get(i).unwrap().clone()
     }
 
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
-        return Ok(self.consume());
+        Ok(self.consume())
     }
 }
