@@ -216,10 +216,12 @@ impl Generator {
                 let reg1 = "rax";
                 let reg2 = "rcx";
 
+                let lhs_asm = self.gen_expr(*lhs, reg1)?;
+                let rhs_asm = self.gen_expr(*rhs, reg2)?;
                 let op_asm = match op {
                     _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
                     _ if op.is_bitwise() => self.gen_bitwise(op, reg1, reg2)?,
-                    _ if op.is_logical() => self.gen_logical(op)?,
+                    _ if op.is_logical() => self.gen_logical(op, reg1, reg2, &lhs_asm, &rhs_asm)?,
                     _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
                     _ => {
                         return Err(format!(
@@ -227,9 +229,6 @@ impl Generator {
                         ))
                     }
                 };
-
-                let lhs_asm = self.gen_expr(*lhs, reg1)?;
-                let rhs_asm = self.gen_expr(*rhs, reg2)?;
 
                 Ok(format!(
                     "; {comment:?}\n\
@@ -280,61 +279,31 @@ impl Generator {
         };
     }
 
-    fn gen_logical(&mut self, op: TokenKind) -> Result<String, String> {
+    fn gen_logical(
+        &mut self,
+        op: TokenKind,
+        reg1: &str,
+        reg2: &str,
+        lhs_asm: &str,
+        rhs_asm: &str,
+    ) -> Result<String, String> {
         return match op {
             TokenKind::LogicalAnd => {
-                // cmp lhs
-                // jmp on false to __LABEL1
-                // cmp rhs
-                // jmp on false to __LABEL2
-                // mov rax, 1
-                // jmp __LABEL2
+                let false_label = self.create_label("AND_FALSE");
+                let true_label = self.create_label("AND_TRUE");
 
-                // __LABEL1:
-                // mov rax, 0
-
-                // __LABLEL2:
-                // mov rax, al ; when was 'al' set?? magic.
-                // push rax; put var onto stack
-
-                // let lhs_asm = self.gen_expr(lhs, "rax")?;
-                // let rhs_asm = self.gen_expr(rhs, "rcx")?;
-                // println!("{lhs_asm}\n{rhs_asm}");
-
-                // let lhs_cmp = "    cmp rax, 0\n";
-                // let lhs_jmp = "    je";
-
-                // let rhs_cmp = "    cmp rax, 0\n";
-                // let rhs_jmp = "    je";
-
-                let false_label = self.create_label("AND1");
-                let true_label = self.create_label("AND2");
-
-                // Ok(format!(
-                //     "{lhs_asm}\
-                //     {lhs_cmp}\
-                //      {lhs_jmp} {false_label}\n\
-                //      {rhs_asm}\
-                //      {rhs_cmp}\
-                //      {rhs_jmp} {false_label}\n    \
-                //      mov rax, 1\n    \
-                //      jmp {true_label}\n\
-                //      {false_label}:\n    \
-                //      mov rax, 0\n\
-                //      {true_label}:\n\
-                //      {push_ans}\n"
-                // ))
                 Ok(format!(
-                    "__LHS-ASM__\n\
-                     {SPACE}cmp rax, 0\n\
+                    "; LogicalAnd\n\
+                     {lhs_asm}\
+                     {SPACE}cmp {reg1}, 0\n\
                      {SPACE}je {false_label}\n\
-                     __RHS-ASM__\n\
-                     {SPACE}cmp rcx, 0\n\
+                     {rhs_asm}\
+                     {SPACE}cmp {reg2}, 0\n\
                      {SPACE}je {true_label}\n\
-                     {SPACE}mov rax, 1\n\
+                     {SPACE}mov {reg1}, 1\n\
                      {SPACE}jmp {true_label}\n\
                      {false_label}:\n\
-                     {SPACE}mov rax, 0\n\
+                     {SPACE}mov {reg1}, 0\n\
                      {true_label}:\n"
                 ))
             }
@@ -343,18 +312,35 @@ impl Generator {
                 // jmp on true to __LABEL1
                 // cmp rhs
                 // jmp on false to __LABEL2
-
                 // __LABEL1:
                 // mov rax, 1
                 // jmp __LABEL3
-
                 // __LABEL2:
                 // mov rax, 0
-
                 // __LABEL3:
                 // mov rax, al ; wizardry is afoot.
                 // push rax; put var onto stack
-                Ok(format!("; 'LogicalOr' comparison HERE <--\n"))
+
+                let false_label = self.create_label("OR_FALSE");
+                let true_label = self.create_label("OR_TRUE");
+                let final_label = self.create_label("OR_FINAL");
+
+                Ok(format!(
+                    "; LogicalOr\n\
+                     {lhs_asm}\
+                     {SPACE}cmp {reg1}, 0\n\
+                     {SPACE}jne {true_label}\n\
+                     {rhs_asm}\
+                     {SPACE}cmp {reg2}, 0\n\
+                     {SPACE}je {false_label}\n\
+                     {true_label}:\n\
+                     {SPACE}mov {reg1}, 1\n\
+                     {SPACE}jmp {final_label}\n\
+                     {false_label}:\n\
+                     {SPACE}mov {reg1}, 0\n\
+                     {final_label}:\n\
+                     {SPACE}movzx {reg1}, al\n"
+                ))
             }
             _ => Err(format!(
                 "[COMPILER_GEN] Unable to generate Logical comparison"
@@ -368,7 +354,7 @@ impl Generator {
         Ok(format!(
             "{SPACE}cmp {reg1}, {reg2}\n\
              {SPACE}{set_asm} al\n\
-             {SPACE}mov {reg1}, al\n"
+             {SPACE}movzx {reg1}, al\n"
         ))
     }
 

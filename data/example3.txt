@@ -1,17 +1,19 @@
-let x = 20;
+//let x = 20;
 
-let a = x + 30; // Addition
-let b = x - 10; // Subtraction
-let c = x * 2;  // Multiply
-let d = x / 2;  // Divide
+//let a = x + 30; // Addition
+//let b = x - 10; // Subtraction
+//let c = x * 2;  // Multiply
+//let d = x / 2;  // Divide
+//
+//let e = ~x;     // Bitwise NOT
+//let f = x | a;  // Bitwise Or
+//let g = x & a;  // Bitwise And
+//let h = x ^ 2;  // Bitwise Xor
+//let i = x << 2; // Left Shift
+//let j = x >> 3; // Right Shift 
 
-let e = ~x;     // Bitwise NOT
-let f = x | a;  // Bitwise Or
-let g = x & a;  // Bitwise And
-let h = x ^ 2;  // Bitwise Xor
-let i = x << 2; // Left Shift
-let j = x >> 3; // Right Shift 
+//let n = 4 > 2 && 2 == 2; // LogicalAnd expr
+//let o = 10 != 10 || 5 == 4; // LogicalOr expr
 
-let n = 4 > 2 && 2 == 2;
 
-exit(n);
+exit(o);

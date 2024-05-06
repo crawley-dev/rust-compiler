@@ -1,10 +1,6 @@
-/******************************************
-*** WIP ***********************************
-******************************************/
-
 use std::{collections::HashMap, fmt};
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufKind {
