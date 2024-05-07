@@ -18,10 +18,11 @@ pub enum NodeStmt {
     Assign(Token, NodeExpr),  // Ident, Expr
 
     Exit(NodeExpr), // a template for functions (kinda)
-    Scope(NodeScope),
     If(NodeExpr, NodeScope, Vec<NodeStmt>),
     ElseIf(NodeExpr, NodeScope),
     Else(NodeScope),
+    While(NodeExpr, NodeScope),
+    Scope(NodeScope),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,13 +77,13 @@ impl Parser {
         }
 
         let stmt = match tok.kind {
+            TokenKind::OpenSquirly => NodeStmt::Scope(self.parse_scope()?), // naked scope.
             TokenKind::Exit => {
                 self.try_consume(TokenKind::Exit)?;
                 self.try_consume(TokenKind::OpenParen)?;
-                let stmt = NodeStmt::Exit(self.parse_expr(0)?);
+                let expr = self.parse_expr(0)?;
                 self.try_consume(TokenKind::CloseParen)?;
-
-                stmt
+                NodeStmt::Exit(expr)
             }
             TokenKind::Let => {
                 self.try_consume(TokenKind::Let)?;
@@ -102,23 +103,23 @@ impl Parser {
 
                 let mut branches = Vec::new();
                 loop {
-                    // no more conditions
                     if self.try_consume(TokenKind::Else).is_err() {
                         break;
-                    }
-                    // "else if" condition
-                    if self.try_consume(TokenKind::If).is_ok() {
+                    } else if self.try_consume(TokenKind::If).is_ok() {
                         branches.push(NodeStmt::ElseIf(self.parse_expr(0)?, self.parse_scope()?));
                         continue;
                     }
-                    // "else" condition
                     branches.push(NodeStmt::Else(self.parse_scope()?));
                     break;
                 }
-
                 NodeStmt::If(expr, scope, branches)
             }
-            TokenKind::OpenSquirly => NodeStmt::Scope(self.parse_scope()?),
+            TokenKind::While => {
+                self.try_consume(TokenKind::While)?;
+                let expr = self.parse_expr(0)?;
+                let scope = self.parse_scope()?;
+                NodeStmt::While(expr, scope)
+            }
             _ => {
                 return Err(format!(
                     "[COMPILER_PARSE] Unable to parse statement: {tok:?}",

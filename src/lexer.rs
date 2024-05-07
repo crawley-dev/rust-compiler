@@ -55,6 +55,7 @@ pub enum TokenKind {
     Let,
     If,
     Else,
+    While,
     Function,
     Mutable,
 
@@ -230,8 +231,8 @@ impl Lexer {
             ("if", TokenKind::If),
             ("else", TokenKind::Else),
             ("mut", TokenKind::Mutable),
+            ("while", TokenKind::While),
         ]);
-
         Lexer {
             pos: 0,
             input: input.into_bytes(),
@@ -242,15 +243,13 @@ impl Lexer {
         }
     }
 
+    // TODO: parser bugs. i.e "*// /}", "/ /" line comment works here.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         while self.pos < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {
-                    TokenKind::LineComment => {
-                        println!("found line comment.");
-                        self.is_linecomment = true
-                    }
+                    TokenKind::LineComment => self.is_linecomment = true,
                     TokenKind::OpenMultiComment => self.is_multicomment = true,
                     TokenKind::CloseMultiComment => self.is_multicomment = false,
                     _ if self.is_multicomment => (),

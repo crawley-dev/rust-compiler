@@ -47,7 +47,7 @@ aaa }
     - [ ] modulus '%' op
     - [ ] Associativity
     - [x] binary
-    - [ ] logical
+    - [x] logical
       - i.e: if (5)  | 5 != 0 so -> if (true) 
       - i.e: if (!5) | 5 == 0 so -> if (false)  
       - eval expr, jump if zero. << un-optimal, uses 'al' reg when not necessary

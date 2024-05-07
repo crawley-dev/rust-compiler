@@ -5,55 +5,25 @@ _start:
     mov rbp, rsp
 ; Program Start
     mov QWORD [rsp+0], 20
-; If
-; LogicalOr
-    mov rax, 0
-    cmp rax, 0
-    jne label2_OR_TRUE
-; GreaterEqual
+    mov QWORD [rsp+8], 0
+; While
+    jmp .1_WHILE_CMP
+.2_WHILE_SCOPE:
 ; Add
-    mov rax, 5
+    mov rax, QWORD [rsp+8]; Ident('i')
     mov rcx, 1
     add rax, rcx
-    mov rcx, 6
+    mov QWORD [rsp+8], rax; 
+.1_WHILE_CMP:
+; LessThan
+    mov rax, QWORD [rsp+8]; Ident('i')
+    mov rcx, 10
     cmp rax, rcx
-    setge al
+    setl al
     movzx rax, al
-    mov rcx, rax; 
-    cmp rcx, 0
-    je label1_OR_FALSE
-label2_OR_TRUE:
-    mov rax, 1
-    jmp label3_OR_FINAL
-label1_OR_FALSE:
-    mov rax, 0
-label3_OR_FINAL:
-    movzx rax, al
-    cmp rax, 0 
-    je label4_IF_FALSE; Exit Program
-    mov rdi, 20
-    mov rax, 60
-    syscall
-label4_IF_FALSE:
-; Equal
-    mov rax, QWORD [rsp+0]; Ident('x')
-    mov rcx, 20
-    cmp rax, rcx
-    sete al
-    movzx rax, al
-
     cmp rax, 0
-    je label5_ELIF_FALSE; Exit Program
-    mov rdi, 19
-    mov rax, 60
-    syscall
-label5_ELIF_FALSE:
-; Else
+    jne .2_WHILE_SCOPE
 ; Exit Program
-    mov rdi, 10
-    mov rax, 60
-    syscall
-; Exit Program
-    mov rdi, 100
+    mov rdi, QWORD [rsp+8]; Ident('i')
     mov rax, 60
     syscall

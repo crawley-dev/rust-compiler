@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 bitflags = "2.5.0"
 cargo-watch = "8.5.2"
+rand = "0.8.5"

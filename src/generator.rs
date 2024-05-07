@@ -11,14 +11,20 @@ struct Variable {
     mutable: bool,
 }
 
+struct Context {
+    endif_label: String,
+    // loop_end: String, //TODO: implement 'break', requires extra label?
+}
+
 pub struct Generator {
     prog: NodeProg,
     file_path: String,
     stk_ptr: usize,
     label_count: usize,
     scopes: Vec<usize>,
-    vars_map: HashMap<String, Variable>,
     stack: Vec<Variable>,
+    var_map: HashMap<String, Variable>,
+    ctx: Context,
 }
 
 impl Generator {
@@ -29,8 +35,11 @@ impl Generator {
             stk_ptr: 0,
             label_count: 0,
             scopes: vec![],
-            vars_map: HashMap::new(),
             stack: Vec::new(),
+            var_map: HashMap::new(),
+            ctx: Context {
+                endif_label: "".to_string(),
+            },
         }
     }
 
@@ -72,7 +81,6 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-
             NodeStmt::Let(assignment, mutable) => {
                 if self.stack.len() != 0 {
                     self.stk_ptr += 1;
@@ -87,7 +95,7 @@ impl Generator {
             }
             NodeStmt::Assign(ident, expr) => {
                 // TODO: what types of expr can a let statement handle ??
-                match self.vars_map.get(ident.value.as_ref().unwrap()) {
+                match self.var_map.get(ident.value.as_ref().unwrap()) {
                     Some(var) if var.mutable => {
                         let reg = self.gen_stk_pos(var.stk_index);
                         self.gen_expr(expr, reg.as_str())
@@ -99,10 +107,10 @@ impl Generator {
                     None => match self.stack.last_mut() {
                         Some(new_var) if new_var.ident.is_none() => {
                             new_var.ident = ident.value.clone();
-                            self.vars_map.insert(ident.value.unwrap(), new_var.clone());
+                            self.var_map.insert(ident.value.unwrap(), new_var.clone());
 
-                            // let reg = self.gen_stk_pos(new_var.stk_index);
                             // TODO: refactor.
+                            // let reg = self.gen_stk_pos(new_var.stk_index);
                             let reg = format!("QWORD [rsp+{}]", new_var.stk_index * WORD_SIZE);
                             self.gen_expr(expr, reg.as_str())
                         }
@@ -121,34 +129,41 @@ impl Generator {
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
 
                 let expr_asm = self.gen_expr(expr, "rax")?;
-                let skip_label = self.gen_label("IF_FALSE");
+                let false_label = self.gen_label("IF_FALSE");
+                self.ctx.endif_label = self.gen_label("END_IF");
                 let scope_asm = self.gen_scope(scope)?;
                 let mut branches_asm = String::new();
                 for branch in branches {
                     branches_asm += &self.gen_stmt(branch)?;
                 }
+                // borrowing rules..
+                let endif_label = self.ctx.endif_label.as_str();
 
                 Ok(format!(
                     "; If\n\
                      {expr_asm}\
                      {SPACE}cmp rax, 0 \n\
-                     {SPACE}je {skip_label}\
+                     {SPACE}je {false_label}\n\
                      {scope_asm}\
-                     {skip_label}:\n\
-                     {branches_asm}"
+                     {SPACE}jmp {endif_label}\n\
+                     {false_label}:\n\
+                     {branches_asm}\
+                     {endif_label}:\n"
                 ))
             }
             NodeStmt::ElseIf(expr, scope) => {
-                let skip_label = self.gen_label("ELIF_FALSE");
+                let false_label = self.gen_label("ELIF_FALSE");
                 let scope_asm = self.gen_scope(scope)?;
                 let expr_asm = self.gen_expr(expr, "rax")?;
+                let endif_label = self.ctx.endif_label.as_str();
 
                 Ok(format!(
                     "{expr_asm}\n\
                      {SPACE}cmp rax, 0\n\
-                     {SPACE}je {skip_label}\
+                     {SPACE}je {false_label}\n\
                      {scope_asm}\
-                     {skip_label}:\n"
+                     {SPACE}jmp {endif_label}\n\
+                     {false_label}:\n"
                 ))
             }
             NodeStmt::Else(scope) => {
@@ -156,6 +171,25 @@ impl Generator {
                 Ok(format!(
                     "; Else\n\
                      {scope_asm}"
+                ))
+            }
+
+            // TODO: break.
+            NodeStmt::While(expr, scope) => {
+                let cmp_label = self.gen_label("WHILE_CMP");
+                let scope_label = self.gen_label("WHILE_SCOPE");
+                let scope_asm = self.gen_scope(scope)?;
+                let cmp_asm = self.gen_expr(expr, "rax")?;
+
+                Ok(format!(
+                    "; While\n\
+                     {SPACE}jmp {cmp_label}\n\
+                     {scope_label}:\n\
+                     {scope_asm}\
+                     {cmp_label}:\n\
+                     {cmp_asm}\
+                     {SPACE}cmp rax, 0\n\
+                     {SPACE}jne {scope_label}\n"
                 ))
             }
         }
@@ -169,14 +203,14 @@ impl Generator {
             asm += &self.gen_stmt(stmt)?;
         }
 
-        if self.vars_map.len() > 0 && !scope.inherits_stmts {
-            let pop_amt = self.vars_map.len() - self.scopes.last().unwrap();
+        if self.var_map.len() > 0 && !scope.inherits_stmts {
+            let pop_amt = self.var_map.len() - self.scopes.last().unwrap();
             asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
             self.stk_ptr -= pop_amt;
 
             for _ in 0..pop_amt {
                 if let Some(var) = self.stack.pop() {
-                    self.vars_map.remove(&var.ident.unwrap());
+                    self.var_map.remove(&var.ident.unwrap());
                 } else {
                     break;
                 }
@@ -254,7 +288,7 @@ impl Generator {
             }
             NodeTerm::Ident(token) => {
                 let ident = token.value.clone().unwrap();
-                match self.vars_map.get(ident.as_str()) {
+                match self.var_map.get(ident.as_str()) {
                     Some(var) => {
                         let stk_pos = self.gen_stk_pos(var.stk_index);
                         Ok(format!("{SPACE}mov {reg}, {stk_pos}; {token:?}\n"))
@@ -387,12 +421,13 @@ impl Generator {
         }
     }
 
+    // '.' makes it a local label.
     fn gen_label(&mut self, name: &'static str) -> String {
         self.label_count += 1;
-        format!("label{}_{name}", self.label_count)
+        format!(".{:X}_{name}", self.label_count) // :x is hexadecimal!
     }
 
-    // TODO: this will change depending on the size of var, e.g u8 or u32
+    // TODO: in future, this will change depending on the size of var, e.g u8 or u32
     fn gen_stk_pos(&self, stk_index: usize) -> String {
         format!("QWORD [rsp+{}]", stk_index * WORD_SIZE)
     }

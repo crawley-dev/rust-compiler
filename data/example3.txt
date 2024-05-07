@@ -5,23 +5,32 @@ let x = 20;
 //let c = x * 2;  // Multiply
 //let d = x / 2;  // Divide
 //
-//let e = ~x;     // Bitwise NOT
-//let f = x | a;  // Bitwise Or
-//let g = x & a;  // Bitwise And
-//let h = x ^ 2;  // Bitwise Xor
-//let i = x << 2; // Left Shift
-//let j = x >> 3; // Right Shift 
+/*let e = ~x;     // Bitwise NOT
+let f = x | a;  // Bitwise Or
+let g = x & a;  // Bitwise And
+let h = x ^ 2;  // Bitwise Xor
+let i = x << 2; // Left Shift
+let j = x >> 3; // Right Shift 
+*/
 
-//let l = 4 > 2 && 2 == 2; // LogicalAnd expr
-//let m = 10 != 10 || 5 == 5; // LogicalOr expr
-//let n = 0 || 5 + 1 > 6;
+/*let l = 4 > 2 && 2 == 2; // LogicalAnd expr
+let m = 10 != 10 || 5 == 5; // LogicalOr expr
+let n = 0 || 5 + 1 > 6;*/
 
-if (0 || 5 + 1 >= 6) {
-    exit(20);
-} else if x == 20 {
-    exit(19);
+let mut i = 0;
+/*if (0 || 5 + 1 > 6) {
+    //exit(20);
+    i = 20;
+} else if 20 == 20 {
+    //exit(19);
+    i = 19;
 } else {
-    exit(10);
+    //exit(10);
+    i = 10;
+*/ //}
+
+while i < 10 {
+    i = i + 1;
 }
 
-exit(100);
+exit(i);
