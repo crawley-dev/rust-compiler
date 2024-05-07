@@ -13,7 +13,7 @@ struct Variable {
 
 struct Context {
     endif_label: String,
-    loop_end_label: String, //TODO: implement 'break', requires extra label?
+    loop_end_label: String,
 }
 
 pub struct Generator {
@@ -69,7 +69,6 @@ impl Generator {
     }
 
     // TODO: BYTE ARRAYS!
-    // TODO: subtract
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
         match stmt {
             NodeStmt::Scope(scope) => self.gen_scope(scope),
@@ -208,6 +207,7 @@ impl Generator {
         }
     }
 
+    // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
         self.scopes.push(scope.stmts.len());
 
@@ -216,19 +216,18 @@ impl Generator {
             asm += &self.gen_stmt(stmt)?;
         }
 
-        if self.var_map.len() > 0 && !scope.inherits_stmts {
-            let pop_amt = self.var_map.len() - self.scopes.last().unwrap();
-            asm += &format!("    add rsp, {}\n", pop_amt * WORD_SIZE);
-            self.stk_ptr -= pop_amt;
+        // if !scope.inherits_stmts {
+        //     let pop_amt = self.var_map.len() - self.scopes.last().unwrap();
+        //     asm += &format!("{SPACE}add rsp, {}\n", pop_amt * WORD_SIZE);
+        //     self.stk_ptr -= pop_amt;
 
-            for _ in 0..pop_amt {
-                if let Some(var) = self.stack.pop() {
-                    self.var_map.remove(&var.ident.unwrap());
-                } else {
-                    break;
-                }
-            }
-        }
+        //     for _ in 0..pop_amt {
+        //         match self.stack.pop() {
+        //             Some(var) => self.var_map.remove(&var.ident.unwrap()),
+        //             None => break,
+        //         };
+        //     }
+        // }
 
         self.scopes.pop(); // can remove 'scopes', push & pop all in here.
         Ok(asm)
@@ -377,11 +376,11 @@ impl Generator {
 
     fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
         let operation_asm = match op {
-            TokenKind::Divide => format!("xor rdx,rdx\n{SPACE}idiv {reg2}"), // TODO: this qword business..
+            TokenKind::Divide => format!("cqo\n{SPACE}idiv {reg2}"),
             TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
             TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
             TokenKind::Add => format!("add {reg1}, {reg2}"),
-            TokenKind::Remainder => todo!("modulus operator.."), // div + mov rax, rdx
+            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // div + mov rax, rdx
             _ => {
                 return Err(format!(
                     "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
