@@ -202,7 +202,7 @@ impl Generator {
                 ))
             }
             NodeStmt::Break => Ok(format!(
-                "{SPACE}jmp {label}\n",
+                "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
         }
@@ -238,7 +238,7 @@ impl Generator {
     fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
         // TODO: remove if using int_lit, put directly in operation.
         let mov_ans = if reg != "rax" {
-            format!("{SPACE}mov {reg}, rax; \n")
+            format!("{SPACE}mov {reg}, rax\n")
         } else {
             format!("")
         };
@@ -304,7 +304,7 @@ impl Generator {
                 match self.var_map.get(ident.as_str()) {
                     Some(var) => {
                         let stk_pos = self.gen_stk_pos(var.stk_index);
-                        Ok(format!("{SPACE}mov {reg}, {stk_pos}; {token:?}\n"))
+                        Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {token:?}\n"))
                     }
                     None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
                 }

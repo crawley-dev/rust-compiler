@@ -1,7 +1,6 @@
 // https://www.mycompiler.io/new/asm-x86_64
 
 let x = 20;
-let mut i = 0;
 
 //let a = x + 30; // Addition
 //let b = x - 10; // Subtraction
@@ -35,18 +34,24 @@ if (0 || 5 + 1 > 6) {
 
 //let m = 10 != 10 || 5 == 5; // LogicalOr expr
 
-let mut j = 0;
-/*
-while i < 10 {
-    //while j < 10 {
-    //    j = j + 1;
-    //}
+let mut ans = 5;
+let mut i = 0;
+while 1 == 1 {
     if i == 5 {
         break;
     }
+
+    let mut j = 0;
+    while 1 == 1 {
+        if j == 10 {
+            break;
+        }
+    
+        ans = ans + 1;
+        j = j + 1;
+    }
     i = i + 1;
 }
-*/
 
-
-exit(i);
+// j is NOT in scope!!
+exit(ans);

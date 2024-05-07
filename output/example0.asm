@@ -1,8 +1,10 @@
-BITS 64
 global _start
 _start:
-    mov rax, 69
-    push rax
+; setup stack frame
+    push rbp
+    mov rbp, rsp
+; Program Start
+; Exit Program
+    mov rdi, 69
     mov rax, 60
-    pop rdi
     syscall
