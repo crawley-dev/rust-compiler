@@ -56,6 +56,7 @@ pub enum TokenKind {
     If,
     Else,
     While,
+    Break,
     Function,
     Mutable,
 
@@ -232,6 +233,7 @@ impl Lexer {
             ("else", TokenKind::Else),
             ("mut", TokenKind::Mutable),
             ("while", TokenKind::While),
+            ("break", TokenKind::Break),
         ]);
         Lexer {
             pos: 0,

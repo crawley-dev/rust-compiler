@@ -18,11 +18,12 @@ pub enum NodeStmt {
     Assign(Token, NodeExpr),  // Ident, Expr
 
     Exit(NodeExpr), // a template for functions (kinda)
+    Scope(NodeScope),
     If(NodeExpr, NodeScope, Vec<NodeStmt>),
     ElseIf(NodeExpr, NodeScope),
     Else(NodeScope),
     While(NodeExpr, NodeScope),
-    Scope(NodeScope),
+    Break,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,7 +70,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
-            Some(tok) => tok,
+            Some(tok) => tok, //self.consume(),
             None => return Err(format!("[COMPILER_PARSE] No statement to parse")),
         };
         if LOG_DEBUG_INFO {
@@ -78,6 +79,10 @@ impl Parser {
 
         let stmt = match tok.kind {
             TokenKind::OpenSquirly => NodeStmt::Scope(self.parse_scope()?), // naked scope.
+            TokenKind::Break => {
+                self.try_consume(TokenKind::Break)?;
+                NodeStmt::Break
+            }
             TokenKind::Exit => {
                 self.try_consume(TokenKind::Exit)?;
                 self.try_consume(TokenKind::OpenParen)?;
@@ -129,12 +134,11 @@ impl Parser {
 
         // statments that do/don't require a ';' to end.
         match stmt {
-            NodeStmt::Exit(_) | NodeStmt::Assign(_, _) => {
-                if self.try_consume(TokenKind::StmtEnd).is_err() {
-                    println!("{:#?}", stmt);
-                    return Err(format!("[COMPILER_PARSE] ';' not found"));
+            NodeStmt::Exit(_) | NodeStmt::Assign(_, _) | NodeStmt::Break => {
+                match self.try_consume(TokenKind::StmtEnd) {
+                    Ok(_) => Ok(stmt),
+                    Err(e) => Err(format!("{e} | {stmt:#?}")),
                 }
-                Ok(stmt)
             }
             _ => Ok(stmt),
         }
@@ -156,10 +160,6 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
-        // lhs expr parse: (everything else lol)
-        // .. lhs op rhs
-        // rhs expr parse: (NOT, unary minus, deref)
-        // .. op expr
         if self.peek(0).is_none() {
             return Err(format!("[COMPILER_PARSE] No token to parse"));
         }

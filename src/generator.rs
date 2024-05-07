@@ -13,7 +13,7 @@ struct Variable {
 
 struct Context {
     endif_label: String,
-    // loop_end: String, //TODO: implement 'break', requires extra label?
+    loop_end_label: String, //TODO: implement 'break', requires extra label?
 }
 
 pub struct Generator {
@@ -39,6 +39,7 @@ impl Generator {
             var_map: HashMap::new(),
             ctx: Context {
                 endif_label: "".to_string(),
+                loop_end_label: "".to_string(),
             },
         }
     }
@@ -128,16 +129,22 @@ impl Generator {
                 // .. .. do the inverse of the condition:
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
 
-                let expr_asm = self.gen_expr(expr, "rax")?;
+                let mut endif_jmp = String::new();
+                let mut endif_goto = String::new();
+                if !branches.is_empty() {
+                    self.ctx.endif_label = self.gen_label("END_IF");
+                    endif_goto = format!("{}:\n", self.ctx.endif_label.as_str());
+                    endif_jmp = format!("{SPACE}jmp {}\n", self.ctx.endif_label.as_str());
+                }
                 let false_label = self.gen_label("IF_FALSE");
-                self.ctx.endif_label = self.gen_label("END_IF");
+
+                let expr_asm = self.gen_expr(expr, "rax")?;
                 let scope_asm = self.gen_scope(scope)?;
+
                 let mut branches_asm = String::new();
                 for branch in branches {
                     branches_asm += &self.gen_stmt(branch)?;
                 }
-                // borrowing rules..
-                let endif_label = self.ctx.endif_label.as_str();
 
                 Ok(format!(
                     "; If\n\
@@ -145,10 +152,10 @@ impl Generator {
                      {SPACE}cmp rax, 0 \n\
                      {SPACE}je {false_label}\n\
                      {scope_asm}\
-                     {SPACE}jmp {endif_label}\n\
+                     {endif_jmp}\
                      {false_label}:\n\
                      {branches_asm}\
-                     {endif_label}:\n"
+                     {endif_goto}"
                 ))
             }
             NodeStmt::ElseIf(expr, scope) => {
@@ -173,11 +180,12 @@ impl Generator {
                      {scope_asm}"
                 ))
             }
-
-            // TODO: break.
             NodeStmt::While(expr, scope) => {
                 let cmp_label = self.gen_label("WHILE_CMP");
                 let scope_label = self.gen_label("WHILE_SCOPE");
+                let loop_end_label = self.gen_label("WHILE_END");
+                self.ctx.loop_end_label = loop_end_label.clone();
+
                 let scope_asm = self.gen_scope(scope)?;
                 let cmp_asm = self.gen_expr(expr, "rax")?;
 
@@ -189,9 +197,14 @@ impl Generator {
                      {cmp_label}:\n\
                      {cmp_asm}\
                      {SPACE}cmp rax, 0\n\
-                     {SPACE}jne {scope_label}\n"
+                     {SPACE}jne {scope_label}\n\
+                     {loop_end_label}:\n"
                 ))
             }
+            NodeStmt::Break => Ok(format!(
+                "{SPACE}jmp {label}\n",
+                label = self.ctx.loop_end_label.as_str()
+            )),
         }
     }
 
