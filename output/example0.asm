@@ -4,7 +4,3 @@ _start:
     push rbp
     mov rbp, rsp
 ; Program Start
-; Exit Program
-    mov rdi, 69
-    mov rax, 60
-    syscall

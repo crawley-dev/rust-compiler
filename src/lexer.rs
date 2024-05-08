@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufKind {
@@ -248,6 +248,7 @@ impl Lexer {
     // TODO: parser bugs. i.e "*// /}", "/ /" line comment works here.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
+        println!("pos 16: {}", self.input.get(16).unwrap());
         while self.pos < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {
@@ -283,11 +284,23 @@ impl Lexer {
             // next iter: hits '\n', stop linecomment. CORRECT!
             // .. otherwise, it would consume "//" && \n, then: linecomment = true. BAD!
             if next_char == b'\n' {
+                if self.buffer.is_empty() {
+                    self.pos += 1;
+                }
+                // self.pos += 1;
+                // self.input.remove(self.pos);
                 self.is_linecomment = false;
-                self.input.remove(self.pos);
                 break;
             } else if self.is_linecomment || next_char.is_ascii_whitespace() {
-                self.input.remove(self.pos);
+                if self.buffer.is_empty() {
+                    self.pos += 1;
+                }
+                // self.pos += 1;
+                // self.input.remove(self.pos);
+                println!(
+                    "linecomment or whitespace: {:?}",
+                    self.buffer.iter().map(|x| *x as char).collect::<String>()
+                );
                 break;
             }
 
@@ -313,7 +326,7 @@ impl Lexer {
         let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
 
         if LOG_DEBUG_INFO {
-            println!("\nbuf: {buf_str} | pos: {}", self.pos);
+            println!("\nbuf: '{buf_str}' | pos: {}", self.pos);
         }
 
         // whitespace is consumed at the end of the buffer
