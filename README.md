@@ -26,7 +26,7 @@ aaa }
     - [x]  else & else if parsing
     - [ ] code generation
       - [x] invert 'jump' conditions
-      - [ ] unsigned vs signed comparison (diff jump instructions)
+      - [ ] unsigned vs signed comparison (diff jump instructions) (no types, all signed)
       - [x] binary expr conditions
         - conditional expr, either has explicity bool comparison or implicit, expr = lhs: (lhs > 0)
         - cmp reg1, reg2 ; compare arguments
@@ -37,14 +37,11 @@ aaa }
       - doesn't (new function, UNLESS class, inherits 'self')
   - [x] (kinda done) split 'TokenKind': 'Symbol' .. 'LogicalOp' .. 'BinaryOp' .. etc
   - [x] comments
-  - [x] dynamically place variables on stack if they are(nt) used immediately. 
-    - use multiple registers to store arguments for a binary expr
-    - add stack values at top level (expr, stmt), not term. do ^^
   - [x] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
   - [x] update grammar to match code. 
   - [x] variable reassignment (mutability)
   - [ ] Operators
-    - [ ] modulus '%' op
+    - [x] modulus '%' op
     - [ ] Associativity
     - [x] binary
     - [x] logical
@@ -55,7 +52,10 @@ aaa }
     - [ ] unary
       - [ ] LogicalNot
       - [x] BitwiseNot
-  - [ ] Proper Testing infrastructure.
+  - [ ] dynamically place variables on stack if they are(nt) used immediately. 
+    - use multiple registers to store arguments for a binary expr
+    - add stack values at top level (expr, stmt), not term. do ^^
+  - [ ] Testing infrastructure.
 
   - [ ] data types
     - [ ] bools: al register (8 bit)
@@ -71,7 +71,7 @@ aaa }
   - [ ] Implement C equivalent operators:
     - [ ] comma: ','
     - [ ] assignment: '=' | '+=' | '/=' | .. 
-    - [ ] modulus: %
+    - [x] modulus: %
     - [ ] logical not: !
     - [ ] unary minus: i.e -10
     - [ ] function call: '()'

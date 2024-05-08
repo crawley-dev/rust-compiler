@@ -137,7 +137,7 @@ impl Parser {
             NodeStmt::Exit(_) | NodeStmt::Assign(_, _) | NodeStmt::Break => {
                 match self.try_consume(TokenKind::StmtEnd) {
                     Ok(_) => Ok(stmt),
-                    Err(e) => Err(format!("{e} | {stmt:#?}")),
+                    Err(e) => Err(format!("{e}.\n {stmt:#?}")),
                 }
             }
             _ => Ok(stmt),

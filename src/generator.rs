@@ -12,6 +12,8 @@ struct Variable {
 }
 
 struct Context {
+    stk_ptr: usize,
+    reg_count: usize,
     endif_label: String,
     loop_end_label: String,
 }
@@ -19,7 +21,6 @@ struct Context {
 pub struct Generator {
     prog: NodeProg,
     file_path: String,
-    stk_ptr: usize,
     label_count: usize,
     scopes: Vec<usize>,
     stack: Vec<Variable>,
@@ -32,12 +33,13 @@ impl Generator {
         Generator {
             prog,
             file_path,
-            stk_ptr: 0,
             label_count: 0,
             scopes: vec![],
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: Context {
+                stk_ptr: 0,
+                reg_count: 0,
                 endif_label: "".to_string(),
                 loop_end_label: "".to_string(),
             },
@@ -83,10 +85,10 @@ impl Generator {
             }
             NodeStmt::Let(assignment, mutable) => {
                 if self.stack.len() != 0 {
-                    self.stk_ptr += 1;
+                    self.ctx.stk_ptr += 1;
                 }
                 self.stack.push(Variable {
-                    stk_index: self.stk_ptr,
+                    stk_index: self.ctx.stk_ptr,
                     ident: None,
                     mutable,
                 });
@@ -208,6 +210,7 @@ impl Generator {
     }
 
     // TODO: scope.inherits_stmts does nothing currently.
+    // .. scoped vars are never de-allocatted. they exist globally.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
         self.scopes.push(scope.stmts.len());
 
@@ -236,11 +239,13 @@ impl Generator {
     // TODO: logical or/and bug, causes duplicate asm.
     fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
         // TODO: remove if using int_lit, put directly in operation.
-        let mov_ans = if reg != "rax" {
-            format!("{SPACE}mov {reg}, rax\n")
-        } else {
-            format!("")
-        };
+        // let push_ans = if reg != "rax" {
+        //     format!("{SPACE}mov {reg}, rax\n")
+        //     // format!("")
+        // } else {
+        //     format!("{}", self.push("rax"))
+        // };
+        let push_ans = "".to_string();
         match expr {
             NodeExpr::Term(term) => self.gen_term(*term, reg),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
@@ -248,14 +253,37 @@ impl Generator {
                 let reg1 = "rax";
                 let reg2 = "rcx";
 
+                let lhs_intlit = match *lhs.clone() {
+                    NodeExpr::Term(_) => true,
+                    _ => false,
+                };
+
                 let lhs_asm = self.gen_expr(*lhs, reg1)?;
                 let rhs_asm = self.gen_expr(*rhs, reg2)?;
+
+                let op_stuff = if lhs_intlit {
+                    format!(
+                        "\
+                      ; {comment:?}\n\
+                      {lhs_asm}\
+                      {rhs_asm}\
+                      "
+                    )
+                } else {
+                    format!(
+                        "\
+                        {lhs_asm}\
+                        ; {comment:?}\n\
+                        {rhs_asm}"
+                    )
+                };
+
                 let op_asm = match op {
                     _ if op.is_bitwise() => self.gen_bitwise(op, reg1, reg2)?,
                     _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
                     _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
                     _ if op.is_logical() => {
-                        return self.gen_logical(op, mov_ans, reg1, reg2, &lhs_asm, &rhs_asm)
+                        return self.gen_logical(op, push_ans, reg1, reg2, &lhs_asm, &rhs_asm)
                     }
                     _ => {
                         return Err(format!(
@@ -264,13 +292,10 @@ impl Generator {
                     }
                 };
 
-                Ok(format!(
-                    "; {comment:?}\n\
-                     {lhs_asm}\
-                     {rhs_asm}\
-                     {op_asm}\
-                     {mov_ans}"
-                ))
+                // TODO: problem! when lhs_asm >> rhs_asm, prec is reversed.
+                // but when rhs_asm >> lhs_asm. all terms, then all ops..
+
+                Ok(format!("{op_stuff}"))
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let comment = op.clone();
@@ -285,13 +310,17 @@ impl Generator {
                     "; {comment:?}\n\
                      {expr_asm}\
                      {op_asm}\
-                     {mov_ans}"
+                     {push_ans}"
                 ))
             }
         }
     }
 
     fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
+        // return match term {
+        //     NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
+        //     _ => Ok(format!("{SPACE};{:?}\n", term)),
+        // };
         match term {
             NodeTerm::IntLit(token) => {
                 // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
@@ -380,7 +409,7 @@ impl Generator {
             TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
             TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
             TokenKind::Add => format!("add {reg1}, {reg2}"),
-            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // div + mov rax, rdx
+            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // TODO: 'cqo' changes with reg size
             _ => {
                 return Err(format!(
                     "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
@@ -443,14 +472,19 @@ impl Generator {
     fn gen_stk_pos(&self, stk_index: usize) -> String {
         format!("QWORD [rsp+{}]", stk_index * WORD_SIZE)
     }
+
+    fn push(&mut self, reg: &str) -> String {
+        self.ctx.stk_ptr += 1;
+        return format!("{SPACE}push {reg}\n");
+    }
+
+    fn pop(&mut self, reg: &str) -> String {
+        self.ctx.stk_ptr -= 1;
+        return format!("{SPACE}pop {reg}\n");
+    }
+
+    // fn gen_next_reg(&mut self) {
+    // let preserved_registers = [""];
+    // let scratch_registers = ["rax", "rcx", "rdx"];
+    // }
 }
-
-// fn push(&mut self, reg: &str) -> String {
-//     self.stk_ptr += 1;
-//     return format!("{SPACE}push {}", reg);
-// }
-
-// fn pop(&mut self, reg: &str) -> String {
-//     self.stk_ptr -= 1;
-//     return format!("{SPACE}pop {}", reg);
-// }

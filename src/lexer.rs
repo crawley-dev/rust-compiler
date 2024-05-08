@@ -362,6 +362,7 @@ impl Lexer {
                 }
             }
         }
+        self.pos += 1;
         None
     }
 

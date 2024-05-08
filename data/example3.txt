@@ -1,13 +1,13 @@
 // https://www.mycompiler.io/new/asm-x86_64
 
+/*
 let x = 20;
+let a = x + 30; // Addition
+let b = x - 10; // Subtraction
+let c = x * 2;  // Multiply
+let d = x / 2;  // Divide
 
-//let a = x + 30; // Addition
-//let b = x - 10; // Subtraction
-//let c = x * 2;  // Multiply
-//let d = x / 2;  // Divide
-//
-/*let e = ~x;     // Bitwise NOT
+let e = ~x;     // Bitwise NOT
 let f = x | a;  // Bitwise Or
 let g = x & a;  // Bitwise And
 let h = x ^ 2;  // Bitwise Xor
@@ -16,45 +16,23 @@ let j = x >> 3; // Right Shift
 
 let l = 4 > 2 && 2 == 2; // LogicalAnd expr
 let n = 0 || 5 + 1 > 6;
+
+let m = 10 != 10 || 5 == 5; // LogicalOr expr
 */
 
+//let ans90 = 100 + (200 / 10) - 3 * 10;
+let ans120 = 100 + (200 / 10) - 3 * 10;
+//let ans120 = 100 + 50 - 50; //  - 51 + 52 - 53 / 2
+exit(ans120);
 
 /*
-if (0 || 5 + 1 > 6) {
-    //exit(20);
-    i = 20;
-} else if 20 == 20 {
-    //exit(19);
-    i = 19;
-} else {
-    //exit(10);
-    i = 10;
-*/ //}
-
-//let m = 10 != 10 || 5 == 5; // LogicalOr expr
-
-//
-let mut ans = 0;
-let mut i = 0;
-let mut break_lexer123 = 100;
-while 1 == 1 {
-    if i == 10 {
-        break;
-    }
-
-    let mut j = 0;
-    while 1 == 1 {
-        if j == 10 {
-            break;
-        }
-    
-        ans = ans + 1;
-        j = j + 1;
-    }
-    i = i + 1;
-}
-
-let ans123 = ans % 3;
-
-// j is not in scope but can be used in exit ??
-exit(ans123);
+- 
+.+ 
+..100 
+../ 
+...200 
+...10 
+.* 
+..3 
+..10
+*/
