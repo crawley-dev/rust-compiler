@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufKind {
@@ -287,20 +287,12 @@ impl Lexer {
                 if self.buffer.is_empty() {
                     self.pos += 1;
                 }
-                // self.pos += 1;
-                // self.input.remove(self.pos);
                 self.is_linecomment = false;
                 break;
             } else if self.is_linecomment || next_char.is_ascii_whitespace() {
                 if self.buffer.is_empty() {
                     self.pos += 1;
                 }
-                // self.pos += 1;
-                // self.input.remove(self.pos);
-                println!(
-                    "linecomment or whitespace: {:?}",
-                    self.buffer.iter().map(|x| *x as char).collect::<String>()
-                );
                 break;
             }
 
@@ -324,15 +316,10 @@ impl Lexer {
         }
 
         let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
-
         if LOG_DEBUG_INFO {
             println!("\nbuf: '{buf_str}' | pos: {}", self.pos);
         }
 
-        // whitespace is consumed at the end of the buffer
-        // .. consumed tokens in loop != buffer size
-        // .. if .is_whitespace() { self.consume() }
-        // .. .. ^^ increments self.pos && not buffer.
         match buf_type {
             BufKind::Illegal => None,
             BufKind::Word => self.match_word(buf_str),
@@ -344,23 +331,17 @@ impl Lexer {
         }
     }
 
-    fn match_word(&self, mut buf_str: String) -> Option<Token> {
-        let imm_buf = buf_str.clone();
-        while !buf_str.is_empty() {
-            match self.reg.get(buf_str.as_str()) {
-                Some(kind) => {
-                    return Some(Token {
-                        kind: kind.clone(),
-                        value: None,
-                    })
-                }
-                None => buf_str.pop(),
-            };
+    fn match_word(&self, buf_str: String) -> Option<Token> {
+        match self.reg.get(buf_str.as_str()) {
+            Some(kind) => Some(Token {
+                kind: kind.clone(),
+                value: None,
+            }),
+            None => Some(Token {
+                kind: TokenKind::Ident,
+                value: Some(buf_str),
+            }),
         }
-        Some(Token {
-            kind: TokenKind::Ident,
-            value: Some(imm_buf),
-        })
     }
 
     fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
