@@ -33,9 +33,10 @@ if (0 || 5 + 1 > 6) {
 
 //let m = 10 != 10 || 5 == 5; // LogicalOr expr
 
+//
 let mut ans = 0;
 let mut i = 0;
-let mut breakans = 100;
+let mut break_lexer123 = 100;
 while 1 == 1 {
     if i == 10 {
         break;
