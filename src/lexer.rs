@@ -64,6 +64,12 @@ pub enum TokenKind {
     IntLit,
 }
 
+pub enum Associativity {
+    Left,
+    Right,
+    None,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -103,7 +109,24 @@ impl TokenKind {
             TokenKind::Subtract | TokenKind::Add => 11,
             TokenKind::Divide | TokenKind::Multiply | TokenKind::Remainder => 12,
             TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
+            // TokenKind::CloseParen => 10000,
             _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
+        }
+    }
+
+    // TODO: this.
+    //     if operator is left-associative:
+    //     rhs = parse_expr(operator.precedence + 1)
+    // else if operator is right-associative:
+    //     rhs = parse_expr(operator.precedence)
+    // else:
+    //     raise SyntaxError("Non-associative operator")
+    //
+    pub fn get_associativity(&self) -> Associativity {
+        match self {
+            _ if self.is_binary() => Associativity::Left,
+            TokenKind::Assign | _ if self.is_unary() => Associativity::Right,
+            _ => Associativity::None,
         }
     }
 
@@ -248,7 +271,6 @@ impl Lexer {
     // TODO: parser bugs. i.e "*// /}", "/ /" line comment works here.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
-        println!("pos 16: {}", self.input.get(16).unwrap());
         while self.pos < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {

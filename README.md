@@ -53,8 +53,7 @@ aaa }
       - [ ] LogicalNot
       - [x] BitwiseNot
   - [ ] dynamically place variables on stack if they are(nt) used immediately. 
-    - use multiple registers to store arguments for a binary expr
-    - add stack values at top level (expr, stmt), not term. do ^^
+    - on expr generation.
   - [ ] Testing infrastructure.
 
   - [ ] data types

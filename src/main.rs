@@ -6,8 +6,8 @@ use crate::lexer::*;
 mod parser;
 use crate::parser::*;
 
-mod generator;
-use crate::generator::*;
+// mod generator;
+// use crate::generator::*;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -19,7 +19,7 @@ fn main() {
 
     let tokens = lex(input);
     let program = parse(tokens);
-    generate(program, file_name);
+    // generate(program, file_name);
 }
 
 fn lex(input: String) -> Vec<lexer::Token> {
@@ -39,14 +39,14 @@ fn parse(tokens: Vec<Token>) -> NodeProg {
     return program;
 }
 
-fn generate(program: NodeProg, file_name: String) {
-    let output_path = format!("./output/{}.asm", file_name);
-    let mut generator = Generator::new(program, output_path.clone());
-    match generator.generate_prog() {
-        Ok(_) => println!("[COMPILER] output placed in '{output_path}'"),
-        Err(e) => panic!("\n{e}\n"),
-    };
-}
+// fn generate(program: NodeProg, file_name: String) {
+//     let output_path = format!("./output/{}.asm", file_name);
+//     let mut generator = Generator::new(program, output_path.clone());
+//     match generator.generate_prog() {
+//         Ok(_) => println!("[COMPILER] output placed in '{output_path}'"),
+//         Err(e) => panic!("\n{e}\n"),
+//     };
+// }
 
 fn print_aligned_tokens_v2(tokens: &Vec<Token>) {
     // TODO: Improve.

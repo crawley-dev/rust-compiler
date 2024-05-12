@@ -4,16 +4,16 @@ _start:
     push rbp
     mov rbp, rsp
 ; Program Start
-; Add
     mov rax, 100
-; Divide
-    mov rax, 200
-    mov rcx, 10
-; Subtract
-; Multiply
-    mov rax, 3
-    mov rcx, 10
+    mov rcx, 50
+    mov rsi, 50
+    add rcx, rsi
+    mov rsi, 5
+    add rcx, rsi
+    cqo
+    idiv rcx
+    mov QWORD [rsp+0], rax
 ; Exit Program
-    mov rdi, QWORD [rsp+0] ; Ident('ans120')
+    mov rdi, QWORD [rsp+0] ; Ident('ans')
     mov rax, 60
     syscall

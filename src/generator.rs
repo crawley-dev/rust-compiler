@@ -40,8 +40,8 @@ impl Generator {
             ctx: Context {
                 stk_ptr: 0,
                 reg_count: 0,
-                endif_label: "".to_string(),
-                loop_end_label: "".to_string(),
+                endif_label: String::new(),
+                loop_end_label: String::new(),
             },
         }
     }
@@ -75,7 +75,7 @@ impl Generator {
         match stmt {
             NodeStmt::Scope(scope) => self.gen_scope(scope),
             NodeStmt::Exit(expr) => {
-                let expr_asm = self.gen_expr(expr, "rdi")?;
+                let expr_asm = self.gen_expr(expr, Some("rdi"))?;
                 Ok(format!(
                     "; Exit Program\n\
                      {expr_asm}\
@@ -99,8 +99,9 @@ impl Generator {
                 // TODO: what types of expr can a let statement handle ??
                 match self.var_map.get(ident.value.as_ref().unwrap()) {
                     Some(var) if var.mutable => {
+                        // self.gen_expr(expr, reg.as_str())
                         let reg = self.gen_stk_pos(var.stk_index);
-                        self.gen_expr(expr, reg.as_str())
+                        self.gen_expr(expr, Some(reg.as_str()))
                     }
                     Some(_) => Err(format!(
                         "[COMPILER_GEN] Re-assignment of constant '{:?}'",
@@ -113,8 +114,9 @@ impl Generator {
 
                             // TODO: refactor.
                             // let reg = self.gen_stk_pos(new_var.stk_index);
+                            // self.gen_expr(expr, reg.as_str())
                             let reg = format!("QWORD [rsp+{}]", new_var.stk_index * WORD_SIZE);
-                            self.gen_expr(expr, reg.as_str())
+                            self.gen_expr(expr, Some(reg.as_str()))
                         }
                         _ => Err(format!(
                             "[COMPILER_GEN] Variable '{}' doesn't exit, cannot assign",
@@ -124,6 +126,7 @@ impl Generator {
                 }
             }
             NodeStmt::If(expr, scope, branches) => {
+                todo!("if");
                 // To note:
                 // .. Format: if (expr) scope
                 // .. operand changes jump instruction, e.g je (jump if equal)
@@ -139,7 +142,8 @@ impl Generator {
                 }
                 let false_label = self.gen_label("IF_FALSE");
 
-                let expr_asm = self.gen_expr(expr, "rax")?;
+                let expr_asm = self.gen_expr(expr, None)?;
+                // let expr_asm = self.gen_expr(expr, "rax")?;
                 let scope_asm = self.gen_scope(scope)?;
 
                 let mut branches_asm = String::new();
@@ -162,7 +166,8 @@ impl Generator {
             NodeStmt::ElseIf(expr, scope) => {
                 let false_label = self.gen_label("ELIF_FALSE");
                 let scope_asm = self.gen_scope(scope)?;
-                let expr_asm = self.gen_expr(expr, "rax")?;
+                let expr_asm = self.gen_expr(expr, None)?;
+                // let expr_asm = self.gen_expr(expr, "rax")?;
                 let endif_label = self.ctx.endif_label.as_str();
 
                 Ok(format!(
@@ -188,7 +193,8 @@ impl Generator {
                 self.ctx.loop_end_label = loop_end_label.clone();
 
                 let scope_asm = self.gen_scope(scope)?;
-                let cmp_asm = self.gen_expr(expr, "rax")?;
+                let cmp_asm = self.gen_expr(expr, None)?;
+                // let cmp_asm = self.gen_expr(expr, "rax")?;
 
                 Ok(format!(
                     "; While\n\
@@ -216,7 +222,7 @@ impl Generator {
 
         let mut asm = String::new();
         for stmt in scope.stmts {
-            asm += &self.gen_stmt(stmt)?;
+            asm += self.gen_stmt(stmt)?.as_str();
         }
 
         // if !scope.inherits_stmts {
@@ -236,216 +242,98 @@ impl Generator {
         Ok(asm)
     }
 
-    // TODO: logical or/and bug, causes duplicate asm.
-    fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
-        // TODO: remove if using int_lit, put directly in operation.
-        // let push_ans = if reg != "rax" {
-        //     format!("{SPACE}mov {reg}, rax\n")
-        //     // format!("")
-        // } else {
-        //     format!("{}", self.push("rax"))
-        // };
-        let push_ans = "".to_string();
+    // , reg: Option<&str>
+    fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
+        println!("\ngenerating: reg: {ans_reg:?} = {expr:#?}");
         match expr {
-            NodeExpr::Term(term) => self.gen_term(*term, reg),
+            NodeExpr::Term(term) => self.gen_term(*term, ans_reg),
+            NodeExpr::UnaryExpr { op, operand } => todo!("unary"),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let comment = op.clone();
-                let reg1 = "rax";
-                let reg2 = "rcx";
+                let mut asm = String::new();
+                // parse & generate rhs first until its a term.
+                // .. then generate lhs.
+                // .. then asm order: lhs --> rhs.
 
-                let lhs_intlit = match *lhs.clone() {
-                    NodeExpr::Term(_) => true,
-                    _ => false,
-                };
-
-                let lhs_asm = self.gen_expr(*lhs, reg1)?;
-                let rhs_asm = self.gen_expr(*rhs, reg2)?;
-
-                let op_stuff = if lhs_intlit {
-                    format!(
-                        "\
-                      ; {comment:?}\n\
-                      {lhs_asm}\
-                      {rhs_asm}\
-                      "
-                    )
-                } else {
-                    format!(
-                        "\
-                        {lhs_asm}\
-                        ; {comment:?}\n\
-                        {rhs_asm}"
-                    )
-                };
+                // match *rhs {
+                //     NodeExpr::UnaryExpr { .. } => todo!(),
+                //     NodeExpr::BinaryExpr { .. } => asm += self.gen_expr(*rhs, None)?.as_str(),
+                //     NodeExpr::Term(term) => {
+                //         asm += self.gen_expr(*lhs, None)?.as_str();
+                //         asm += self.gen_term(*term, None)?.as_str();
+                //         // if let NodeTerm::Paren(paren_expr) = *term {
+                //         //     asm += self.gen_expr(paren_expr, None)?.as_str();
+                //         // } else {
+                //         //     asm += self.gen_term(*term, None)?.as_str();
+                //         // }
+                //     }
+                // }
+                asm += self.gen_expr(*lhs, None)?.as_str();
+                asm += self.gen_expr(*rhs, None)?.as_str();
 
                 let op_asm = match op {
-                    _ if op.is_bitwise() => self.gen_bitwise(op, reg1, reg2)?,
-                    _ if op.is_comparison() => self.gen_cmp(op, reg1, reg2)?,
-                    _ if op.is_arithmetic() => self.gen_arithmetic(op, reg1, reg2)?,
-                    _ if op.is_logical() => {
-                        return self.gen_logical(op, push_ans, reg1, reg2, &lhs_asm, &rhs_asm)
-                    }
+                    _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
                     _ => {
                         return Err(format!(
                             "[COMPILER_GEN] Unable to generate binary expression"
                         ))
                     }
                 };
+                asm += op_asm.as_str();
 
-                // TODO: problem! when lhs_asm >> rhs_asm, prec is reversed.
-                // but when rhs_asm >> lhs_asm. all terms, then all ops..
+                self.release_reg();
+                // self.release_reg(); // first reg stores arithmetic answer, don't need to release.
 
-                Ok(format!("{op_stuff}"))
-            }
-            NodeExpr::UnaryExpr { op, operand } => {
-                let comment = op.clone();
-                let op_asm = match op {
-                    TokenKind::BitwiseNot => format!("{SPACE}not rax\n"),
-                    _ => todo!("logical not."), // need to invert cmp.. do later.
-                };
-
-                let expr_asm = self.gen_expr(*operand, "rax")?;
-
-                Ok(format!(
-                    "; {comment:?}\n\
-                     {expr_asm}\
-                     {op_asm}\
-                     {push_ans}"
-                ))
+                if let Some(reg) = ans_reg {
+                    asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count))
+                        .as_str();
+                    self.release_reg();
+                }
+                Ok(asm)
             }
         }
     }
 
-    fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
-        // return match term {
-        //     NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
-        //     _ => Ok(format!("{SPACE};{:?}\n", term)),
-        // };
+    fn gen_term(&mut self, term: NodeTerm, ans_reg: Option<&str>) -> Result<String, String> {
         match term {
-            NodeTerm::IntLit(token) => {
-                // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
-                let int_lit = token.value.unwrap();
-                Ok(format!("{SPACE}mov {reg}, {int_lit}\n"))
+            NodeTerm::IntLit(tok) => {
+                let reg = self.next_reg();
+                println!("{} = {}", reg, tok.value.clone().unwrap());
+                Ok(format!("{SPACE}mov {reg}, {}\n", tok.value.unwrap()))
             }
-            NodeTerm::Ident(token) => {
-                let ident = token.value.clone().unwrap();
+            NodeTerm::Ident(tok) => {
+                let ident = tok.value.clone().unwrap();
                 match self.var_map.get(ident.as_str()) {
                     Some(var) => {
                         let stk_pos = self.gen_stk_pos(var.stk_index);
-                        Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {token:?}\n"))
+                        let reg = match ans_reg {
+                            Some(reg) => reg.to_string(),
+                            None => self.next_reg(),
+                        };
+                        Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
                     }
                     None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
                 }
-            }
-            NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
+            } // NodeTerm::Paren(expr) => self.gen_expr(expr, None),
         }
     }
 
-    // TODO: branchless comparisons (MENTAL IDEA !!), Remove excess 'cmp'
-    // "movzx {reg1},al" << zero inits reg && validates val is 1 or 0.
-    fn gen_logical(
-        &mut self,
-        op: TokenKind,
-        mov_ans: String,
-        reg1: &str,
-        reg2: &str,
-        lhs_asm: &str,
-        rhs_asm: &str,
-    ) -> Result<String, String> {
-        match op {
-            TokenKind::LogicalAnd => {
-                let false_label = self.gen_label("AND_FALSE");
-                let true_label = self.gen_label("AND_TRUE");
-
-                Ok(format!(
-                    "; LogicalAnd\n\
-                     {lhs_asm}\
-                     {SPACE}cmp {reg1}, 0\n\
-                     {SPACE}je {false_label}\n\
-                     {rhs_asm}\
-                     {SPACE}cmp {reg2}, 0\n\
-                     {SPACE}je {true_label}\n\
-                     {SPACE}mov {reg1}, 1\n\
-                     {SPACE}jmp {true_label}\n\
-                     {false_label}:\n\
-                     {SPACE}mov {reg1}, 0\n\
-                     {true_label}:\n\
-                     {SPACE}movzx {reg1}, al\n\
-                     {mov_ans}"
-                ))
-            }
-            TokenKind::LogicalOr => {
-                let false_label = self.gen_label("OR_FALSE");
-                let true_label = self.gen_label("OR_TRUE");
-                let final_label = self.gen_label("OR_FINAL");
-
-                Ok(format!(
-                    "; LogicalOr\n\
-                     {lhs_asm}\
-                     {SPACE}cmp {reg1}, 0\n\
-                     {SPACE}jne {true_label}\n\
-                     {rhs_asm}\
-                     {SPACE}cmp {reg2}, 0\n\
-                     {SPACE}je {false_label}\n\
-                     {true_label}:\n\
-                     {SPACE}mov {reg1}, 1\n\
-                     {SPACE}jmp {final_label}\n\
-                     {false_label}:\n\
-                     {SPACE}mov {reg1}, 0\n\
-                     {final_label}:\n\
-                     {SPACE}movzx {reg1}, al\n\
-                     {mov_ans}"
-                ))
-            }
-            _ => Err(format!(
-                "[COMPILER_GEN] Unable to generate Logical comparison"
-            )),
-        }
-    }
-
-    fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+    fn gen_arithmetic(&mut self, op: TokenKind) -> Result<String, String> {
+        println!("{op:?},  reg_count:'{}'", self.ctx.reg_count);
+        let reg1 = self.get_reg(self.ctx.reg_count - 1); // because its a stack
+        let reg2 = self.get_reg(self.ctx.reg_count);
         let operation_asm = match op {
             TokenKind::Divide => format!("cqo\n{SPACE}idiv {reg2}"),
             TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
             TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
             TokenKind::Add => format!("add {reg1}, {reg2}"),
-            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // TODO: 'cqo' changes with reg size
+            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo' changes with reg size
             _ => {
                 return Err(format!(
                     "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
                 ))
             }
         };
-
         Ok(format!("{SPACE}{operation_asm}\n"))
-    }
-
-    fn gen_bitwise(&self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-        let asm = match op {
-            TokenKind::BitwiseOr => "or",
-            TokenKind::BitwiseXor => "xor",
-            TokenKind::BitwiseAnd => "and",
-            TokenKind::LeftShift => "sal",
-            TokenKind::RightShift => "sar",
-            // TODO: (Types) Unsigned shift: shl, shr
-            _ => {
-                return Err(format!(
-                    "[COMPILER_GEN] Unable to generate Bitwise operation"
-                ))
-            }
-        };
-
-        Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
-    }
-
-    fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-        let set_asm = format!("set{}", self.gen_cmp_modifier(op)?);
-
-        Ok(format!(
-            "{SPACE}cmp {reg1}, {reg2}\n\
-             {SPACE}{set_asm} al\n\
-             {SPACE}movzx {reg1}, al\n"
-        ))
     }
 
     fn gen_cmp_modifier(&self, op: TokenKind) -> Result<&str, String> {
@@ -475,16 +363,240 @@ impl Generator {
 
     fn push(&mut self, reg: &str) -> String {
         self.ctx.stk_ptr += 1;
-        return format!("{SPACE}push {reg}\n");
+        println!("pushing {reg} | {}", self.ctx.stk_ptr);
+        return format!("{SPACE}push {reg}");
     }
 
     fn pop(&mut self, reg: &str) -> String {
         self.ctx.stk_ptr -= 1;
-        return format!("{SPACE}pop {reg}\n");
+        println!("popping into {reg} | {}", self.ctx.stk_ptr);
+        return format!("{SPACE}pop {reg}");
     }
 
-    // fn gen_next_reg(&mut self) {
-    // let preserved_registers = [""];
-    // let scratch_registers = ["rax", "rcx", "rdx"];
-    // }
+    fn next_reg(&mut self) -> String {
+        // preserved_registers = ["rdx", ...],
+        let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
+        match scratch_registers.get(self.ctx.reg_count) {
+            Some(reg) => {
+                self.ctx.reg_count += 1;
+                println!("next reg: {} | {}", reg, self.ctx.reg_count);
+                reg.to_string()
+            }
+            None => todo!("no available reg!"),
+        }
+    }
+
+    fn get_reg(&mut self, index: usize) -> String {
+        // preserved_registers = ["rdx", ...],
+        let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
+        println!("getting reg[{} - 1]", index);
+        match scratch_registers.get(index - 1) {
+            Some(reg) => reg.to_string(),
+            None => todo!("oob reg check"),
+        }
+    }
+
+    fn release_reg(&mut self) {
+        self.ctx.reg_count -= 1;
+    }
 }
+
+/*
+// TODO: logical or/and bug, causes duplicate asm.
+fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
+    // TODO: remove if using int_lit, put directly in operation.
+    // let push_ans = if reg != "rax" {
+    //     format!("{SPACE}mov {reg}, rax\n")
+    // } else {
+    //     format!("{}\n", self.push("rax"))
+    // };
+    match expr {
+        NodeExpr::Term(term) => self.gen_term(*term, reg),
+        NodeExpr::BinaryExpr { op, lhs, rhs } => {
+            let comment = op.clone();
+            let reg1 = "rax";
+            let reg2 = "rcx";
+            // let ans_reg = self.next_reg();
+
+            let lhs_asm = self.gen_expr(*lhs, reg1.as_str())?;
+            let rhs_asm = self.gen_expr(*rhs, reg2.as_str())?;
+            let op_asm = match op {
+                _ if op.is_bitwise() => self.gen_bitwise(op, reg1.as_str(), reg2.as_str())?,
+                _ if op.is_comparison() => self.gen_cmp(op, reg1.as_str(), reg2.as_str())?,
+                _ if op.is_arithmetic() => {
+                    self.gen_arithmetic(op, reg1.as_str(), reg2.as_str())?
+                }
+                _ if op.is_logical() => {
+                    return self.gen_logical(
+                        op,
+                        "AAA".to_string(),
+                        reg1.as_str(),
+                        reg2.as_str(),
+                        &lhs_asm,
+                        &rhs_asm,
+                    )
+                }
+                _ => {
+                    return Err(format!(
+                        "[COMPILER_GEN] Unable to generate binary expression"
+                    ))
+                }
+            };
+
+            // self.ctx.reg_count -= 2;
+            // {push_ans}
+            Ok(format!(
+                "; {comment:?}\n\
+                 {lhs_asm}\
+                 {rhs_asm}\
+                 {op_asm}"
+            ))
+        }
+        NodeExpr::UnaryExpr { op, operand } => {
+            let comment = op.clone();
+            let op_asm = match op {
+                TokenKind::BitwiseNot => format!("{SPACE}not rax\n"),
+                _ => todo!("logical not."), // need to invert cmp.. do later.
+            };
+
+            let expr_asm = self.gen_expr(*operand, "rax")?;
+
+            // {push_ans}
+            Ok(format!(
+                "; {comment:?}\n\
+                 {expr_asm}\
+                 {op_asm}"
+            ))
+        }
+    }
+}
+
+fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
+    match term {
+        NodeTerm::IntLit(token) => {
+            // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
+            let int_lit = token.value.unwrap();
+            Ok(format!("{SPACE}mov {reg}, {int_lit}\n"))
+            // Ok(self.push("reg"))
+        }
+        NodeTerm::Ident(token) => {
+            let ident = token.value.clone().unwrap();
+            match self.var_map.get(ident.as_str()) {
+                Some(var) => {
+                    let stk_pos = self.gen_stk_pos(var.stk_index);
+                    // Ok(format!("{}; {token:?}\n", self.push(stk_pos.as_str())))
+                    Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {token:?}\n"))
+                }
+                None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
+            }
+        }
+        NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
+    }
+}
+
+// TODO: branchless comparisons (MENTAL IDEA !!), Remove excess 'cmp'
+// "movzx {reg1},al" << zero inits reg && validates val is 1 or 0.
+fn gen_logical(
+    &mut self,
+    op: TokenKind,
+    mov_ans: String,
+    reg1: &str,
+    reg2: &str,
+    lhs_asm: &str,
+    rhs_asm: &str,
+) -> Result<String, String> {
+    match op {
+        TokenKind::LogicalAnd => {
+            let false_label = self.gen_label("AND_FALSE");
+            let true_label = self.gen_label("AND_TRUE");
+
+            Ok(format!(
+                "; LogicalAnd\n\
+                 {lhs_asm}\
+                 {SPACE}cmp {reg1}, 0\n\
+                 {SPACE}je {false_label}\n\
+                 {rhs_asm}\
+                 {SPACE}cmp {reg2}, 0\n\
+                 {SPACE}je {true_label}\n\
+                 {SPACE}mov {reg1}, 1\n\
+                 {SPACE}jmp {true_label}\n\
+                 {false_label}:\n\
+                 {SPACE}mov {reg1}, 0\n\
+                 {true_label}:\n\
+                 {SPACE}movzx {reg1}, al\n\
+                 {mov_ans}"
+            ))
+        }
+        TokenKind::LogicalOr => {
+            let false_label = self.gen_label("OR_FALSE");
+            let true_label = self.gen_label("OR_TRUE");
+            let final_label = self.gen_label("OR_FINAL");
+
+            Ok(format!(
+                "; LogicalOr\n\
+                 {lhs_asm}\
+                 {SPACE}cmp {reg1}, 0\n\
+                 {SPACE}jne {true_label}\n\
+                 {rhs_asm}\
+                 {SPACE}cmp {reg2}, 0\n\
+                 {SPACE}je {false_label}\n\
+                 {true_label}:\n\
+                 {SPACE}mov {reg1}, 1\n\
+                 {SPACE}jmp {final_label}\n\
+                 {false_label}:\n\
+                 {SPACE}mov {reg1}, 0\n\
+                 {final_label}:\n\
+                 {SPACE}movzx {reg1}, al\n\
+                 {mov_ans}"
+            ))
+        }
+        _ => Err(format!(
+            "[COMPILER_GEN] Unable to generate Logical comparison"
+        )),
+    }
+}
+
+fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+    let operation_asm = match op {
+        TokenKind::Divide => format!("cqo\n{SPACE}idiv {reg2}"),
+        TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
+        TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
+        TokenKind::Add => format!("add {reg1}, {reg2}"),
+        TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // TODO: 'cqo' changes with reg size
+        _ => {
+            return Err(format!(
+                "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
+            ))
+        }
+    };
+
+    Ok(format!("{SPACE}{operation_asm}\n"))
+}
+
+fn gen_bitwise(&self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+    let asm = match op {
+        TokenKind::BitwiseOr => "or",
+        TokenKind::BitwiseXor => "xor",
+        TokenKind::BitwiseAnd => "and",
+        TokenKind::LeftShift => "sal",
+        TokenKind::RightShift => "sar",
+        // TODO: (Types) Unsigned shift: shl, shr
+        _ => {
+            return Err(format!(
+                "[COMPILER_GEN] Unable to generate Bitwise operation"
+            ))
+        }
+    };
+
+    Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
+}
+
+fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
+    let set_asm = format!("set{}", self.gen_cmp_modifier(op)?);
+
+    Ok(format!(
+        "{SPACE}cmp {reg1}, {reg2}\n\
+         {SPACE}{set_asm} al\n\
+         {SPACE}movzx {reg1}, al\n"
+    ))
+}*/
