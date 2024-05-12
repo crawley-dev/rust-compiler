@@ -268,7 +268,6 @@ impl Lexer {
         }
     }
 
-    // TODO: parser bugs. i.e "*// /}", "/ /" line comment works here.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         while self.pos < self.input.len() {
@@ -281,7 +280,11 @@ impl Lexer {
                     _ => {
                         tokens.push(tok);
                         if LOG_DEBUG_INFO {
-                            println!("new tok: {:?} | pos {}\n", tokens.last(), self.pos);
+                            println!(
+                                "[LEX_DEBUG] new tok: {:?} | pos {}\n",
+                                tokens.last(),
+                                self.pos
+                            );
                         }
                     }
                 },
@@ -339,7 +342,7 @@ impl Lexer {
 
         let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
         if LOG_DEBUG_INFO {
-            println!("\nbuf: '{buf_str}' | pos: {}", self.pos);
+            println!("\n[LEX_DEBUG] buf: '{buf_str}' | pos: {}", self.pos);
         }
 
         match buf_type {
@@ -379,7 +382,7 @@ impl Lexer {
                     buf_str.pop();
                     self.pos -= 1;
                     if LOG_DEBUG_INFO {
-                        println!("reduce {} | new pos: {}", buf_str, self.pos);
+                        println!("[LEX_DEBUG] reduce {} | new pos: {}", buf_str, self.pos);
                     }
                 }
             }
@@ -397,7 +400,7 @@ impl Lexer {
         self.pos += 1;
         if LOG_DEBUG_INFO {
             println!(
-                "consuming '{}' | new pos {}",
+                "[LEX_DEBUG] consuming '{}' | new pos {}",
                 self.input.get(i).copied().unwrap() as char,
                 self.pos
             );

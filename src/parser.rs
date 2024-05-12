@@ -1,5 +1,5 @@
 use crate::lexer::{Associativity, Token, TokenKind};
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeProg {
@@ -73,7 +73,10 @@ impl Parser {
             None => return Err(format!("[COMPILER_PARSE] No statement to parse")),
         };
         if LOG_DEBUG_INFO {
-            println!("\nparsing statement: {:?}", self.peek(0).unwrap());
+            println!(
+                "\n[PARSE_DEBUG] parsing statement: {:?}",
+                self.peek(0).unwrap()
+            );
         }
 
         let stmt = match tok.kind {
@@ -174,7 +177,9 @@ impl Parser {
 
             let prec = op.get_prec();
             if prec < min_prec {
-                println!("climb ended: {op:?}, < {min_prec}");
+                if LOG_DEBUG_INFO {
+                    println!("[PARSE_DEBUG] climb ended: {op:?}, < {min_prec}");
+                }
                 break;
             }
 
@@ -213,7 +218,9 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
-                println!("parsed parens {expr:#?}");
+                if LOG_DEBUG_INFO {
+                    println!("[PARSE_DEBUG] parsed parens {expr:#?}");
+                }
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
@@ -253,135 +260,3 @@ impl Parser {
         Ok(self.consume())
     }
 }
-
-// Old Expr Parsing, fake news
-/*
-fn recurse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
-    if LOG_DEBUG_INFO {
-        println!("Parsing expr: {:?}", self.peek(0));
-    }
-
-    // if self.peek(0).unwrap().kind.is_unary() {
-    //     let op = self.consume().kind;
-    //     let operand = self.parse_expr(op.get_prec() + 1)?;
-
-    //     expr = NodeExpr::UnaryExpr {
-    //         op,
-    //         operand: Box::new(operand),
-    //     };
-    // } else {
-    //     expr = NodeExprself.parse_term()?));
-    // }
-    // if found close parenthesis
-    // decrement paren_count
-    // continue to next operator. << should it not break?
-    let mut expr = self.parse_term()?;
-    loop {
-        let mut flag = false;
-        if self.try_consume(TokenKind::CloseParen).is_ok() {
-            self.ctx.paren_count -= 1;
-            if self.ctx.paren_count == 0 {
-                break;
-            }
-            flag = true;
-            // close paren consumed,
-            // next token gets eaten..
-            // set prec to close paren (1000)
-        }
-        let tok = match self.peek(0) {
-            Some(tok) => tok,
-            None => return Err(format!("[COMPILER_PARSE] No expr to parse")),
-        };
-        let prec = if flag == true {
-            TokenKind::CloseParen.get_prec()
-        } else {
-            tok.kind.get_prec()
-        };
-        if prec < min_prec {
-            if LOG_DEBUG_INFO {
-                println!("'{tok:?}' prec is lower: {prec} < {min_prec}",);
-            }
-            break;
-        }
-        if tok.kind.is_unary() {
-            expr = NodeExpr::UnaryExpr {
-                op: self.consume().kind,
-                operand: Box::new(self.recurse_expr(prec + 1)?),
-            }
-        } else if tok.kind.is_binary() {
-            expr = NodeExpr::BinaryExpr {
-                op: self.consume().kind,
-                lhs: Box::new(expr),
-                rhs: Box::new(self.recurse_expr(prec + 1)?),
-            };
-        } else {
-            return Err(format!(
-                "[COMPILER_PARSE] Invalid operator '{:?}', unable to parse",
-                tok.kind
-            ));
-        }
-    }
-    Ok(expr)
-}
-
-fn parse_term(&mut self) -> Result<NodeExpr, String> {
-    let tok = match self.peek(0) {
-        Some(_) => self.consume(),
-        None => return Err(format!("[COMPILER_PARSE] No term to parse")),
-    };
-
-    if LOG_DEBUG_INFO {
-        println!("\nparsing term: {:?}", tok);
-    }
-
-    match tok.kind {
-        TokenKind::IntLit => Ok(NodeExpr::IntLit(tok)),
-        TokenKind::Ident => Ok(NodeExpr::Ident(tok)),
-        TokenKind::OpenParen => {
-            self.ctx.paren_count += 1;
-            if LOG_DEBUG_INFO {
-                println!("\nFound open paren, count: {}", self.ctx.paren_count);
-            }
-            let expr = self.recurse_expr(0)?;
-            println!("[COMPILER_PARSE] Encountered ')', returning: {expr:#?}");
-            Ok(NodeExpr::Paren(Box::new(expr))) // temp
-        }
-        _ if tok.kind.is_unary() => {
-            let operand = self.recurse_expr(tok.kind.get_prec() + 1)?;
-            Ok(NodeExpr::UnaryExpr {
-                op: tok.kind,
-                operand: Box::new(operand),
-            })
-        }
-        _ => Err(format!(
-            "[COMPILER_PARSE] Unable to parse term: {tok:?}:{}",
-            self.position
-        )),
-    }
-
-    // let mut expr = match self.peek(0) {
-    //     // because unary ops are prefix, it comes before any terms.
-    //     Some(tok) if tok.kind.is_unary() => {
-    //         let op = self.consume().kind;
-    //         let operand = self.parse_expr(op.get_prec() + 1)?;
-    //         NodeExpr::UnaryExpr {
-    //             op,
-    //             operand: Box::new(operand),
-    //         }
-    //     }
-    //     Some(_) if self.token_equals(TokenKind::OpenParen, 0).is_ok() => {
-    //         self.ctx.paren_count += 1;
-    //         if LOG_DEBUG_INFO {
-    //             println!("\nFound open paren, count: {}", self.ctx.paren_count);
-    //         }
-    //         let expr = self.parse_expr(0)?;
-    //         if self.ctx.paren_count != 0 {
-    //             return Err(format!("[COMPILER_PARSE] No ')' found near {expr:#?}"));
-    //         }
-    //         expr
-    //     }
-    //     Some(_) => NodeExpr::Term(Box::new(self.parse_term()?)),
-    //     None => return Err(format!("[COMPILER_PARSE] No token to parse")),
-    // };
-}
-*/
