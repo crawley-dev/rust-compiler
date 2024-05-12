@@ -28,9 +28,7 @@ pub enum NodeStmt {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeExpr {
-    // Term(NodeTerm),
-    Ident(Token),
-    IntLit(Token),
+    Term(NodeTerm),
     UnaryExpr {
         op: TokenKind,
         operand: Box<NodeExpr>,
@@ -40,6 +38,12 @@ pub enum NodeExpr {
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeTerm {
+    Ident(Token),
+    IntLit(Token),
 }
 
 pub struct Parser {
@@ -65,7 +69,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
-            Some(tok) => tok, //self.consume(),
+            Some(tok) => tok,
             None => return Err(format!("[COMPILER_PARSE] No statement to parse")),
         };
         if LOG_DEBUG_INFO {
@@ -153,17 +157,6 @@ impl Parser {
         })
     }
 
-    // fn dwa(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
-    //     let expr = self.parse_prec(min_prec);
-    //     if self.ctx.paren_count != 0 {
-    //         Err(format!(
-    //             "[COMPILER_PARSE] Mismatched Closing parens near {expr:#?}"
-    //         ))
-    //     } else {
-    //         expr
-    //     }
-    // }
-
     // E --> Exp(0)
     // Exp(p) --> P {B Exp(q)}
     // P --> U Exp(q) | "(" E ")" | v
@@ -173,7 +166,6 @@ impl Parser {
     fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
         let mut lhs = self.parse_term()?;
 
-        // climb ended at '+', .. next token is '(' {oh shit!}
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
@@ -225,8 +217,8 @@ impl Parser {
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
-            TokenKind::Ident => Ok(NodeExpr::Ident(tok)),
-            TokenKind::IntLit => Ok(NodeExpr::IntLit(tok)),
+            TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
+            TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
             _ => Err(format!("[COMPILER_PARSE] Invalid Term, unable to parse.")),
         }
     }

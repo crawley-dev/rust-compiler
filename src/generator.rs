@@ -246,7 +246,7 @@ impl Generator {
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
         println!("\ngenerating: reg: {ans_reg:?} = {expr:#?}");
         match expr {
-            NodeExpr::Term(term) => self.gen_term(*term, ans_reg),
+            NodeExpr::Term(term) => self.gen_term(term, ans_reg),
             NodeExpr::UnaryExpr { op, operand } => todo!("unary"),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let mut asm = String::new();
@@ -267,6 +267,7 @@ impl Generator {
                 //         // }
                 //     }
                 // }
+
                 asm += self.gen_expr(*lhs, None)?.as_str();
                 asm += self.gen_expr(*rhs, None)?.as_str();
 
