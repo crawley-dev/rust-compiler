@@ -1,9 +1,3 @@
-global _start
-_start:
-; setup stack frame
-    push rbp
-    mov rbp, rsp
-; Program Start
     mov rax, 15
     mov rcx, 7
     mov rsi, 20

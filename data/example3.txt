@@ -16,6 +16,7 @@ let j = x >> 3; // Right Shift
 
 let l = 4 > 2 && 2 == 2; // LogicalAnd expr
 let n = 0 || 5 + 1 > 6;
+//let ans = 10 == 10 && 5 == 5; // LogicalOr expr
 
 */
 
@@ -30,8 +31,8 @@ let n = 0 || 5 + 1 > 6;
 //let i = 4;
     
 // Longer complex arithmetic expression
+let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
 //let ans = (((a + b * c) - (d * e + f)) / g) * (h - i) + ((e % d) * (f + g));
-//let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
 //let ans = 100 + (200 / 10) - 3 * 10 + 10; // == 80, won't work, overflow..
 //let ans = 100 - 3 * 10 + (200 / 10);
 //let ans = 100 + 20 - 5 * 30 / 2 + (100 - 50);
@@ -45,14 +46,12 @@ let n = 0 || 5 + 1 > 6;
 //let ans = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
 //let ans = (~5 + 5) -5;
 
-//let ans = 10 == 10 && 5 == 5; // LogicalOr expr
-//let ans = 0 || 5 + 1 > 6;
 
-if 0 || 5 + 1 > 6 {
-    exit(69);
-} 
-else if !(0 == 0) {
-    exit(25);
-}
+//if 0 || 5 + 1 > 6 {
+//    exit(69);
+//} 
+//else if !(0 == 0) {
+//    exit(25);
+//}
 
-exit(5);
+exit(ans);

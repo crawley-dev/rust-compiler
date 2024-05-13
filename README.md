@@ -1,5 +1,7 @@
 an attempt at making a compiler in rust!
 
+Future "Valid Syntax", negative whitespace significant indentation!
+```
           hhh {
         eee {
       aaa {
@@ -8,16 +10,17 @@ aaa }
   ccc } 
     hhh }
       eee }
-
+```
 
 ## Core Functionality Required:
 - [x] variables WITH DATA TYPES 
 - [x] operations: (boolean, logical//bitwise, binary)
 - [x] control flow branches: (if/else)
+- [x] loops: (while/for)
+- [ ] types 
+- [ ] functions: (recursion << should be free?)
 - [ ] array
 - [ ] user defined struct
-- [ ] loops: (while/for)
-- [ ] functions: (recursion << should be free?)
 
 ### Currently working on: 
   - [x] if
@@ -40,17 +43,17 @@ aaa }
   - [x] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
   - [x] update grammar to match code. 
   - [x] variable reassignment (mutability)
-  - [ ] Operators
+  - [x] Operators
     - [x] modulus '%' op
-    - [ ] Associativity
+    - [x] Associativity
     - [x] binary
     - [x] logical
       - i.e: if (5)  | 5 != 0 so -> if (true) 
       - i.e: if (!5) | 5 == 0 so -> if (false)  
       - eval expr, jump if zero. << un-optimal, uses 'al' reg when not necessary
     - [x] bitwise
-    - [ ] unary
-      - [ ] LogicalNot
+    - [x] unary
+      - [x] LogicalNot
       - [x] BitwiseNot
   - [ ] dynamically place variables on stack if they are(nt) used immediately. 
     - on expr generation.
