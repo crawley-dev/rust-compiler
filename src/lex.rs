@@ -95,8 +95,8 @@ impl TokenKind {
         match self {
             TokenKind::Assign => 1,
             TokenKind::LogicalOr => 3,
-            TokenKind::BitwiseOr => 5,
             TokenKind::LogicalAnd => 4,
+            TokenKind::BitwiseOr => 5,
             TokenKind::BitwiseXor => 6,
             TokenKind::BitwiseAnd => 7,
             TokenKind::Equal

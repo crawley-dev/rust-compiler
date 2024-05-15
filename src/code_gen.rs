@@ -5,8 +5,8 @@ use crate::{
 
 use std::collections::HashMap;
 
-const LOG_DEBUG_INFO: bool = false;
 const WORD_SIZE: usize = 8;
+const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,9 +110,7 @@ impl Generator {
                 }
             }
             NodeStmt::If(expr, scope, branches) => {
-                // To note:
-                // .. Format: if (expr) scope
-                // .. operand changes jump instruction, e.g je (jump if equal)
+                // TODO(TOM): operand changes jump instruction, e.g je (jump if equal)
                 // .. .. do the inverse of the condition:
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
 
@@ -253,7 +251,6 @@ impl Generator {
                         .as_str();
                     self.release_reg();
                 }
-
                 Ok(asm)
             }
             NodeExpr::UnaryExpr { op, operand } => {

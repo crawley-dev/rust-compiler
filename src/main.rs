@@ -2,6 +2,7 @@ use std::io::{self, BufRead, Write};
 mod code_gen;
 mod lex;
 mod parse;
+mod semantic;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");

@@ -74,7 +74,7 @@ aaa }
     - [ ] comma: ','
     - [ ] assignment: '=' | '+=' | '/=' | .. 
     - [x] modulus: %
-    - [ ] logical not: !
+    - [x] logical not: !
     - [ ] unary minus: i.e -10
     - [ ] function call: '()'
     - [ ] array subscript: '[]'
