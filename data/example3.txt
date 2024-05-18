@@ -54,8 +54,6 @@ let n = 0 || 5 + 1 > 6;
 //    exit(25);
 //}
 
-if 5 {
-    exit(10);
-}
-let ans = 200;
+let mut ans = 2 + 3;
+ans += 50;
 exit(ans);

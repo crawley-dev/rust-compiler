@@ -59,6 +59,15 @@
         - ELSE IF EXPR SCOPE (ELSE_IF)
     - Else:
         - ELSE EXPR SCOPE 
+    - 'EXPR' must evaluate to type: Boolean
 - While:
     - WHILE EXPR SCOPE
 - break: exits current loop
+
+## Type Registry:
+- u8 .. u64: unsigned integers specified by bit length
+- i8 .. i64: signed integers specified by bit length
+- f32, f64: floats specified by bit length
+- bool: boolean true or false (0, 1)
+- pointer: denoted by ^  
+- (TODO) char: a utf-8 character (!= u8, pain vs ASCII impl)

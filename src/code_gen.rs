@@ -1,13 +1,14 @@
+use std::{collections::HashMap, f32::consts::E};
+
 use crate::{
     lex::TokenKind,
     parse::{NodeExpr, NodeProg, NodeScope, NodeStmt, NodeTerm},
 };
 
-use std::collections::HashMap;
-
 const WORD_SIZE: usize = 8;
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
+const ERR_MSG: &'static str = "[COMPILER_CODEGEN]";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
@@ -19,6 +20,7 @@ struct Variable {
 struct Context {
     stk_ptr: usize,
     reg_count: usize,
+    binding_var: Option<Variable>,
     endif_label: String,
     loop_end_label: String,
 }
@@ -41,6 +43,7 @@ impl Generator {
             ctx: Context {
                 stk_ptr: 0,
                 reg_count: 0,
+                binding_var: None,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
@@ -70,45 +73,104 @@ impl Generator {
                 ))
             }
             NodeStmt::Let(assignment, mutable) => {
+                if self.ctx.binding_var.is_some() {
+                    return Err(format!("{ERR_MSG} Uhhh, trying to bind a binding?"));
+                }
                 if self.stack.len() != 0 {
                     self.ctx.stk_ptr += 1;
                 }
-                self.stack.push(Variable {
+                let var = Variable {
                     stk_index: self.ctx.stk_ptr,
                     ident: None,
                     mutable,
-                });
+                };
+                // self.stack.push(var);
+                self.ctx.binding_var = Some(var);
                 self.gen_stmt(*assignment)
             }
-            NodeStmt::Assign(ident, expr) => {
-                // TODO: what types of expr can a let statement handle ??
-                match self.var_map.get(ident.value.as_ref().unwrap()) {
-                    Some(var) if var.mutable => {
+            NodeStmt::Assign(mut expr) => {
+                // check a variable is in the map,
+                // .. in: if mutable, all good, else ERR!
+                // .. not: is it an invalid variable, or being assigned in a 'let binding'?
+                let ident = match &expr {
+                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                            tok.value.as_ref().unwrap().clone()
+                        }
+                        _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                    },
+                    _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                };
+
+                // if '=', remove op & lhs, gen_expr(rhs)
+                // elif '', check if var exists, replace Op= with Op, e.g '+=' --> '='
+                let mut arith_assign = false;
+                if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
+                    if op == TokenKind::Assign {
+                        expr = *rhs;
+                    } else {
+                        arith_assign = true;
+                        expr = NodeExpr::BinaryExpr {
+                            op: op.assign_to_arithmetic()?,
+                            lhs,
+                            rhs,
+                        };
+                    }
+                }
+
+                // Re-assigning
+                if let Some(var) = self.var_map.get(ident.as_str()) {
+                    if !var.mutable {
+                        return Err(format!("{ERR_MSG} Re-assignment of constant: '{var:#?}'"));
+                    }
+                    let reg = self.gen_stk_pos(var.stk_index);
+                    return self.gen_expr(expr, Some(reg.as_str()));
+                }
+
+                // Binding new var
+                match &self.ctx.binding_var {
+                    Some(var) if arith_assign => {
+                        Err(format!("{ERR_MSG} Re-assignment of constant: '{var:#?}'"))
+                    }
+                    Some(var) => {
                         let reg = self.gen_stk_pos(var.stk_index);
+                        self.stack.push(var.clone());
+                        self.var_map.insert(ident, var.clone()); // TODO(TOM): SKILL ISSUE!
+                        self.ctx.binding_var = None;
                         self.gen_expr(expr, Some(reg.as_str()))
                     }
-                    Some(_) => Err(format!(
-                        "[COMPILER_GEN] Re-assignment of constant {:?}",
-                        ident.value.unwrap()
-                    )),
-                    None => match self.stack.last_mut() {
-                        Some(new_var) if new_var.ident.is_none() => {
-                            new_var.ident = ident.value.clone();
-                            self.var_map.insert(ident.value.unwrap(), new_var.clone());
-
-                            // TODO: refactor.
-                            // let reg = self.gen_stk_pos(new_var.stk_index);
-                            // self.gen_expr(expr, reg.as_str())
-                            let reg = format!("QWORD [rsp+{}]", new_var.stk_index * WORD_SIZE);
-                            self.gen_expr(expr, Some(reg.as_str()))
-                        }
-                        _ => Err(format!(
-                            "[COMPILER_GEN] Variable '{}' doesn't exit, cannot assign",
-                            ident.value.unwrap()
-                        )),
-                    },
+                    None => Err(format!("{ERR_MSG} No var to bind '{ident:?}' to")),
                 }
             }
+            // NodeStmt::Assign(ident, expr) => {
+            //     // TODO: what types of expr can a let statement handle ??
+            //     match self.var_map.get(ident.value.as_ref().unwrap()) {
+            //         Some(var) if var.mutable => {
+            //             let reg = self.gen_stk_pos(var.stk_index);
+            //             self.gen_expr(expr, Some(reg.as_str()))
+            //         }
+            //         Some(_) => Err(format!(
+            //             "{ERR_MSG} Re-assignment of constant {:?}",
+            //             ident.value.unwrap()
+            //         )),
+            //         None => match self.stack.last_mut() {
+            //             Some(new_var) if new_var.ident.is_none() => {
+            //                 new_var.ident = ident.value.clone();
+            //                 self.var_map.insert(ident.value.unwrap(), new_var.clone());
+
+            //                 // TODO: refactor.
+            //                 // let reg = self.gen_stk_pos(new_var.stk_index);
+            //                 // self.gen_expr(expr, reg.as_str())
+            //                 let reg = format!("QWORD [rsp+{}]", new_var.stk_index * WORD_SIZE);
+            //                 self.gen_expr(expr, Some(reg.as_str()))
+            //             }
+            //             _ => Err(format!(
+            //                 "{ERR_MSG} Variable '{}' doesn't exit, cannot assign",
+            //                 ident.value.unwrap()
+            //             )),
+            //         },
+            //     }
+            // }
             NodeStmt::If(expr, scope, branches) => {
                 // TODO(TOM): operand changes jump instruction, e.g je (jump if equal)
                 // .. .. do the inverse of the condition:
@@ -209,7 +271,7 @@ impl Generator {
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(&var.ident.unwrap()),
-                None => return Err(format!("[COMPILER_GEN] uhh.. scope messed up")),
+                None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
             };
             if LOG_DEBUG_INFO {
                 println!("[GEN_DEBUG] Scope ended, removing {popped_var:#?}");
@@ -234,11 +296,7 @@ impl Generator {
                     _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
                     _ if op.is_comparison() => self.gen_comparison(op)?,
                     _ if op.is_logical() => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
-                    _ => {
-                        return Err(format!(
-                            "[COMPILER_GEN] Unable to generate binary expression"
-                        ))
-                    }
+                    _ => return Err(format!("{ERR_MSG} Unable to generate binary expression")),
                 };
                 self.release_reg();
                 // first reg stores arithmetic answer, don't release it.
@@ -265,11 +323,7 @@ impl Generator {
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
                     ),
-                    _ => {
-                        return Err(format!(
-                            "[COMPILER_GEN] Unable to generate unary expression"
-                        ))
-                    }
+                    _ => return Err(format!("{ERR_MSG} Unable to generate unary expression")),
                 };
                 asm += op_asm.as_str();
                 // don't need to release reg if its just operation, just doing stuff on data.
@@ -304,7 +358,7 @@ impl Generator {
                         };
                         Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
                     }
-                    None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
+                    None => Err(format!("{ERR_MSG} Variable: {ident:?} doesn't exist.")),
                 }
             }
         }
@@ -371,10 +425,24 @@ impl Generator {
                     {mov_ans}"
                 ))
             }
-            _ => Err(format!(
-                "[COMPILER_GEN] Unable to generate Logical comparison"
-            )),
+            _ => Err(format!("{ERR_MSG} Unable to generate Logical comparison")),
         }
+    }
+
+    fn gen_assign(&mut self, op: TokenKind, lhs: NodeExpr) -> Result<String, String> {
+        // > get ident
+        // > check mutability
+        // > get stk_pos
+        // >
+
+        // let mut ident = String::new();
+        // if let NodeExpr::BinaryExpr { ref lhs, .. } = expr {
+        //     if let NodeExpr::Term(NodeTerm::Ident(ref tok)) = **lhs {
+        //         ident = tok.value.as_ref().unwrap().clone();
+        //     }
+        // };
+
+        todo!("")
     }
 
     fn gen_arithmetic(&mut self, op: TokenKind) -> Result<String, String> {
@@ -388,7 +456,7 @@ impl Generator {
             TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo' changes with reg size
             _ => {
                 return Err(format!(
-                    "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
+                    "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
                 ))
             }
         };
@@ -405,11 +473,7 @@ impl Generator {
             TokenKind::LeftShift => "sal",
             TokenKind::RightShift => "sar",
             // TODO: (Types) Unsigned shift: shl, shr
-            _ => {
-                return Err(format!(
-                    "[COMPILER_GEN] Unable to generate Bitwise operation"
-                ))
-            }
+            _ => return Err(format!("{ERR_MSG} Unable to generate Bitwise operation")),
         };
 
         Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
@@ -437,9 +501,7 @@ impl Generator {
             TokenKind::GreaterEqual => Ok("ge"),
             TokenKind::LessThan => Ok("l"),
             TokenKind::LessEqual => Ok("le"),
-            _ => Err(format!(
-                "[COMPILER_GEN] Unable to generate comparison modifier"
-            )),
+            _ => Err(format!("{ERR_MSG} Unable to generate comparison modifier")),
         }
     }
 
@@ -540,7 +602,7 @@ fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
                 }
                 _ => {
                     return Err(format!(
-                        "[COMPILER_GEN] Unable to generate binary expression"
+                        "{ERR_MSG} Unable to generate binary expression"
                     ))
                 }
             };
@@ -589,7 +651,7 @@ fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
                     // Ok(format!("{}; {token:?}\n", self.push(stk_pos.as_str())))
                     Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {token:?}\n"))
                 }
-                None => Err(format!("[COMPILER_GEN] Variable: {ident:?} doesn't exist.")),
+                None => Err(format!("{ERR_MSG} Variable: {ident:?} doesn't exist.")),
             }
         }
         NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
@@ -653,7 +715,7 @@ fn gen_logical(
             ))
         }
         _ => Err(format!(
-            "[COMPILER_GEN] Unable to generate Logical comparison"
+            "{ERR_MSG} Unable to generate Logical comparison"
         )),
     }
 }
@@ -667,7 +729,7 @@ fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<St
         TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // TODO: 'cqo' changes with reg size
         _ => {
             return Err(format!(
-                "[COMPILER_GEN] Unable to generate Arithmetic operation: '{op:?}'"
+                "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
             ))
         }
     };
@@ -685,7 +747,7 @@ fn gen_bitwise(&self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, S
         // TODO: (Types) Unsigned shift: shl, shr
         _ => {
             return Err(format!(
-                "[COMPILER_GEN] Unable to generate Bitwise operation"
+                "{ERR_MSG} Unable to generate Bitwise operation"
             ))
         }
     };

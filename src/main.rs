@@ -10,7 +10,7 @@ fn main() {
     let (file_path, file_name) = get_file_name();
     let contents = get_file_contents(file_path);
     println!("\n\n{:#?}\n\n", contents);
-    let input = contents.into_iter().collect::<String>();
+    let input: String = contents.into_iter().collect();
 
     let tokens = lex(input);
     let program = parse(tokens);
@@ -45,6 +45,15 @@ fn generate(program: parse::NodeProg, file_name: String) {
         Ok(string) => {
             println!("[COMPILER] output placed in '{file_path}'");
             let mut file = std::fs::File::create(file_path).expect("Invalid filepath given.");
+            file.write_all(
+                b"global _start\n\
+                      _start:\n\
+                     ; setup stack frame\n    \
+                     push rbp\n    \
+                     mov rbp, rsp\n    \
+                     ; Program Start\n",
+            )
+            .unwrap();
             file.write_all(string.as_bytes()).unwrap();
         }
         Err(e) => panic!("\n{e}\n"),
@@ -69,7 +78,7 @@ fn print_aligned_tokens_v2(tokens: &Vec<lex::Token>) {
 }
 
 pub fn get_file_name() -> (String, String) {
-    let file_path = std::env::args().skip(1).take(1).collect::<String>();
+    let file_path: String = std::env::args().skip(1).take(1).collect();
     if file_path.is_empty() {
         panic!("[COMPILER] Invalid File Path!\n");
     }
@@ -90,7 +99,7 @@ pub fn get_file_contents(file_path: String) -> Vec<String> {
     io::BufReader::new(file)
         .lines()
         .map(|line| line.unwrap() + "\n")
-        .collect::<Vec<String>>()
+        .collect()
 }
 
 // UBUNTU bash script:

@@ -15,6 +15,7 @@ pub enum TokenKind {
     // symbols
     StmtEnd,
     Separator,
+    TypeSeparator,
     OpenParen,
     CloseParen,
     LineComment,
@@ -25,6 +26,7 @@ pub enum TokenKind {
 
     // operators
     Assign,
+    AddAssign,
     Add,
     Divide,
     Subtract,
@@ -64,10 +66,11 @@ pub enum TokenKind {
     IntLit,
 }
 
+#[derive(Debug)]
 pub enum Associativity {
     Left,
     Right,
-    None,
+    // None,
 }
 
 #[derive(Clone, PartialEq)]
@@ -89,35 +92,17 @@ impl fmt::Debug for Token {
 }
 
 impl TokenKind {
-    // Precedence hierarchy: higher = done first
-    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
-    pub fn get_prec(&self) -> i32 {
+    pub fn is_assignment(&self) -> bool {
         match self {
-            TokenKind::Assign => 1,
-            TokenKind::LogicalOr => 3,
-            TokenKind::LogicalAnd => 4,
-            TokenKind::BitwiseOr => 5,
-            TokenKind::BitwiseXor => 6,
-            TokenKind::BitwiseAnd => 7,
-            TokenKind::Equal
-            | TokenKind::NotEqual
-            | TokenKind::LessThan
-            | TokenKind::LessEqual
-            | TokenKind::GreaterThan
-            | TokenKind::GreaterEqual => 8,
-            TokenKind::LeftShift | TokenKind::RightShift => 10,
-            TokenKind::Subtract | TokenKind::Add => 11,
-            TokenKind::Divide | TokenKind::Multiply | TokenKind::Remainder => 12,
-            TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
-            _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
+            TokenKind::Assign | TokenKind::AddAssign => true,
+            _ => false,
         }
     }
 
-    pub fn get_associativity(&self) -> Associativity {
+    pub fn assign_to_arithmetic(&self) -> Result<TokenKind, String> {
         match self {
-            _ if self.is_binary() => Associativity::Left,
-            TokenKind::Assign | _ if self.is_unary() => Associativity::Right,
-            _ => Associativity::None,
+            TokenKind::AddAssign => Ok(TokenKind::Add),
+            _ => Err(format!("{self:?} cannot be converted to arithmetic")),
         }
     }
 
@@ -163,34 +148,65 @@ impl TokenKind {
         }
     }
 
-    pub fn is_binary(&self) -> bool {
-        match self {
-            TokenKind::Divide
-            | TokenKind::Multiply
-            | TokenKind::Remainder
-            | TokenKind::Add
-            | TokenKind::Subtract
-            | TokenKind::LogicalOr
-            | TokenKind::LogicalAnd
-            | TokenKind::BitwiseOr
-            | TokenKind::BitwiseXor
-            | TokenKind::BitwiseAnd
-            | TokenKind::LeftShift
-            | TokenKind::RightShift
-            | TokenKind::Equal
-            | TokenKind::NotEqual
-            | TokenKind::LessThan
-            | TokenKind::LessEqual
-            | TokenKind::GreaterThan
-            | TokenKind::GreaterEqual => true,
-            _ => false,
-        }
-    }
+    // pub fn is_binary(&self) -> bool {
+    //     match self {
+    //         TokenKind::Divide
+    //         | TokenKind::Multiply
+    //         | TokenKind::Remainder
+    //         | TokenKind::Add
+    //         | TokenKind::Subtract
+    //         | TokenKind::LogicalOr
+    //         | TokenKind::LogicalAnd
+    //         | TokenKind::BitwiseOr
+    //         | TokenKind::BitwiseXor
+    //         | TokenKind::BitwiseAnd
+    //         | TokenKind::LeftShift
+    //         | TokenKind::RightShift
+    //         | TokenKind::Equal
+    //         | TokenKind::NotEqual
+    //         | TokenKind::LessThan
+    //         | TokenKind::LessEqual
+    //         | TokenKind::GreaterThan
+    //         | TokenKind::GreaterEqual => true,
+    //         _ => false,
+    //     }
+    // }
 
     pub fn is_unary(&self) -> bool {
         match self {
             TokenKind::BitwiseNot | TokenKind::LogicalNot => true,
             _ => false,
+        }
+    }
+
+    pub fn get_associativity(&self) -> Associativity {
+        match self {
+            // _ if self.is_binary() => Associativity::Left,
+            _ if self.is_unary() => Associativity::Right,
+            _ => Associativity::Left,
+            // _ if self.is_assignment() => Associativity::Right,
+            // _ => Associativity::None,
+        }
+    }
+
+    // Precedence hierarchy: higher = done first
+    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
+    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
+    pub fn get_prec(&self) -> i32 {
+        match self {
+            TokenKind::Separator => 0,
+            _ if self.is_assignment() => 1,
+            TokenKind::LogicalOr => 3,
+            TokenKind::LogicalAnd => 4,
+            TokenKind::BitwiseOr => 5,
+            TokenKind::BitwiseXor => 6,
+            TokenKind::BitwiseAnd => 7,
+            _ if self.is_comparison() => 8,
+            TokenKind::LeftShift | TokenKind::RightShift => 10,
+            TokenKind::Subtract | TokenKind::Add => 11,
+            TokenKind::Divide | TokenKind::Multiply | TokenKind::Remainder => 12,
+            TokenKind::LogicalNot | TokenKind::BitwiseNot => 13,
+            _ => -1000, // Option<i32> takes more space, also immediately 'break's when found
         }
     }
 }
@@ -209,6 +225,7 @@ impl Lexer {
         let reg: HashMap<&'static str, TokenKind> = HashMap::from([
             // symbols
             (";", TokenKind::StmtEnd),
+            (":", TokenKind::TypeSeparator),
             (",", TokenKind::Separator),
             ("(", TokenKind::OpenParen),
             (")", TokenKind::CloseParen),
@@ -219,6 +236,7 @@ impl Lexer {
             ("*/", TokenKind::CloseMultiComment),
             // operators
             ("=", TokenKind::Assign),
+            ("+=", TokenKind::AddAssign),
             ("+", TokenKind::Add),
             ("/", TokenKind::Divide),
             ("-", TokenKind::Subtract),
@@ -332,7 +350,7 @@ impl Lexer {
             self.buffer.push(ch);
         }
 
-        let buf_str = self.buffer.iter().map(|x| *x as char).collect::<String>();
+        let buf_str: String = self.buffer.iter().map(|x| *x as char).collect();
         if LOG_DEBUG_INFO {
             println!("\n[LEX_DEBUG] buf: '{buf_str}' | pos: {}", self.pos);
         }

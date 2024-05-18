@@ -1,13 +1,17 @@
-; If
-    mov rax, 5
-    cmp rax, 0 
-    je .1_IF_FALSE
-; Exit Program
-    mov rdi, 10
-    mov rax, 60
-    syscall
-.1_IF_FALSE:
-    mov QWORD [rsp+0], 200
+global _start
+_start:
+; setup stack frame
+    push rbp
+    mov rbp, rsp
+    ; Program Start
+    mov rax, 2
+    mov rcx, 3
+    add rax, rcx
+    mov QWORD [rsp+0], rax
+    mov rax, QWORD [rsp+0] ; Ident('ans')
+    mov rcx, 50
+    add rax, rcx
+    mov QWORD [rsp+0], rax
 ; Exit Program
     mov rdi, QWORD [rsp+0] ; Ident('ans')
     mov rax, 60

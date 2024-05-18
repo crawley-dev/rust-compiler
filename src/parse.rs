@@ -1,5 +1,7 @@
 use crate::lex::{Associativity, Token, TokenKind};
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
+const ERR_MSG: &'static str = "[COMPILER_PARSE]";
+const DBG_MSG: &'static str = "[DEBUG_PARSE]";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeProg {
@@ -15,9 +17,9 @@ pub struct NodeScope {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
     Let(Box<NodeStmt>, bool), // Ident, Mutability.
-    Assign(Token, NodeExpr),  // Ident, Expr
-
-    Exit(NodeExpr), // a template for functions (kinda)
+    Assign(NodeExpr),
+    // Expr(NodeExpr),
+    Exit(NodeExpr),
     Scope(NodeScope),
     If(NodeExpr, NodeScope, Vec<NodeStmt>),
     ElseIf(NodeExpr, NodeScope),
@@ -70,13 +72,10 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
-            None => return Err(format!("[COMPILER_PARSE] No statement to parse")),
+            None => return Err(format!("{ERR_MSG} No statement to parse")),
         };
         if LOG_DEBUG_INFO {
-            println!(
-                "\n[PARSE_DEBUG] parsing statement: {:?}",
-                self.peek(0).unwrap()
-            );
+            println!("\n{DBG_MSG} parsing statement: {:?}", self.peek(0).unwrap());
         }
 
         let stmt = match tok.kind {
@@ -98,9 +97,12 @@ impl Parser {
                 NodeStmt::Let(Box::new(self.parse_stmt()?), mutable)
             }
             TokenKind::Ident => {
-                let ident = self.try_consume(TokenKind::Ident)?;
-                self.try_consume(TokenKind::Assign)?;
-                NodeStmt::Assign(ident, self.parse_expr(0)?)
+                if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
+                    NodeStmt::Assign(self.parse_expr(0)?)
+                } else {
+                    todo!("NodeStmt::Expr(), no semantic analysis support to make viable.")
+                    // NodeStmt::Expr(self.parse_expr(0)?)
+                }
             }
             TokenKind::If => {
                 self.try_consume(TokenKind::If)?;
@@ -126,16 +128,12 @@ impl Parser {
                 let scope = self.parse_scope()?;
                 NodeStmt::While(expr, scope)
             }
-            _ => {
-                return Err(format!(
-                    "[COMPILER_PARSE] Unable to parse statement: {tok:?}",
-                ))
-            }
+            _ => return Err(format!("{ERR_MSG} Invalid Statement: '{tok:?}'",)),
         };
 
         // statments that do/don't require a ';' to end.
         match stmt {
-            NodeStmt::Exit(_) | NodeStmt::Assign(_, _) | NodeStmt::Break => {
+            NodeStmt::Exit(_) | NodeStmt::Assign(_) | NodeStmt::Break => {
                 match self.try_consume(TokenKind::StmtEnd) {
                     Ok(_) => Ok(stmt),
                     Err(e) => Err(format!("{e}.\n {stmt:#?}")),
@@ -166,13 +164,13 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return Err(format!("[COMPILER_PARSE] No operand to parse")),
+                None => return Err(format!("{ERR_MSG} No operand to parse")),
             };
 
             let prec = op.get_prec();
             if prec < min_prec {
                 if LOG_DEBUG_INFO {
-                    println!("[PARSE_DEBUG] climb ended: {op:?}, < {min_prec}");
+                    println!("{DBG_MSG} climb ended: {op:?}, < {min_prec}");
                 }
                 break;
             }
@@ -180,11 +178,11 @@ impl Parser {
             let next_prec = match op.get_associativity() {
                 Associativity::Left => prec + 1,
                 Associativity::Right => prec,
-                Associativity::None => {
-                    return Err(format!(
-                        "[COMPILER_PARSE] Illegal non-associative operator found"
-                    ))
-                }
+                // Associativity::None => {
+                //     return Err(format!(
+                //         "{ERR_MSG} Illegal use of non-associative operator: '{op:?}'",
+                //     ));
+                // }
             };
 
             lhs = NodeExpr::BinaryExpr {
@@ -199,7 +197,7 @@ impl Parser {
     fn parse_term(&mut self) -> Result<NodeExpr, String> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return Err(format!("[COMPILER_PARSE] No term to parse")),
+            None => return Err(format!("{ERR_MSG} No term to parse")),
         };
 
         match tok.kind {
@@ -213,25 +211,40 @@ impl Parser {
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
                 if LOG_DEBUG_INFO {
-                    println!("[PARSE_DEBUG] parsed parens {expr:#?}");
+                    println!("{DBG_MSG} parsed parens {expr:#?}");
                 }
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            _ => Err(format!("[COMPILER_PARSE] Invalid Term, unable to parse.")),
+            _ => Err(format!("{ERR_MSG} Invalid Term: '{tok:?}'")),
         }
     }
 
-    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<bool, String> {
+    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
         match self.peek(offset) {
-            Some(tok) if tok.kind == kind => Ok(true),
+            Some(tok) if tok.kind == kind => Ok(()),
             Some(tok) => Err(format!(
-                "[COMPILER_PARSE] expected '{kind:?}', found {:?}",
+                "{ERR_MSG} expected '{kind:?}', found {:?}",
                 tok.kind
             )),
-            None => Err(format!("[COMPILER_PARSE] No token to evaluate")),
+            None => Err(format!("{ERR_MSG} No token to evaluate")),
+        }
+    }
+
+    fn token_matches(
+        &self,
+        pattern: impl Fn(&TokenKind) -> bool,
+        offset: usize,
+    ) -> Result<bool, String> {
+        match self.peek(offset) {
+            Some(tok) => Ok(pattern(&tok.kind)),
+            None => Err(format!("{ERR_MSG} No token to evalutate")),
+            // match pattern(&tok.kind) {
+            // true => Ok(),
+            // false => Err(format!("{ERR_MSG} '{tok:?}' didn't match pattern")),
+            // },
         }
     }
 
