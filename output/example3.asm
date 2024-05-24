@@ -4,14 +4,8 @@ _start:
     push rbp
     mov rbp, rsp
     ; Program Start
-    mov rax, 2
-    mov rcx, 3
-    add rax, rcx
-    mov QWORD [rsp+0], rax
-    mov rax, QWORD [rsp+0] ; Ident('ans')
-    mov rcx, 50
-    add rax, rcx
-    mov QWORD [rsp+0], rax
+    mov QWORD [rsp+0], 2
+    mov QWORD [rsp+8], 5
 ; Exit Program
     mov rdi, QWORD [rsp+0] ; Ident('ans')
     mov rax, 60

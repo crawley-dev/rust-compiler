@@ -55,8 +55,8 @@ aaa }
     - [x] unary
       - [x] LogicalNot
       - [x] BitwiseNot
-  - [ ] dynamically place variables on stack if they are(nt) used immediately. 
-    - on expr generation.
+  - [x] dynamically place variables on stack if they are(nt) used immediately. 
+    - don't push pop every intlit/var, use registers! 
   - [ ] Testing infrastructure.
 
   - [ ] data types
@@ -72,7 +72,7 @@ aaa }
     - program entry point ("main")
   - [ ] Implement C equivalent operators:
     - [ ] comma: ','
-    - [ ] assignment: '=' | '+=' | '/=' | .. 
+    - [x] assignment: '=' | '+=' | '/=' | .. 
     - [x] modulus: %
     - [x] logical not: !
     - [ ] unary minus: i.e -10

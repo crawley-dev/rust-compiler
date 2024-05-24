@@ -1,11 +1,26 @@
-use std::io::{self, BufRead, Write};
-mod code_gen;
-mod lex;
-mod parse;
-mod semantic;
+use std::{
+    env, fs,
+    io::{BufRead, BufReader, Write},
+};
+
+// mod lex;
+// use lex::{Lexer, Token};
+// mod parse;
+// use parse::{Parser, AST};
+mod lex_refactor;
+use lex_refactor::*;
+
+mod parse_refactor;
+use parse_refactor::*;
+
+// mod semantic;
+// use semantic::Checker;
+
+// mod code_gen;
+// use code_gen::Generator;
 
 fn main() {
-    std::env::set_var("RUST_BACKTRACE", "1");
+    env::set_var("RUST_BACKTRACE", "1");
 
     let (file_path, file_name) = get_file_name();
     let contents = get_file_contents(file_path);
@@ -13,23 +28,49 @@ fn main() {
     let input: String = contents.into_iter().collect();
 
     let tokens = lex(input);
-    let program = parse(tokens);
-    generate(program, file_name);
+    let ast = parse(tokens);
+    // semantic(&ast);
+    // code_gen(ast, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn lex(input: String) -> Vec<lex::Token> {
-    let mut lexer = lex::Lexer::new(input);
+fn lex(input: String) -> Vec<Token> {
+    let mut lexer = Lexer::new(input);
     let tokens = lexer.tokenize();
-    print_aligned_tokens_v2(&tokens);
+
+    let max_len = tokens
+        .iter()
+        .map(|tok| format!("{tok:?}"))
+        .filter(|str| str.find("{").is_none())
+        .map(|str| str.len() - str.find("(").unwrap())
+        .max()
+        .unwrap_or(0);
+    for tok in &tokens {
+        let str = format!("{tok:?}");
+        match str.find("{") {
+            Some(_) => {
+                let (split1, split2) = str.split_once("{").unwrap();
+                println!("  - {split1}{}{{{split2}", " ".repeat(max_len - 10))
+            }
+            None => {
+                let paren_idx = str.find("(").unwrap();
+                let (split1, split2) = str.split_once("(").unwrap();
+                println!(
+                    "  - {split1}{}({split2}",
+                    " ".repeat(max_len - paren_idx - 7)
+                )
+            }
+        };
+    }
+
     tokens
 }
 
-fn parse(tokens: Vec<lex::Token>) -> parse::NodeProg {
-    let mut parser = parse::Parser::new(tokens);
+fn parse(tokens: Vec<Token>) -> AST {
+    let mut parser = Parser::new(tokens);
     let program = match parser.parse_prog() {
         Ok(t) => t,
         Err(e) => panic!("\n{e}\n"),
@@ -38,13 +79,18 @@ fn parse(tokens: Vec<lex::Token>) -> parse::NodeProg {
     program
 }
 
-fn generate(program: parse::NodeProg, file_name: String) {
+/*
+fn semantic(ast: &AST) {
+    Checker::check_ast(ast).unwrap();
+}
+
+fn code_gen(ast: AST, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
-    let mut generator = code_gen::Generator::new(program);
+    let mut generator = Generator::new(ast);
     match generator.gen_asm() {
         Ok(string) => {
             println!("[COMPILER] output placed in '{file_path}'");
-            let mut file = std::fs::File::create(file_path).expect("Invalid filepath given.");
+            let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
             file.write_all(
                 b"global _start\n\
                       _start:\n\
@@ -59,26 +105,52 @@ fn generate(program: parse::NodeProg, file_name: String) {
         Err(e) => panic!("\n{e}\n"),
     };
 }
+ */
 
 /*----------------------------------------------------------------------------------------
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn print_aligned_tokens_v2(tokens: &Vec<lex::Token>) {
-    let max_len = tokens
+/*
+ let max_len = tokens
         .iter()
         .map(|tok| format!("{}", format!("{tok:?}")).len())
         .max()
         .unwrap_or(0);
-    for tok in tokens {
+    for tok in &tokens {
         let str = format!("{tok:?}");
         let whitespace = " ".repeat(max_len - str.len());
         println!("Token {{ {str}{whitespace} }}")
     }
-}
 
-pub fn get_file_name() -> (String, String) {
-    let file_path: String = std::env::args().skip(1).take(1).collect();
+let max_len = tokens
+        .iter()
+        .map(|tok| format!("{tok:?}"))
+        .filter(|str| str.find("{").is_none())
+        .map(|str| str.len() - str.find("(").unwrap())
+        .max()
+        .unwrap_or(0);
+    for tok in &tokens {
+        let str = format!("{tok:?}");
+        match str.find("{") {
+            Some(_) => {
+                let (split1, split2) = str.split_once("{").unwrap();
+                println!("  - {split1}{}{{{split2}", " ".repeat(max_len - 10))
+            }
+            None => {
+                let paren_idx = str.find("(").unwrap();
+                let (split1, split2) = str.split_once("(").unwrap();
+                println!(
+                    "  - {split1}{}({split2}",
+                    " ".repeat(max_len - paren_idx - 7)
+                )
+            }
+        };
+    }
+*/
+
+fn get_file_name() -> (String, String) {
+    let file_path: String = env::args().skip(1).take(1).collect();
     if file_path.is_empty() {
         panic!("[COMPILER] Invalid File Path!\n");
     }
@@ -93,10 +165,10 @@ pub fn get_file_name() -> (String, String) {
     (file_path, file_name)
 }
 
-pub fn get_file_contents(file_path: String) -> Vec<String> {
-    let file = std::fs::File::open(file_path)
-        .unwrap_or_else(|_| panic!("[COMPILER] Error opening file\n"));
-    io::BufReader::new(file)
+fn get_file_contents(file_path: String) -> Vec<String> {
+    let file =
+        fs::File::open(file_path).unwrap_or_else(|_| panic!("[COMPILER] Error opening file\n"));
+    BufReader::new(file)
         .lines()
         .map(|line| line.unwrap() + "\n")
         .collect()
