@@ -1,4 +1,4 @@
-use crate::lex_refactor::*;
+use crate::lex::*;
 const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
 const DBG_MSG: &'static str = "[DEBUG_PARSE]";

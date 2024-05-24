@@ -38,17 +38,7 @@ impl Checker<'_> {
     }
 
     fn check_stmt(&mut self, stmt: &NodeStmt) -> Result<(), String> {
-        match stmt {
-            NodeStmt::Exit(expr) => self.check_expr(expr),
-            NodeStmt::Let(stmt, mutable) => todo!(),
-            NodeStmt::Assign(expr) => todo!(),
-            NodeStmt::Scope(stmts) => todo!(),
-            NodeStmt::If(expr, scope, branches) => todo!(),
-            NodeStmt::ElseIf(expr, scope) => todo!(),
-            NodeStmt::Else(scope) => todo!(),
-            NodeStmt::While(expr, scope) => todo!(),
-            NodeStmt::Break => todo!(),
-        }
+        Ok(())
     }
 
     fn check_scope(&mut self, scope: &NodeScope) -> Result<(), String> {

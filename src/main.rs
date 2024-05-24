@@ -7,14 +7,14 @@ use std::{
 // use lex::{Lexer, Token};
 // mod parse;
 // use parse::{Parser, AST};
-mod lex_refactor;
-use lex_refactor::*;
+mod lex;
+use lex::*;
 
-mod parse_refactor;
-use parse_refactor::*;
+mod parse;
+use parse::*;
 
-// mod semantic;
-// use semantic::Checker;
+mod semantic;
+use semantic::Checker;
 
 // mod code_gen;
 // use code_gen::Generator;
@@ -29,7 +29,7 @@ fn main() {
 
     let tokens = lex(input);
     let ast = parse(tokens);
-    // semantic(&ast);
+    semantic(&ast);
     // code_gen(ast, file_name);
 }
 
@@ -79,11 +79,11 @@ fn parse(tokens: Vec<Token>) -> AST {
     program
 }
 
-/*
 fn semantic(ast: &AST) {
     Checker::check_ast(ast).unwrap();
 }
 
+/*
 fn code_gen(ast: AST, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(ast);
