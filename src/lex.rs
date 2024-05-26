@@ -25,9 +25,9 @@ pub enum TokenKind {
     Mul,    // "*"
     Quo,    // "/"
     Mod,    // "%"
-    And,    // "&"
-    Or,     // "|"
-    Xor,    // "~"
+    BitAnd, // "&"
+    BitOr,  // "|"
+    BitXor, // "~"
     AndNot, // "&~"
     Shl,    // "<<"
     Shr,    // ">>"
@@ -70,65 +70,6 @@ pub enum TokenKind {
     IntLit,
 }
 
-const REGISTRY: HashMap<&'static str, TokenKind> = HashMap::from([
-    // Generic Symbols
-    (",", TokenKind::Comma),
-    (":", TokenKind::Colon),
-    (";", TokenKind::SemiColon),
-    ("(", TokenKind::OpenParen),
-    (")", TokenKind::CloseParen),
-    ("{", TokenKind::OpenBrace),
-    ("}", TokenKind::CloseBrace),
-    ("//", TokenKind::LineComment),
-    ("/*", TokenKind::OpenMultiComment),
-    ("*/", TokenKind::CloseMultiComment),
-    // Operators
-    ("!", TokenKind::Not),
-    ("^", TokenKind::Ptr),
-    ("=", TokenKind::Eq),
-    ("+", TokenKind::Add),
-    ("-", TokenKind::Sub),
-    ("*", TokenKind::Mul),
-    ("/", TokenKind::Quo),
-    ("%", TokenKind::Mod),
-    ("&", TokenKind::And),
-    ("|", TokenKind::Or),
-    ("~", TokenKind::Xor),
-    ("&~", TokenKind::AndNot),
-    ("<<", TokenKind::Shl),
-    (">>", TokenKind::Shr),
-    // Combo Assign
-    ("+=", TokenKind::AddEq),
-    ("-=", TokenKind::SubEq),
-    ("*=", TokenKind::MulEq),
-    ("/=", TokenKind::QuoEq),
-    ("%=", TokenKind::ModEq),
-    ("&=", TokenKind::AndEq),
-    ("|=", TokenKind::OrEq),
-    ("~=", TokenKind::XorEq),
-    ("&~=", TokenKind::AndNotEq),
-    ("<<=", TokenKind::ShlEq),
-    (">>=", TokenKind::ShrEq),
-    // Comparison
-    ("&&", TokenKind::CmpAnd),
-    ("||", TokenKind::CmpOr),
-    ("==", TokenKind::CmpEq),
-    ("!=", TokenKind::NotEq),
-    ("<", TokenKind::Lt),
-    (">", TokenKind::Gt),
-    ("<=", TokenKind::LtEq),
-    (">=", TokenKind::GtEq),
-    // Keywords
-    ("exit", TokenKind::Exit),
-    ("let", TokenKind::Let),
-    ("fn", TokenKind::Fn),
-    ("if", TokenKind::If),
-    ("else", TokenKind::Else),
-    ("mut", TokenKind::Mut),
-    ("while", TokenKind::While),
-    ("break", TokenKind::Break),
-]);
-
 #[derive(Debug)]
 pub enum Associativity {
     Left,
@@ -164,9 +105,9 @@ impl TokenKind {
             TokenKind::MulEq => Ok(TokenKind::Mul),
             TokenKind::QuoEq => Ok(TokenKind::Quo),
             TokenKind::ModEq => Ok(TokenKind::Mod),
-            TokenKind::AndEq => Ok(TokenKind::And),
-            TokenKind::OrEq => Ok(TokenKind::Or),
-            TokenKind::XorEq => Ok(TokenKind::Xor),
+            TokenKind::AndEq => Ok(TokenKind::BitAnd),
+            TokenKind::OrEq => Ok(TokenKind::BitOr),
+            TokenKind::XorEq => Ok(TokenKind::BitXor),
             TokenKind::AndNotEq => Ok(TokenKind::AndNot),
             TokenKind::ShlEq => Ok(TokenKind::Shl),
             TokenKind::ShrEq => Ok(TokenKind::Shr),
@@ -200,9 +141,9 @@ impl TokenKind {
 
     pub fn is_bitwise(&self) -> bool {
         match self {
-            TokenKind::Or
-            | TokenKind::Xor
-            | TokenKind::And
+            TokenKind::BitOr
+            | TokenKind::BitXor
+            | TokenKind::BitAnd
             | TokenKind::Not
             | TokenKind::Shl
             | TokenKind::Shr => true,
@@ -236,15 +177,16 @@ impl TokenKind {
         match self {
             TokenKind::Comma => 0,
             _ if self.is_assignment() => 1,
-            TokenKind::CmpOr => 3,
-            TokenKind::CmpAnd => 4,
-            TokenKind::Or => 5,
-            TokenKind::Xor => 6,
-            TokenKind::And => 7,
-            _ if self.is_comparison() => 8,
+            TokenKind::CmpOr => 2,
+            TokenKind::CmpAnd => 3,
+            TokenKind::BitOr => 5,
+            TokenKind::BitXor => 6,
+            TokenKind::BitAnd => 7,
+            TokenKind::CmpEq | TokenKind::NotEq => 8,
+            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
             TokenKind::Shl | TokenKind::Shr => 10,
             TokenKind::Sub | TokenKind::Add => 11,
-            TokenKind::Quo | TokenKind::Mul | TokenKind::Mod => 12,
+            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
             TokenKind::Not => 13,
             _ => -1,
         }
@@ -257,18 +199,6 @@ enum BufKind {
     IntLit,
     Symbol,
     Illegal,
-}
-
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Flags: u8 {
-        const ASSIGN = 1 << 0;
-        const ARITH = 1 << 1;
-        const CMP = 1 << 2;
-        const BIT = 1 << 3;
-        const LOG = 1 << 4;
-        const UNARY = 1 << 5; // TODO(TOM): for now, left associative
-    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -288,11 +218,69 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(input: String) -> Lexer {
+        let reg: HashMap<&'static str, TokenKind> = HashMap::from([
+            // Generic Symbols
+            (",", TokenKind::Comma),
+            (":", TokenKind::Colon),
+            (";", TokenKind::SemiColon),
+            ("(", TokenKind::OpenParen),
+            (")", TokenKind::CloseParen),
+            ("{", TokenKind::OpenBrace),
+            ("}", TokenKind::CloseBrace),
+            ("//", TokenKind::LineComment),
+            ("/*", TokenKind::OpenMultiComment),
+            ("*/", TokenKind::CloseMultiComment),
+            // Operators
+            ("!", TokenKind::Not),
+            ("^", TokenKind::Ptr),
+            ("=", TokenKind::Eq),
+            ("+", TokenKind::Add),
+            ("-", TokenKind::Sub),
+            ("*", TokenKind::Mul),
+            ("/", TokenKind::Quo),
+            ("%", TokenKind::Mod),
+            ("&", TokenKind::BitAnd),
+            ("|", TokenKind::BitOr),
+            ("~", TokenKind::BitXor),
+            ("&~", TokenKind::AndNot),
+            ("<<", TokenKind::Shl),
+            (">>", TokenKind::Shr),
+            // Combo Assign
+            ("+=", TokenKind::AddEq),
+            ("-=", TokenKind::SubEq),
+            ("*=", TokenKind::MulEq),
+            ("/=", TokenKind::QuoEq),
+            ("%=", TokenKind::ModEq),
+            ("&=", TokenKind::AndEq),
+            ("|=", TokenKind::OrEq),
+            ("~=", TokenKind::XorEq),
+            ("&~=", TokenKind::AndNotEq),
+            ("<<=", TokenKind::ShlEq),
+            (">>=", TokenKind::ShrEq),
+            // Comparison
+            ("&&", TokenKind::CmpAnd),
+            ("||", TokenKind::CmpOr),
+            ("==", TokenKind::CmpEq),
+            ("!=", TokenKind::NotEq),
+            ("<", TokenKind::Lt),
+            (">", TokenKind::Gt),
+            ("<=", TokenKind::LtEq),
+            (">=", TokenKind::GtEq),
+            // Keywords
+            ("exit", TokenKind::Exit),
+            ("let", TokenKind::Let),
+            ("fn", TokenKind::Fn),
+            ("if", TokenKind::If),
+            ("else", TokenKind::Else),
+            ("mut", TokenKind::Mut),
+            ("while", TokenKind::While),
+            ("break", TokenKind::Break),
+        ]);
         Lexer {
             pos: 0,
             input: input.into_bytes(),
             buffer: Vec::new(),
-            reg: REGISTRY,
+            reg,
             is_linecomment: false,
             is_multicomment: false,
         }

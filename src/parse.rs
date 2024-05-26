@@ -16,15 +16,28 @@ pub struct NodeScope {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
-    Let(Box<NodeStmt>, bool), // Ident, Mutability.
-    Assign(NodeExpr),
-    // Expr(NodeExpr),
-    Exit(NodeExpr),
-    Scope(NodeScope),
-    If(NodeExpr, NodeScope, Vec<NodeStmt>),
-    ElseIf(NodeExpr, NodeScope),
+    Let {
+        assign: Box<NodeStmt>,
+        mutable: bool,
+        var_type: ParseType,
+    },
+    If {
+        condition: NodeExpr,
+        scope: NodeScope,
+        branches: Vec<NodeStmt>,
+    },
+    ElseIf {
+        condition: NodeExpr,
+        scope: NodeScope,
+    },
     Else(NodeScope),
-    While(NodeExpr, NodeScope),
+    While {
+        condition: NodeExpr,
+        scope: NodeScope,
+    },
+    Assign(NodeExpr),
+    Exit(NodeExpr),
+    NakedScope(NodeScope),
     Break,
 }
 
@@ -46,6 +59,12 @@ pub enum NodeExpr {
 pub enum NodeTerm {
     Ident(Token),
     IntLit(Token),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParseType {
+    pub type_ident: Token,
+    pub ptr: bool,
 }
 
 pub struct Parser {
@@ -79,34 +98,24 @@ impl Parser {
         }
 
         let stmt = match tok.kind {
-            TokenKind::OpenBrace => NodeStmt::Scope(self.parse_scope()?), // a naked scope.
-            TokenKind::Break => {
-                self.try_consume(TokenKind::Break)?;
-                NodeStmt::Break
-            }
-            TokenKind::Exit => {
-                self.try_consume(TokenKind::Exit)?;
-                self.token_equals(TokenKind::OpenParen, 0)?;
-                let expr = self.parse_expr(0)?;
-                NodeStmt::Exit(expr)
-            }
             TokenKind::Let => {
                 self.try_consume(TokenKind::Let)?;
                 let mutable = self.try_consume(TokenKind::Mut).is_ok();
-                self.token_equals(TokenKind::Ident, 0)?;
-                NodeStmt::Let(Box::new(self.parse_stmt()?), mutable)
-            }
-            TokenKind::Ident => {
-                if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
-                    NodeStmt::Assign(self.parse_expr(0)?)
-                } else {
-                    todo!("NodeStmt::Expr(), no semantic analysis support to make viable.")
-                    // NodeStmt::Expr(self.parse_expr(0)?)
+                let ident_token = self.try_consume(TokenKind::Ident)?;
+                self.try_consume(TokenKind::Colon)?;
+                let type_ident = self.try_consume(TokenKind::Ident)?;
+                let ptr = self.try_consume(TokenKind::Ptr).is_ok();
+                self.tokens.insert(self.position, ident_token); // put ident back for Stmt::Assign
+
+                NodeStmt::Let {
+                    assign: Box::new(self.parse_stmt()?),
+                    mutable,
+                    var_type: ParseType { type_ident, ptr },
                 }
             }
             TokenKind::If => {
                 self.try_consume(TokenKind::If)?;
-                let expr = self.parse_expr(0)?;
+                let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
 
                 let mut branches = Vec::new();
@@ -114,20 +123,45 @@ impl Parser {
                     if self.try_consume(TokenKind::Else).is_err() {
                         break;
                     } else if self.try_consume(TokenKind::If).is_ok() {
-                        branches.push(NodeStmt::ElseIf(self.parse_expr(0)?, self.parse_scope()?));
+                        branches.push(NodeStmt::ElseIf {
+                            condition: self.parse_expr(0)?,
+                            scope: self.parse_scope()?,
+                        });
                         continue;
                     }
                     branches.push(NodeStmt::Else(self.parse_scope()?));
                     break;
                 }
-                NodeStmt::If(expr, scope, branches)
+                NodeStmt::If {
+                    condition,
+                    scope,
+                    branches,
+                }
             }
             TokenKind::While => {
                 self.try_consume(TokenKind::While)?;
-                let expr = self.parse_expr(0)?;
+                let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
-                NodeStmt::While(expr, scope)
+                NodeStmt::While { condition, scope }
             }
+            TokenKind::Ident => {
+                if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
+                    NodeStmt::Assign(self.parse_expr(0)?)
+                } else {
+                    todo!("Naked Expression, Currently not valid.") // TODO(TOM): an expr is a scope's return statement, only valid if last stmt/expr.
+                }
+            }
+            TokenKind::Exit => {
+                self.try_consume(TokenKind::Exit)?;
+                self.token_equals(TokenKind::OpenParen, 0)?;
+                let expr = self.parse_expr(0)?;
+                NodeStmt::Exit(expr)
+            }
+            TokenKind::Break => {
+                self.try_consume(TokenKind::Break)?;
+                NodeStmt::Break
+            }
+            TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
             _ => return Err(format!("{ERR_MSG} Invalid Statement: '{tok:?}'",)),
         };
 
@@ -146,8 +180,8 @@ impl Parser {
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
         self.try_consume(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
-        // while not end of scope, will shit itself in parse_stmt if no CloseSquirly
-        while self.token_equals(TokenKind::OpenBrace, 0).is_err() {
+        // consumes statements until a matching closebrace is found.
+        while self.token_equals(TokenKind::CloseBrace, 0).is_err() {
             stmts.push(self.parse_stmt()?);
         }
         self.try_consume(TokenKind::CloseBrace)?;
@@ -167,10 +201,12 @@ impl Parser {
                 None => return Err(format!("{ERR_MSG} No operand to parse")),
             };
 
+            // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
+            // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             let prec = op.get_prec();
             if prec < min_prec {
                 if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} climb ended: {op:?}, < {min_prec}");
+                    println!("{DBG_MSG} climb ended: {op:?}({prec}) < {min_prec}");
                 }
                 break;
             }

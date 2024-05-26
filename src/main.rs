@@ -9,14 +9,8 @@ use lex::*;
 
 mod parse;
 use parse::*;
-// mod lex_dumb_refactor;
-// use lex_dumb_refactor::*;
-
-// mod parse_dumb_refactor;
-// use parse_dumb_refactor::*;
 
 mod semantic;
-use semantic::Checker;
 
 // mod code_gen;
 // use code_gen::Generator;
@@ -26,63 +20,34 @@ fn main() {
 
     let (file_path, file_name) = get_file_name();
     let contents = get_file_contents(file_path);
-    println!("\n\n{:#?}\n\n", contents);
+    // println!("\n\n{:#?}\n\n", contents);
     let input: String = contents.into_iter().collect();
 
-    let tokens = lex(input);
+    let tokens = Lexer::new(input).tokenize();
+    // print_tokens(&tokens);
     let ast = parse(tokens);
-    semantic(&ast);
-    // code_gen(ast, file_name);
+    println!("\n\n{:#?}\n\n", ast);
+    semantic_check(ast.clone()); // TODO(TOM): MAJOR SKILL ISSUE
+                                 // code_gen(ast, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn lex(input: String) -> Vec<Token> {
-    let mut lexer = Lexer::new(input);
-    let tokens = lexer.tokenize();
-
-    let max_len = tokens
-        .iter()
-        .map(|tok| format!("{tok:?}"))
-        .filter(|str| str.find("{").is_none())
-        .map(|str| str.len() - str.find("(").unwrap())
-        .max()
-        .unwrap_or(0);
-    for tok in &tokens {
-        let str = format!("{tok:?}");
-        match str.find("{") {
-            Some(_) => {
-                let (split1, split2) = str.split_once("{").unwrap();
-                println!("  - {split1}{}{{{split2}", " ".repeat(max_len - 10))
-            }
-            None => {
-                let paren_idx = str.find("(").unwrap();
-                let (split1, split2) = str.split_once("(").unwrap();
-                println!(
-                    "  - {split1}{}({split2}",
-                    " ".repeat(max_len - paren_idx - 7)
-                )
-            }
-        };
-    }
-
-    tokens
-}
-
 fn parse(tokens: Vec<Token>) -> AST {
     let mut parser = Parser::new(tokens);
-    let program = match parser.parse_prog() {
+    match parser.parse_prog() {
         Ok(t) => t,
         Err(e) => panic!("\n{e}\n"),
-    };
-    println!("\n\n{:#?}\n\n", program.stmts);
-    program
+    }
 }
 
-fn semantic(ast: &AST) {
-    Checker::check_ast(ast).unwrap();
+fn semantic_check(ast: AST) {
+    match semantic::Checker::check_ast(ast) {
+        Ok(t) => (),
+        Err(e) => panic!("\n{e}\n"),
+    }
 }
 
 /*
@@ -113,43 +78,18 @@ fn code_gen(ast: AST, file_name: String) {
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-/*
- let max_len = tokens
+fn print_tokens(tokens: &Vec<Token>) {
+    let max_len = tokens
         .iter()
         .map(|tok| format!("{}", format!("{tok:?}")).len())
         .max()
         .unwrap_or(0);
-    for tok in &tokens {
+    for tok in tokens {
         let str = format!("{tok:?}");
         let whitespace = " ".repeat(max_len - str.len());
         println!("Token {{ {str}{whitespace} }}")
     }
-
-let max_len = tokens
-        .iter()
-        .map(|tok| format!("{tok:?}"))
-        .filter(|str| str.find("{").is_none())
-        .map(|str| str.len() - str.find("(").unwrap())
-        .max()
-        .unwrap_or(0);
-    for tok in &tokens {
-        let str = format!("{tok:?}");
-        match str.find("{") {
-            Some(_) => {
-                let (split1, split2) = str.split_once("{").unwrap();
-                println!("  - {split1}{}{{{split2}", " ".repeat(max_len - 10))
-            }
-            None => {
-                let paren_idx = str.find("(").unwrap();
-                let (split1, split2) = str.split_once("(").unwrap();
-                println!(
-                    "  - {split1}{}({split2}",
-                    " ".repeat(max_len - paren_idx - 7)
-                )
-            }
-        };
-    }
-*/
+}
 
 fn get_file_name() -> (String, String) {
     let file_path: String = env::args().skip(1).take(1).collect();

@@ -17,83 +17,250 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     lex::TokenKind,
-    parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
+    parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, ParseType, AST},
 };
+const LOG_DEBUG_INFO: bool = true;
+const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
+const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
-struct Type {
-    name: String,
-    pointer: bool,
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct TypeFlags: u8 {
+        const POINTER = 1 << 0;
+        const CMP = 1 << 1;
+        const SIGNED = 1 << 2;
+        const FLOAT = 1 << 3;
+    }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct Variable {
     ident: Option<String>,
     mutable: bool,
-    type_ident: Type,
+    type_ident: String,
+}
+
+struct SemanticContext {
+    loop_count: i32,
+    binding_var: Option<Variable>,
 }
 
 pub struct Checker<'a> {
-    // context stuff
-    ast: &'a AST,
+    ctx: SemanticContext,
     stack: Vec<Variable>,
     var_map: HashMap<String, Variable>,
-    type_map: HashSet<&'a str>,
+    types: HashMap<&'a str, TypeFlags>,
 }
 
 impl Checker<'_> {
-    pub fn check_ast(ast: &AST) -> Result<(), String> {
+    pub fn check_ast(ast: AST) -> Result<(), String> {
         let mut checker = Checker {
-            ast,
+            ctx: SemanticContext {
+                loop_count: 0,
+                binding_var: None,
+            },
             stack: Vec::new(),
             var_map: HashMap::new(),
-            type_map: HashSet::from([
-                "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32",
-                "f64", "bool",
+            types: HashMap::from([
+                ("u8", TypeFlags::empty()),
+                ("u16", TypeFlags::empty()),
+                ("u32", TypeFlags::empty()),
+                ("u64", TypeFlags::empty()),
+                ("usize", TypeFlags::empty()),
+                ("i8", TypeFlags::SIGNED),
+                ("i16", TypeFlags::SIGNED),
+                ("i32", TypeFlags::SIGNED),
+                ("i64", TypeFlags::SIGNED),
+                ("isize", TypeFlags::SIGNED),
+                ("f32", TypeFlags::FLOAT),
+                ("f64", TypeFlags::FLOAT),
+                ("bool", TypeFlags::CMP),
             ]),
         };
-        for stmt in &checker.ast.stmts {
+
+        for stmt in ast.stmts {
             checker.check_stmt(stmt)?;
         }
         Ok(())
     }
 
-    fn check_stmt(&mut self, stmt: &NodeStmt) -> Result<(), String> {
+    fn check_stmt(&mut self, stmt: NodeStmt) -> Result<TypeFlags, String> {
         match stmt {
             NodeStmt::Let {
-                expr,
+                assign,
                 mutable,
-                type_ident,
+                var_type,
             } => {
-                // create new variable, add to vars
-                // - get name, check for collisons
-                //
+                self.is_valid_type(var_type.type_ident.value.as_ref().unwrap().as_str())?;
+                self.ctx.binding_var = Some(Variable {
+                    ident: None,
+                    mutable,
+                    type_ident: var_type.type_ident.value.unwrap(),
+                });
+                self.check_stmt(*assign)?;
+                Ok(TypeFlags::empty()) // annoying.
             }
-            NodeStmt::Assign(_) => todo!(),
-            NodeStmt::Exit(_) => todo!(),
-            NodeStmt::Scope(_) => todo!(),
-            NodeStmt::If(_, _, _) => todo!(),
-            NodeStmt::ElseIf(_, _) => todo!(),
-            NodeStmt::Else(_) => todo!(),
-            NodeStmt::While(_, _) => todo!(),
-            NodeStmt::Break => todo!(),
+            NodeStmt::If {
+                condition,
+                scope,
+                branches,
+            } => {
+                assert_eq!(
+                    self.check_expr(condition.clone())?,
+                    TypeFlags::CMP,
+                    "{ERR_MSG} 'If' statement condition not of type bool\n{condition:#?}"
+                );
+                for branch in branches {
+                    self.check_stmt(branch)?;
+                }
+                self.check_scope(scope)
+            }
+            NodeStmt::ElseIf { condition, scope } => {
+                assert_eq!(
+                    self.check_expr(condition.clone())?,
+                    TypeFlags::CMP,
+                    "{ERR_MSG} 'Else If' statement condition not of type bool\n{condition:#?}"
+                );
+                self.check_scope(scope)
+            }
+            NodeStmt::Else(scope) => self.check_scope(scope),
+            NodeStmt::While { condition, scope } => {
+                self.ctx.loop_count += 1;
+                self.check_expr(condition)?;
+                let scope = self.check_scope(scope);
+                self.ctx.loop_count -= 1;
+                scope
+            }
+            NodeStmt::Assign(mut expr) => {
+                let ident = match &expr {
+                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                            tok.value.as_ref().unwrap().clone()
+                        }
+                        _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                    },
+                    _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                };
+
+                // if 'eq', remove op & lhs, gen_expr(rhs)
+                // else check if var exists, replace Op= with Op, e.g '+=' --> '='
+                let mut arith_assign = false;
+                if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
+                    if op == TokenKind::Eq {
+                        expr = *rhs;
+                    } else {
+                        arith_assign = true;
+                        expr = NodeExpr::BinaryExpr {
+                            op: op.assign_to_arithmetic()?,
+                            lhs,
+                            rhs,
+                        };
+                    }
+                }
+
+                // check a variable is in the map,
+                // .. in: if trying to bind new_var, NO! if not mutable, NO! else, all good.
+                // .. not: being assigned in a 'let binding' or invalid (unreachable!)
+                if let Some(var) = self.var_map.get(ident.as_str()) {
+                    if self.ctx.binding_var.is_some() {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Re-initialisation of variable '{var:#?}'"
+                        ));
+                    } else if !var.mutable {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Re-assignment of constant: '{var:#?}'"
+                        ));
+                    }
+                    self.check_expr(expr)
+                } else {
+                    if arith_assign {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Compound Assignment on initialisation:\n'{ident:?}'"
+                        ));
+                    }
+                    match self.ctx.binding_var.take() {
+                        Some(mut var) => {
+                            var.ident = Some(ident.clone());
+                            self.stack.push(var.clone());
+                            self.var_map.insert(ident, var);
+                            self.check_expr(expr)
+                        }
+                        None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
+                    }
+                }
+            }
+            // doesn't care about type, only that is valid.
+            NodeStmt::Exit(expr) => self.check_expr(expr),
+            NodeStmt::NakedScope(scope) => self.check_scope(scope),
+            NodeStmt::Break => {
+                if self.ctx.loop_count > 0 {
+                    Ok(TypeFlags::empty())
+                } else {
+                    Err(format!("{ERR_MSG} Not inside a loop! cannot break"))
+                }
+            }
         }
-        Ok(())
     }
 
-    fn check_scope(&mut self, scope: &NodeScope) -> Result<(), String> {
-        todo!("")
+    fn check_scope(&mut self, scope: NodeScope) -> Result<TypeFlags, String> {
+        for stmt in scope.stmts {
+            self.check_stmt(stmt)?;
+        }
+        Ok(TypeFlags::empty())
     }
 
-    fn check_expr(&mut self, expr: &NodeExpr) -> Result<(), String> {
+    fn check_expr(&self, expr: NodeExpr) -> Result<TypeFlags, String> {
         // recurse check expr's
         // binary:
         //  - check op is valid for operand types
         // unary: check op is valid for operand's type
         // term: get type
-
         match expr {
-            NodeExpr::BinaryExpr { op, lhs, rhs } => todo!(),
-            NodeExpr::UnaryExpr { op, operand } => todo!(),
-            NodeExpr::Term(_) => Ok(()),
+            NodeExpr::BinaryExpr { op, lhs, rhs } => {
+                let lhs_type = self.check_expr(*lhs.clone())?;
+                let rhs_type = self.check_expr(*rhs.clone())?;
+                if LOG_DEBUG_INFO {
+                    println!("{DBG_MSG} {lhs_type:?} .. {op:?}.. {rhs_type:?}")
+                }
+
+                // if lhs,rhs types don't match
+                // comp op on non-booleans
+                // arith op on bools
+                if lhs_type != rhs_type {
+                    Err(format!("{ERR_MSG} Attempted binary expression of different types \n{lhs:?} .. {op:?} .. {rhs:?}\n{lhs_type:?} .. {op:?} .. {rhs_type:?}"))
+                } else if op.is_comparison() && !lhs_type.contains(TypeFlags::CMP)
+                    || op.is_arithmetic() && lhs_type.contains(TypeFlags::CMP)
+                {
+                    Err(format!("{ERR_MSG} Attempted binary expression with invalid op for operands\n{lhs:?} .. {op:?} .. {rhs:?}\n{lhs_type:?} .. {op:?} .. {rhs_type:?}"))
+                } else {
+                    Ok(lhs_type) // types are the same so can return lhs
+                }
+            }
+            NodeExpr::UnaryExpr { op, operand } => {
+                let operand_type = self.check_expr(*operand.clone())?;
+                if LOG_DEBUG_INFO {
+                    println!("{DBG_MSG} {op:?} .. {operand_type:?}")
+                }
+                Ok(TypeFlags::empty())
+            }
+            NodeExpr::Term(term) => self.check_term(term),
+        }
+    }
+
+    fn check_term(&self, term: NodeTerm) -> Result<TypeFlags, String> {
+        match term {
+            NodeTerm::Ident(name) => match self.var_map.get(&name.value.unwrap()) {
+                Some(var) => self.is_valid_type(var.type_ident.as_str()),
+                None => Err(format!("{ERR_MSG} Variable not found")),
+            },
+            NodeTerm::IntLit(_) => Ok(TypeFlags::SIGNED), // TODO(TOM): non-concrete types
+        }
+    }
+
+    fn is_valid_type(&self, ident: &str) -> Result<TypeFlags, String> {
+        match self.types.get(ident) {
+            Some(flags) => Ok(*flags),
+            None => Err(format!("{ERR_MSG} Type not found")),
         }
     }
 }
