@@ -1,5 +1,5 @@
-use crate::lex::*;
-const LOG_DEBUG_INFO: bool = true;
+use crate::lex::{Associativity, Token, TokenKind};
+const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
 const DBG_MSG: &'static str = "[DEBUG_PARSE]";
 
@@ -16,11 +16,7 @@ pub struct NodeScope {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
-    Let {
-        expr: Box<NodeStmt>,
-        mutable: bool,
-        type_ident: NodeTerm,
-    },
+    Let(Box<NodeStmt>, bool), // Ident, Mutability.
     Assign(NodeExpr),
     // Expr(NodeExpr),
     Exit(NodeExpr),
@@ -35,12 +31,12 @@ pub enum NodeStmt {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeExpr {
     BinaryExpr {
-        op: OpKind,
+        op: TokenKind,
         lhs: Box<NodeExpr>,
         rhs: Box<NodeExpr>,
     },
     UnaryExpr {
-        op: OpKind,
+        op: TokenKind,
         operand: Box<NodeExpr>,
     },
     Term(NodeTerm),
@@ -48,9 +44,8 @@ pub enum NodeExpr {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeTerm {
-    Type(String),
-    Ident(String),
-    IntLit(String),
+    Ident(Token),
+    IntLit(Token),
 }
 
 pub struct Parser {
@@ -76,53 +71,49 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
-            Some(tok) => tok.clone(), // TODO(TOM): fix
+            Some(tok) => tok,
             None => return Err(format!("{ERR_MSG} No statement to parse")),
         };
         if LOG_DEBUG_INFO {
             println!("\n{DBG_MSG} parsing statement: {:?}", self.peek(0).unwrap());
         }
 
-        let stmt = match tok {
-            Token::Symbol(SymbolKind::OpenSquirly) => NodeStmt::Scope(self.parse_scope()?), // a naked scope.
-            Token::Keyword(KeywordKind::Break) => {
-                self.try_consume(KeywordKind::Break)?;
+        let stmt = match tok.kind {
+            TokenKind::OpenBrace => NodeStmt::Scope(self.parse_scope()?), // a naked scope.
+            TokenKind::Break => {
+                self.try_consume(TokenKind::Break)?;
                 NodeStmt::Break
             }
-            Token::Keyword(KeywordKind::Exit) => {
-                self.try_consume(KeywordKind::Exit)?;
-                self.token_equals(SymbolKind::OpenParen, 0)?;
+            TokenKind::Exit => {
+                self.try_consume(TokenKind::Exit)?;
+                self.token_equals(TokenKind::OpenParen, 0)?;
                 let expr = self.parse_expr(0)?;
                 NodeStmt::Exit(expr)
             }
-            Token::Keyword(KeywordKind::Let) => {
-                // TODO(TOM): need to consume type separator && type ident.. whilst preserving ident?
-                self.try_consume(KeywordKind::Let)?;
-                let mutable = self.try_consume(KeywordKind::Mutable).is_ok();
-                let ident = self.try_consume(TokenKind::Ident)?;
-                self.try_consume(SymbolKind::TypeSeparator)?;
-                let type_ident = match self.try_consume(TokenKind::Ident) {
-                    Ok(Token::Ident(name)) => name,
-                    Err(e) => return Err(e),
-                    _ => unreachable!(),
-                };
-                self.tokens.insert(self.position, ident);
-                NodeStmt::Let {
-                    expr: Box::new(self.parse_stmt()?),
-                    mutable,
-                    type_ident: NodeTerm::Type(type_ident),
+            TokenKind::Let => {
+                self.try_consume(TokenKind::Let)?;
+                let mutable = self.try_consume(TokenKind::Mut).is_ok();
+                self.token_equals(TokenKind::Ident, 0)?;
+                NodeStmt::Let(Box::new(self.parse_stmt()?), mutable)
+            }
+            TokenKind::Ident => {
+                if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
+                    NodeStmt::Assign(self.parse_expr(0)?)
+                } else {
+                    todo!("NodeStmt::Expr(), no semantic analysis support to make viable.")
+                    // NodeStmt::Expr(self.parse_expr(0)?)
                 }
             }
-            Token::Keyword(KeywordKind::If) => {
-                self.try_consume(KeywordKind::If)?;
+            TokenKind::If => {
+                self.try_consume(TokenKind::If)?;
                 let expr = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
 
                 let mut branches = Vec::new();
                 loop {
-                    if self.try_consume(KeywordKind::Else).is_err() {
+                    if self.try_consume(TokenKind::Else).is_err() {
                         break;
-                    } else if self.try_consume(KeywordKind::If).is_ok() {
+                    } else if self.try_consume(TokenKind::If).is_ok() {
                         branches.push(NodeStmt::ElseIf(self.parse_expr(0)?, self.parse_scope()?));
                         continue;
                     }
@@ -131,23 +122,11 @@ impl Parser {
                 }
                 NodeStmt::If(expr, scope, branches)
             }
-            Token::Keyword(KeywordKind::While) => {
-                self.try_consume(KeywordKind::While)?;
+            TokenKind::While => {
+                self.try_consume(TokenKind::While)?;
                 let expr = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
                 NodeStmt::While(expr, scope)
-            }
-            Token::Ident(_) => {
-                match self.peek(1) {
-                    // 0
-                    // create expr, lhs,op, parse_expr(0)
-                    Some(Token::Op { flags, .. }) if flags.contains(OpFlags::ASSIGN) => {
-                        NodeStmt::Assign(self.parse_expr(0)?)
-                    }
-                    a @ _ => {
-                        todo!("NodeExpr\n{tok:?} {a:?}")
-                    }
-                }
             }
             _ => return Err(format!("{ERR_MSG} Invalid Statement: '{tok:?}'",)),
         };
@@ -155,7 +134,7 @@ impl Parser {
         // statments that do/don't require a ';' to end.
         match stmt {
             NodeStmt::Exit(_) | NodeStmt::Assign(_) | NodeStmt::Break => {
-                match self.try_consume(SymbolKind::StmtEnd) {
+                match self.try_consume(TokenKind::SemiColon) {
                     Ok(_) => Ok(stmt),
                     Err(e) => Err(format!("{e}.\n {stmt:#?}")),
                 }
@@ -165,13 +144,13 @@ impl Parser {
     }
 
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
-        self.try_consume(SymbolKind::OpenSquirly)?;
+        self.try_consume(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
         // while not end of scope, will shit itself in parse_stmt if no CloseSquirly
-        while self.token_equals(SymbolKind::CloseSquirly, 0).is_err() {
+        while self.token_equals(TokenKind::OpenBrace, 0).is_err() {
             stmts.push(self.parse_stmt()?);
         }
-        self.try_consume(SymbolKind::CloseSquirly)?;
+        self.try_consume(TokenKind::CloseBrace)?;
 
         Ok(NodeScope {
             stmts,
@@ -179,28 +158,34 @@ impl Parser {
         })
     }
 
-    fn parse_expr(&mut self, min_prec: u8) -> Result<NodeExpr, String> {
+    fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr, String> {
         let mut lhs = self.parse_term()?;
 
         loop {
-            let (op, flags, prec) = match self.peek(0) {
-                Some(Token::Op { kind, flags, prec }) => (*kind, *flags, *prec),
-                Some(_) => break,
+            let op = match self.peek(0) {
+                Some(tok) => &tok.kind,
                 None => return Err(format!("{ERR_MSG} No operand to parse")),
             };
+
+            let prec = op.get_prec();
             if prec < min_prec {
                 if LOG_DEBUG_INFO {
                     println!("{DBG_MSG} climb ended: {op:?}, < {min_prec}");
                 }
                 break;
             }
-            let next_prec = prec + (flags.contains(OpFlags::UNARY)) as u8; // TODO(TOM): this will change/break
-            self.consume();
+
+            let next_prec = match op.get_associativity() {
+                Associativity::Left => prec + 1,
+                Associativity::Right => prec,
+                Associativity::None => return Err(format!("{ERR_MSG} uhh.. ")),
+            };
+
             lhs = NodeExpr::BinaryExpr {
-                op,
+                op: self.consume().kind,
                 lhs: Box::new(lhs),
                 rhs: Box::new(self.parse_expr(next_prec)?),
-            };
+            }
         }
         Ok(lhs)
     }
@@ -211,25 +196,47 @@ impl Parser {
             None => return Err(format!("{ERR_MSG} No term to parse")),
         };
 
-        match tok {
-            Token::Op { kind, flags, prec } if flags.contains(OpFlags::UNARY) => {
-                let operand = self.parse_expr(prec + 1)?;
+        match tok.kind {
+            op @ _ if op.is_unary() => {
+                let operand = self.parse_expr(op.get_prec() + 1)?;
                 Ok(NodeExpr::UnaryExpr {
-                    op: kind,
+                    op,
                     operand: Box::new(operand),
                 })
             }
-            Token::Symbol(SymbolKind::OpenParen) => {
+            TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
                 if LOG_DEBUG_INFO {
                     println!("{DBG_MSG} parsed parens {expr:#?}");
                 }
-                self.try_consume(SymbolKind::CloseParen)?;
+                self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
-            Token::Ident(name) => Ok(NodeExpr::Term(NodeTerm::Ident(name))),
-            Token::IntLit(val) => Ok(NodeExpr::Term(NodeTerm::IntLit(val))),
+            TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
+            TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
             _ => Err(format!("{ERR_MSG} Invalid Term: '{tok:?}'")),
+        }
+    }
+
+    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
+        match self.peek(offset) {
+            Some(tok) if tok.kind == kind => Ok(()),
+            Some(tok) => Err(format!(
+                "{ERR_MSG} expected '{kind:?}', found {:?}",
+                tok.kind
+            )),
+            None => Err(format!("{ERR_MSG} No token to evaluate")),
+        }
+    }
+
+    fn token_matches(
+        &self,
+        pattern: impl Fn(&TokenKind) -> bool,
+        offset: usize,
+    ) -> Result<bool, String> {
+        match self.peek(offset) {
+            Some(tok) => Ok(pattern(&tok.kind)),
+            None => Err(format!("{ERR_MSG} No token to evalutate")),
         }
     }
 
@@ -237,6 +244,7 @@ impl Parser {
         self.tokens.get(self.position + offset)
     }
 
+    // remove item from vec? << no clone, linear complexity though..
     fn consume(&mut self) -> Token {
         if LOG_DEBUG_INFO {
             println!("consuming: {:?}", self.peek(0).unwrap());
@@ -246,21 +254,7 @@ impl Parser {
         self.tokens.get(i).unwrap().clone()
     }
 
-    fn token_equals<K>(&self, kind: K, offset: usize) -> Result<(), String>
-    where
-        K: KindTrait + std::fmt::Debug,
-    {
-        match self.peek(offset) {
-            Some(tok) if kind.matches_token(tok) => Ok(()),
-            Some(tok) => Err(format!("{ERR_MSG} expected '{kind:?}', found {tok:?}",)),
-            _ => Err(format!("{ERR_MSG} No token to evaluate")),
-        }
-    }
-
-    fn try_consume<K>(&mut self, kind: K) -> Result<Token, String>
-    where
-        K: KindTrait + std::fmt::Debug,
-    {
+    fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
     }

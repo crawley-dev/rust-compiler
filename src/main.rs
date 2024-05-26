@@ -1,17 +1,19 @@
+#![allow(unused)]
 use std::{
     env, fs,
     io::{BufRead, BufReader, Write},
 };
 
-// mod lex;
-// use lex::{Lexer, Token};
-// mod parse;
-// use parse::{Parser, AST};
 mod lex;
 use lex::*;
 
 mod parse;
 use parse::*;
+// mod lex_dumb_refactor;
+// use lex_dumb_refactor::*;
+
+// mod parse_dumb_refactor;
+// use parse_dumb_refactor::*;
 
 mod semantic;
 use semantic::Checker;

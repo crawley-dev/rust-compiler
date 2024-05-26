@@ -1,6 +1,255 @@
 use bitflags::bitflags;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 const LOG_DEBUG_INFO: bool = false;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenKind {
+    // Generic Symbols
+    Comma,             // ","
+    Colon,             // ":"
+    SemiColon,         // ";"
+    OpenParen,         // "("
+    CloseParen,        // ")"
+    LineComment,       // "//"
+    OpenBrace,         // "{"
+    CloseBrace,        // "}"
+    OpenMultiComment,  // "/*"
+    CloseMultiComment, // "*/"
+
+    // Operators
+    Not,    // "!"
+    Ptr,    // "^"
+    Eq,     // "="
+    Add,    // "+"
+    Sub,    // "-"
+    Mul,    // "*"
+    Quo,    // "/"
+    Mod,    // "%"
+    And,    // "&"
+    Or,     // "|"
+    Xor,    // "~"
+    AndNot, // "&~"
+    Shl,    // "<<"
+    Shr,    // ">>"
+
+    // Combo Assign
+    AddEq,    // "+="
+    SubEq,    // "-="
+    MulEq,    // "*="
+    QuoEq,    // "/="
+    ModEq,    // "%="
+    AndEq,    // "&="
+    OrEq,     // "|="
+    XorEq,    // "~="
+    AndNotEq, // "&~="
+    ShlEq,    // "<<="
+    ShrEq,    // ">>="
+
+    // Comparison
+    CmpAnd, // "&&"
+    CmpOr,  // "||"
+    CmpEq,  // "=="
+    NotEq,  // "!="
+    Lt,     // "<"
+    Gt,     // ">"
+    LtEq,   // "<="
+    GtEq,   // ">="
+
+    // Keywords
+    Exit,
+    Let,
+    If,
+    Else,
+    While,
+    Break,
+    Fn,
+    Mut,
+
+    // Primitive Constructs
+    Ident,
+    IntLit,
+}
+
+const REGISTRY: HashMap<&'static str, TokenKind> = HashMap::from([
+    // Generic Symbols
+    (",", TokenKind::Comma),
+    (":", TokenKind::Colon),
+    (";", TokenKind::SemiColon),
+    ("(", TokenKind::OpenParen),
+    (")", TokenKind::CloseParen),
+    ("{", TokenKind::OpenBrace),
+    ("}", TokenKind::CloseBrace),
+    ("//", TokenKind::LineComment),
+    ("/*", TokenKind::OpenMultiComment),
+    ("*/", TokenKind::CloseMultiComment),
+    // Operators
+    ("!", TokenKind::Not),
+    ("^", TokenKind::Ptr),
+    ("=", TokenKind::Eq),
+    ("+", TokenKind::Add),
+    ("-", TokenKind::Sub),
+    ("*", TokenKind::Mul),
+    ("/", TokenKind::Quo),
+    ("%", TokenKind::Mod),
+    ("&", TokenKind::And),
+    ("|", TokenKind::Or),
+    ("~", TokenKind::Xor),
+    ("&~", TokenKind::AndNot),
+    ("<<", TokenKind::Shl),
+    (">>", TokenKind::Shr),
+    // Combo Assign
+    ("+=", TokenKind::AddEq),
+    ("-=", TokenKind::SubEq),
+    ("*=", TokenKind::MulEq),
+    ("/=", TokenKind::QuoEq),
+    ("%=", TokenKind::ModEq),
+    ("&=", TokenKind::AndEq),
+    ("|=", TokenKind::OrEq),
+    ("~=", TokenKind::XorEq),
+    ("&~=", TokenKind::AndNotEq),
+    ("<<=", TokenKind::ShlEq),
+    (">>=", TokenKind::ShrEq),
+    // Comparison
+    ("&&", TokenKind::CmpAnd),
+    ("||", TokenKind::CmpOr),
+    ("==", TokenKind::CmpEq),
+    ("!=", TokenKind::NotEq),
+    ("<", TokenKind::Lt),
+    (">", TokenKind::Gt),
+    ("<=", TokenKind::LtEq),
+    (">=", TokenKind::GtEq),
+    // Keywords
+    ("exit", TokenKind::Exit),
+    ("let", TokenKind::Let),
+    ("fn", TokenKind::Fn),
+    ("if", TokenKind::If),
+    ("else", TokenKind::Else),
+    ("mut", TokenKind::Mut),
+    ("while", TokenKind::While),
+    ("break", TokenKind::Break),
+]);
+
+#[derive(Debug)]
+pub enum Associativity {
+    Left,
+    Right,
+    None,
+}
+
+// TODO(TOM): Give TokenKind attributes, akin to impl, instead of some match statements
+// .. declare all attributes in bitflag, in one place, i.e ATTR::ASSIGN | ATTR::ARITH
+impl TokenKind {
+    pub fn is_assignment(&self) -> bool {
+        match self {
+            TokenKind::Eq
+            | TokenKind::AddEq
+            | TokenKind::SubEq
+            | TokenKind::MulEq
+            | TokenKind::QuoEq
+            | TokenKind::ModEq
+            | TokenKind::AndEq
+            | TokenKind::OrEq
+            | TokenKind::XorEq
+            | TokenKind::AndNotEq
+            | TokenKind::ShlEq
+            | TokenKind::ShrEq => true,
+            _ => false,
+        }
+    }
+
+    pub fn assign_to_arithmetic(&self) -> Result<TokenKind, String> {
+        match self {
+            TokenKind::AddEq => Ok(TokenKind::Add),
+            TokenKind::SubEq => Ok(TokenKind::Sub),
+            TokenKind::MulEq => Ok(TokenKind::Mul),
+            TokenKind::QuoEq => Ok(TokenKind::Quo),
+            TokenKind::ModEq => Ok(TokenKind::Mod),
+            TokenKind::AndEq => Ok(TokenKind::And),
+            TokenKind::OrEq => Ok(TokenKind::Or),
+            TokenKind::XorEq => Ok(TokenKind::Xor),
+            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
+            TokenKind::ShlEq => Ok(TokenKind::Shl),
+            TokenKind::ShrEq => Ok(TokenKind::Shr),
+            _ => Err(format!("{self:?} cannot be converted to arithmetic")),
+        }
+    }
+
+    pub fn is_arithmetic(&self) -> bool {
+        match self {
+            TokenKind::Add | TokenKind::Sub | TokenKind::Quo | TokenKind::Mul | TokenKind::Mod => {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_comparison(&self) -> bool {
+        match self {
+            TokenKind::Eq
+            | TokenKind::NotEq
+            | TokenKind::Gt
+            | TokenKind::GtEq
+            | TokenKind::Lt
+            | TokenKind::LtEq
+            | TokenKind::CmpOr
+            | TokenKind::CmpAnd
+            | TokenKind::Not => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_bitwise(&self) -> bool {
+        match self {
+            TokenKind::Or
+            | TokenKind::Xor
+            | TokenKind::And
+            | TokenKind::Not
+            | TokenKind::Shl
+            | TokenKind::Shr => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_unary(&self) -> bool {
+        match self {
+            TokenKind::Not | TokenKind::Sub => true, // TODO(TOM): Unary minus!
+            _ => false,
+        }
+    }
+
+    pub fn is_binary(&self) -> bool {
+        !self.is_unary()
+    }
+
+    pub fn get_associativity(&self) -> Associativity {
+        match self {
+            _ if self.is_binary() => Associativity::Left,
+            _ if !self.is_assignment() => Associativity::None,
+            _ => Associativity::Right,
+        }
+    }
+
+    // Precedence hierarchy: higher = done first
+    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
+    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
+    pub fn get_prec(&self) -> i32 {
+        match self {
+            TokenKind::Comma => 0,
+            _ if self.is_assignment() => 1,
+            TokenKind::CmpOr => 3,
+            TokenKind::CmpAnd => 4,
+            TokenKind::Or => 5,
+            TokenKind::Xor => 6,
+            TokenKind::And => 7,
+            _ if self.is_comparison() => 8,
+            TokenKind::Shl | TokenKind::Shr => 10,
+            TokenKind::Sub | TokenKind::Add => 11,
+            TokenKind::Quo | TokenKind::Mul | TokenKind::Mod => 12,
+            TokenKind::Not => 13,
+            _ => -1,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufKind {
@@ -10,274 +259,66 @@ enum BufKind {
     Illegal,
 }
 
-// TODO(TOM): try create a derive macro for 'KindTrait'
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OpKind {
-    DirectAssign,
-    Add,
-    Divide,
-    Subtract,
-    Multiply,
-    Remainder,
-    Equal,
-    NotEqual,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
-    LogicalOr,
-    LogicalNot,
-    LogicalAnd,
-    BitwiseOr,
-    BitwiseNot,
-    BitwiseXor,
-    BitwiseAnd,
-    LeftShift,
-    RightShift,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SymbolKind {
-    StmtEnd,
-    Separator,
-    TypeSeparator,
-    OpenParen,
-    CloseParen,
-    LineComment,
-    OpenSquirly,
-    CloseSquirly,
-    OpenMultiComment,
-    CloseMultiComment,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum KeywordKind {
-    Exit,
-    Let,
-    If,
-    Else,
-    While,
-    Break,
-    Function,
-    Mutable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TokenKind {
-    Ident,
-    IntLit,
-    Symbol,
-    Keyword,
-    Op,
-}
-
-pub trait KindTrait {
-    fn matches_token(&self, token: &Token) -> bool;
-}
-impl KindTrait for SymbolKind {
-    fn matches_token(&self, token: &Token) -> bool {
-        if let Token::Symbol(kind) = token {
-            self == kind
-        } else {
-            false
-        }
-    }
-}
-impl KindTrait for KeywordKind {
-    fn matches_token(&self, token: &Token) -> bool {
-        if let Token::Keyword(kind) = token {
-            self == kind
-        } else {
-            false
-        }
-    }
-}
-impl KindTrait for OpKind {
-    fn matches_token(&self, token: &Token) -> bool {
-        match token {
-            Token::Op { kind, .. } => self == kind,
-            _ => false,
-        }
-    }
-}
-impl KindTrait for TokenKind {
-    fn matches_token(&self, token: &Token) -> bool {
-        match token {
-            Token::Ident(_) => self == &TokenKind::Ident,
-            Token::IntLit(_) => self == &TokenKind::IntLit,
-            Token::Symbol(_) => self == &TokenKind::Symbol,
-            Token::Keyword(_) => self == &TokenKind::Keyword,
-            Token::Op { .. } => self == &TokenKind::Op,
-        }
-    }
-}
-
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct OpFlags: u8 {
+    pub struct Flags: u8 {
         const ASSIGN = 1 << 0;
         const ARITH = 1 << 1;
         const CMP = 1 << 2;
-        const BITWISE = 1 << 3;
-        const LOGICAL = 1 << 4;
+        const BIT = 1 << 3;
+        const LOG = 1 << 4;
         const UNARY = 1 << 5; // TODO(TOM): for now, left associative
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    Ident(String),
-    IntLit(String),
-    Symbol(SymbolKind),
-    Keyword(KeywordKind),
-    Op {
-        kind: OpKind,
-        flags: OpFlags,
-        prec: u8,
-    },
-}
-
-impl Token {
-    fn new_op(kind: OpKind, flags: OpFlags, prec: u8) -> Token {
-        Token::Op { kind, flags, prec }
-    }
+#[derive(Clone, PartialEq)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub value: Option<String>,
 }
 
 pub struct Lexer {
     pos: usize,
     input: Vec<u8>,
     buffer: Vec<u8>,
+    reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
     is_multicomment: bool,
-    reg: HashMap<&'static str, Token>,
 }
 
 impl Lexer {
     pub fn new(input: String) -> Lexer {
-        let reg = HashMap::from([
-            (";", Token::Symbol(SymbolKind::StmtEnd)),
-            (":", Token::Symbol(SymbolKind::TypeSeparator)),
-            (",", Token::Symbol(SymbolKind::Separator)),
-            ("(", Token::Symbol(SymbolKind::OpenParen)),
-            (")", Token::Symbol(SymbolKind::CloseParen)),
-            ("{", Token::Symbol(SymbolKind::OpenSquirly)),
-            ("}", Token::Symbol(SymbolKind::CloseSquirly)),
-            ("//", Token::Symbol(SymbolKind::LineComment)),
-            ("/*", Token::Symbol(SymbolKind::OpenMultiComment)),
-            ("*/", Token::Symbol(SymbolKind::CloseMultiComment)),
-            //
-            ("=", Token::new_op(OpKind::DirectAssign, OpFlags::ASSIGN, 1)),
-            (
-                "+=",
-                Token::new_op(OpKind::Add, OpFlags::ARITH | OpFlags::ASSIGN, 11),
-            ),
-            (
-                "-=",
-                Token::new_op(OpKind::Subtract, OpFlags::ARITH | OpFlags::ASSIGN, 11),
-            ),
-            (
-                "/=",
-                Token::new_op(OpKind::Divide, OpFlags::ARITH | OpFlags::ASSIGN, 12),
-            ),
-            (
-                "*=",
-                Token::new_op(OpKind::Multiply, OpFlags::ARITH | OpFlags::ASSIGN, 12),
-            ),
-            (
-                "%=",
-                Token::new_op(OpKind::Remainder, OpFlags::ARITH | OpFlags::ASSIGN, 12),
-            ),
-            (
-                "|=",
-                Token::new_op(OpKind::BitwiseOr, OpFlags::BITWISE | OpFlags::ASSIGN, 5),
-            ),
-            (
-                "^=",
-                Token::new_op(OpKind::BitwiseXor, OpFlags::BITWISE | OpFlags::ASSIGN, 6),
-            ),
-            (
-                "&=",
-                Token::new_op(OpKind::BitwiseAnd, OpFlags::BITWISE | OpFlags::ASSIGN, 4),
-            ),
-            (
-                ">>=",
-                Token::new_op(OpKind::LeftShift, OpFlags::BITWISE | OpFlags::ASSIGN, 10),
-            ),
-            (
-                "<<=",
-                Token::new_op(OpKind::RightShift, OpFlags::BITWISE | OpFlags::ASSIGN, 10),
-            ),
-            ("+", Token::new_op(OpKind::Add, OpFlags::ARITH, 11)),
-            ("-", Token::new_op(OpKind::Subtract, OpFlags::ARITH, 11)),
-            ("/", Token::new_op(OpKind::Divide, OpFlags::ARITH, 12)),
-            ("*", Token::new_op(OpKind::Multiply, OpFlags::ARITH, 12)),
-            ("%", Token::new_op(OpKind::Remainder, OpFlags::ARITH, 12)),
-            ("|", Token::new_op(OpKind::BitwiseOr, OpFlags::BITWISE, 5)),
-            ("^", Token::new_op(OpKind::BitwiseXor, OpFlags::BITWISE, 6)),
-            ("&", Token::new_op(OpKind::BitwiseAnd, OpFlags::BITWISE, 4)),
-            (">>", Token::new_op(OpKind::LeftShift, OpFlags::BITWISE, 10)),
-            (
-                "<<",
-                Token::new_op(OpKind::RightShift, OpFlags::BITWISE, 10),
-            ),
-            (
-                "~",
-                Token::new_op(OpKind::BitwiseNot, OpFlags::BITWISE | OpFlags::UNARY, 13),
-            ),
-            ("==", Token::new_op(OpKind::Equal, OpFlags::CMP, 8)),
-            ("!=", Token::new_op(OpKind::NotEqual, OpFlags::CMP, 8)),
-            ("<", Token::new_op(OpKind::LessThan, OpFlags::CMP, 8)),
-            ("<=", Token::new_op(OpKind::LessEqual, OpFlags::CMP, 8)),
-            (">", Token::new_op(OpKind::GreaterThan, OpFlags::CMP, 8)),
-            (">=", Token::new_op(OpKind::GreaterEqual, OpFlags::CMP, 8)),
-            ("||", Token::new_op(OpKind::LogicalOr, OpFlags::CMP, 3)),
-            ("&&", Token::new_op(OpKind::LogicalAnd, OpFlags::CMP, 4)),
-            (
-                "!",
-                Token::new_op(OpKind::LogicalNot, OpFlags::CMP | OpFlags::UNARY, 13),
-            ),
-            //
-            ("exit", Token::Keyword(KeywordKind::Exit)),
-            ("let", Token::Keyword(KeywordKind::Let)),
-            ("fn", Token::Keyword(KeywordKind::Function)),
-            ("if", Token::Keyword(KeywordKind::If)),
-            ("else", Token::Keyword(KeywordKind::Else)),
-            ("mut", Token::Keyword(KeywordKind::Mutable)),
-            ("while", Token::Keyword(KeywordKind::While)),
-            ("break", Token::Keyword(KeywordKind::Break)),
-        ]);
         Lexer {
             pos: 0,
             input: input.into_bytes(),
             buffer: Vec::new(),
+            reg: REGISTRY,
             is_linecomment: false,
             is_multicomment: false,
-            reg,
         }
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         while self.pos < self.input.len() {
-            let tok = match self.next_token() {
-                Some(tok) => tok,
-                None => continue,
-            };
-            match tok {
-                Token::Symbol(SymbolKind::LineComment) => self.is_linecomment = true,
-                Token::Symbol(SymbolKind::OpenMultiComment) => self.is_multicomment = true,
-                Token::Symbol(SymbolKind::CloseMultiComment) => self.is_multicomment = false,
-                _ if self.is_multicomment => (),
-                _ => {
-                    tokens.push(tok);
-                    if LOG_DEBUG_INFO {
-                        println!(
-                            "[LEX_DEBUG] new tok: {:?} | pos {}\n",
-                            tokens.last(),
-                            self.pos
-                        );
+            match self.next_token() {
+                Some(tok) => match tok.kind {
+                    TokenKind::LineComment => self.is_linecomment = true,
+                    TokenKind::OpenMultiComment => self.is_multicomment = true,
+                    TokenKind::CloseMultiComment => self.is_multicomment = false,
+                    _ if self.is_multicomment => (),
+                    _ => {
+                        tokens.push(tok);
+                        if LOG_DEBUG_INFO {
+                            println!(
+                                "[LEX_DEBUG] new tok: {:?} | pos {}\n",
+                                tokens.last(),
+                                self.pos
+                            );
+                        }
                     }
-                }
+                },
+                None => continue,
             };
         }
         tokens
@@ -293,6 +334,11 @@ impl Lexer {
                 None => break,
             };
 
+            // TODO: (done.. i think?)
+            // requires (line + " \n"), e.g "//"
+            // hits "//", consumes next.. " ", break
+            // next iter: hits '\n', stop linecomment. CORRECT!
+            // .. otherwise, it would consume "//" && \n, then: linecomment = true. BAD!
             if next_char == b'\n' {
                 if self.buffer.is_empty() {
                     self.pos += 1;
@@ -334,22 +380,34 @@ impl Lexer {
             BufKind::Illegal => None,
             BufKind::Word => self.match_word(buf_str),
             BufKind::Symbol => self.match_symbol(buf_str),
-            BufKind::IntLit => Some(Token::IntLit(buf_str)),
+            BufKind::IntLit => Some(Token {
+                kind: TokenKind::IntLit,
+                value: Some(buf_str),
+            }),
         }
     }
 
     fn match_word(&self, buf_str: String) -> Option<Token> {
         match self.reg.get(buf_str.as_str()) {
-            Some(tok) => Some(tok.clone()),
-            None => Some(Token::Ident(buf_str)),
+            Some(kind) => Some(Token {
+                kind: kind.clone(),
+                value: None,
+            }),
+            None => Some(Token {
+                kind: TokenKind::Ident,
+                value: Some(buf_str),
+            }),
         }
     }
 
     fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
         while !buf_str.is_empty() {
             match self.reg.get(buf_str.as_str()) {
-                Some(tok) => {
-                    return Some(tok.clone());
+                Some(kind) => {
+                    return Some(Token {
+                        kind: kind.clone(),
+                        value: None,
+                    });
                 }
                 None => {
                     buf_str.pop();
@@ -379,5 +437,17 @@ impl Lexer {
             );
         }
         self.input.get(i).copied().unwrap()
+    }
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.value {
+            Some(val) => match &self.kind {
+                TokenKind::Ident => write!(f, "{:?}('{val}')", self.kind),
+                _ => write!(f, "{:?}({val})", self.kind),
+            },
+            None => write!(f, "{:?}", self.kind),
+        }
     }
 }

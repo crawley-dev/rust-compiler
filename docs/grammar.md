@@ -42,7 +42,8 @@
 - Bitwise Or       '|'  prec = 5       
 - Logical And      '&&' prec = 4       
 - Logical Or       '||' prec = 3       
-- Assign           '='  prec = 1       
+- DirectAssign     '='  prec = 1
+- Assign           '_=' prec = 1 | underscore replaced by arithmetic or bitwise binary operator.  
 </pre>
 
 ## Keyword Registry 
