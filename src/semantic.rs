@@ -1,4 +1,4 @@
-// >>SEMANTIC<<
+// >>SEMANTIC<< The rules of the language, not grammar or syntax!
 //  Assignment:
 //      - arith-assign on new var or literal
 //      - re-assign on immutable vars
@@ -53,7 +53,7 @@ pub struct Checker<'a> {
 }
 
 impl Checker<'_> {
-    pub fn check_ast(ast: AST) -> Result<(), String> {
+    pub fn check_ast(mut ast: AST) -> Result<AST, String> {
         let mut checker = Checker {
             ctx: SemanticContext {
                 loop_count: 0,
@@ -78,13 +78,13 @@ impl Checker<'_> {
             ]),
         };
 
-        for stmt in ast.stmts {
+        for stmt in &mut ast.stmts {
             checker.check_stmt(stmt)?;
         }
-        Ok(())
+        Ok(ast)
     }
 
-    fn check_stmt(&mut self, stmt: NodeStmt) -> Result<TypeFlags, String> {
+    fn check_stmt(&mut self, stmt: &mut NodeStmt) -> Result<TypeFlags, String> {
         match stmt {
             NodeStmt::Let {
                 assign,
@@ -94,10 +94,10 @@ impl Checker<'_> {
                 self.is_valid_type(var_type.type_ident.value.as_ref().unwrap().as_str())?;
                 self.ctx.binding_var = Some(Variable {
                     ident: None,
-                    mutable,
-                    type_ident: var_type.type_ident.value.unwrap(),
+                    mutable: *mutable,
+                    type_ident: var_type.type_ident.value.as_ref().unwrap().clone(), //var_type.type_ident.value.unwrap(),
                 });
-                self.check_stmt(*assign)?;
+                self.check_stmt(&mut *assign)?;
                 Ok(TypeFlags::empty()) // annoying.
             }
             NodeStmt::If {
@@ -106,7 +106,7 @@ impl Checker<'_> {
                 branches,
             } => {
                 assert_eq!(
-                    self.check_expr(condition.clone())?,
+                    self.check_expr(&condition)?,
                     TypeFlags::CMP,
                     "{ERR_MSG} 'If' statement condition not of type bool\n{condition:#?}"
                 );
@@ -117,7 +117,7 @@ impl Checker<'_> {
             }
             NodeStmt::ElseIf { condition, scope } => {
                 assert_eq!(
-                    self.check_expr(condition.clone())?,
+                    self.check_expr(&condition)?,
                     TypeFlags::CMP,
                     "{ERR_MSG} 'Else If' statement condition not of type bool\n{condition:#?}"
                 );
@@ -131,63 +131,65 @@ impl Checker<'_> {
                 self.ctx.loop_count -= 1;
                 scope
             }
-            NodeStmt::Assign(mut expr) => {
-                let ident = match &expr {
-                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-                            tok.value.as_ref().unwrap().clone()
-                        }
-                        _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-                    },
-                    _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-                };
+            NodeStmt::Assign(expr) => {
+                todo!("")
+                // let ident = match &expr {
+                //     NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                //         NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                //             tok.value.as_ref().unwrap().clone()
+                //         }
+                //         _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                //     },
+                //     _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                // };
 
-                // if 'eq', remove op & lhs, gen_expr(rhs)
-                // else check if var exists, replace Op= with Op, e.g '+=' --> '='
-                let mut arith_assign = false;
-                if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
-                    if op == TokenKind::Eq {
-                        expr = *rhs;
-                    } else {
-                        arith_assign = true;
-                        expr = NodeExpr::BinaryExpr {
-                            op: op.assign_to_arithmetic()?,
-                            lhs,
-                            rhs,
-                        };
-                    }
-                }
+                // // if 'eq', remove op & lhs, gen_expr(rhs)
+                // // else check if var exists, replace Op= with Op, e.g '+=' --> '='
+                // let mut new_expr: NodeExpr;
+                // let mut arith_assign = false;
+                // if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
+                //     if op == &TokenKind::Eq {
+                //         new_expr = **rhs;
+                //     } else {
+                //         arith_assign = true;
+                //         *expr = NodeExpr::BinaryExpr {
+                //             op: op.assign_to_arithmetic()?,
+                //             lhs: *lhs,
+                //             rhs: *rhs,
+                //         };
+                //     }
+                // }
 
-                // check a variable is in the map,
-                // .. in: if trying to bind new_var, NO! if not mutable, NO! else, all good.
-                // .. not: being assigned in a 'let binding' or invalid (unreachable!)
-                if let Some(var) = self.var_map.get(ident.as_str()) {
-                    if self.ctx.binding_var.is_some() {
-                        return Err(format!(
-                            "{ERR_MSG} Attempted Re-initialisation of variable '{var:#?}'"
-                        ));
-                    } else if !var.mutable {
-                        return Err(format!(
-                            "{ERR_MSG} Attempted Re-assignment of constant: '{var:#?}'"
-                        ));
-                    }
-                    self.check_expr(expr)
-                } else {
-                    if arith_assign {
-                        return Err(format!(
-                            "{ERR_MSG} Attempted Compound Assignment on initialisation:\n'{ident:?}'"
-                        ));
-                    }
-                    match self.ctx.binding_var.take() {
-                        Some(mut var) => {
-                            var.ident = Some(ident.clone());
-                            self.stack.push(var.clone());
-                            self.var_map.insert(ident, var);
-                            self.check_expr(expr)
-                        }
-                        None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
-                    }
-                }
+                // // check a variable is in the map,
+                // // .. in: if trying to bind new_var, NO! if not mutable, NO! else, all good.
+                // // .. not: being assigned in a 'let binding' or invalid (unreachable!)
+                // if let Some(var) = self.var_map.get(ident.as_str()) {
+                //     if self.ctx.binding_var.is_some() {
+                //         return Err(format!(
+                //             "{ERR_MSG} Attempted Re-initialisation of variable '{var:#?}'"
+                //         ));
+                //     } else if !var.mutable {
+                //         return Err(format!(
+                //             "{ERR_MSG} Attempted Re-assignment of constant: '{var:#?}'"
+                //         ));
+                //     }
+                //     self.check_expr(&expr)
+                // } else {
+                //     if arith_assign {
+                //         return Err(format!(
+                //             "{ERR_MSG} Attempted Compound Assignment on initialisation:\n'{ident:?}'"
+                //         ));
+                //     }
+                //     match self.ctx.binding_var.take() {
+                //         Some(mut var) => {
+                //             var.ident = Some(ident.clone());
+                //             self.stack.push(var.clone());
+                //             self.var_map.insert(ident, var);
+                //             self.check_expr(&expr)
+                //         }
+                //         None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
+                //     }
+                // }
             }
             // doesn't care about type, only that is valid.
             NodeStmt::Exit(expr) => self.check_expr(expr),
@@ -202,14 +204,14 @@ impl Checker<'_> {
         }
     }
 
-    fn check_scope(&mut self, scope: NodeScope) -> Result<TypeFlags, String> {
-        for stmt in scope.stmts {
+    fn check_scope(&mut self, scope: &mut NodeScope) -> Result<TypeFlags, String> {
+        for stmt in &mut scope.stmts {
             self.check_stmt(stmt)?;
         }
         Ok(TypeFlags::empty())
     }
 
-    fn check_expr(&self, expr: NodeExpr) -> Result<TypeFlags, String> {
+    fn check_expr(&self, expr: &NodeExpr) -> Result<TypeFlags, String> {
         // recurse check expr's
         // binary:
         //  - check op is valid for operand types
@@ -217,8 +219,8 @@ impl Checker<'_> {
         // term: get type
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let lhs_type = self.check_expr(*lhs.clone())?;
-                let rhs_type = self.check_expr(*rhs.clone())?;
+                let lhs_type = self.check_expr(&*lhs)?;
+                let rhs_type = self.check_expr(&*rhs)?;
                 if LOG_DEBUG_INFO {
                     println!("{DBG_MSG} {lhs_type:?} .. {op:?}.. {rhs_type:?}")
                 }
@@ -237,7 +239,7 @@ impl Checker<'_> {
                 }
             }
             NodeExpr::UnaryExpr { op, operand } => {
-                let operand_type = self.check_expr(*operand.clone())?;
+                let operand_type = self.check_expr(&*operand)?;
                 if LOG_DEBUG_INFO {
                     println!("{DBG_MSG} {op:?} .. {operand_type:?}")
                 }
@@ -247,11 +249,11 @@ impl Checker<'_> {
         }
     }
 
-    fn check_term(&self, term: NodeTerm) -> Result<TypeFlags, String> {
+    fn check_term(&self, term: &NodeTerm) -> Result<TypeFlags, String> {
         match term {
-            NodeTerm::Ident(name) => match self.var_map.get(&name.value.unwrap()) {
+            NodeTerm::Ident(name) => match self.var_map.get(name.value.as_ref().unwrap()) {
                 Some(var) => self.is_valid_type(var.type_ident.as_str()),
-                None => Err(format!("{ERR_MSG} Variable not found")),
+                None => Err(format!("{ERR_MSG} Variable not found '{name:?}'")),
             },
             NodeTerm::IntLit(_) => Ok(TypeFlags::SIGNED), // TODO(TOM): non-concrete types
         }

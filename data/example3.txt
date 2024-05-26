@@ -56,8 +56,7 @@ let n = 0 || 5 + 1 > 6;
 
 let mut ans: i32 = 2;
 let mut i: i32 = 5;
-let aaa: i8 = 10;
-if i + aaa {
+if dwa == dwawwa {
     exit(10);
 }
 

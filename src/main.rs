@@ -25,10 +25,11 @@ fn main() {
 
     let tokens = Lexer::new(input).tokenize();
     // print_tokens(&tokens);
-    let ast = parse(tokens);
+    let mut ast = parse(tokens);
     println!("\n\n{:#?}\n\n", ast);
-    semantic_check(ast.clone()); // TODO(TOM): MAJOR SKILL ISSUE
-                                 // code_gen(ast, file_name);
+    let ast = semantic_check(ast);
+    // TODO(TOM): MAJOR SKILL ISSUE
+    // code_gen(ast, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -43,9 +44,9 @@ fn parse(tokens: Vec<Token>) -> AST {
     }
 }
 
-fn semantic_check(ast: AST) {
+fn semantic_check(ast: AST) -> AST {
     match semantic::Checker::check_ast(ast) {
-        Ok(t) => (),
+        Ok(ast) => ast,
         Err(e) => panic!("\n{e}\n"),
     }
 }
