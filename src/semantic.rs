@@ -18,17 +18,19 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     lex::TokenKind,
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, ParseType, AST},
+    TokenFlags,
 };
 const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
+// TODO(TOM): addressing modes
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct TypeFlags: u8 {
         const POINTER = 1 << 0;
-        const CMP = 1 << 1;
-        const SIGNED = 1 << 2;
+        const BOOLEAN = 1 << 1; // or arith
+        const SIGNED = 1 << 2; // or unsigned
         const FLOAT = 1 << 3;
     }
 }
@@ -74,7 +76,7 @@ impl Checker<'_> {
                 ("isize", TypeFlags::SIGNED),
                 ("f32", TypeFlags::FLOAT),
                 ("f64", TypeFlags::FLOAT),
-                ("bool", TypeFlags::CMP),
+                ("bool", TypeFlags::BOOLEAN),
             ]),
         };
 
@@ -107,7 +109,7 @@ impl Checker<'_> {
             } => {
                 assert_eq!(
                     self.check_expr(&condition)?,
-                    TypeFlags::CMP,
+                    TypeFlags::BOOLEAN,
                     "{ERR_MSG} 'If' statement condition not of type bool\n{condition:#?}"
                 );
                 for branch in branches {
@@ -118,7 +120,7 @@ impl Checker<'_> {
             NodeStmt::ElseIf { condition, scope } => {
                 assert_eq!(
                     self.check_expr(&condition)?,
-                    TypeFlags::CMP,
+                    TypeFlags::BOOLEAN,
                     "{ERR_MSG} 'Else If' statement condition not of type bool\n{condition:#?}"
                 );
                 self.check_scope(scope)
@@ -131,65 +133,70 @@ impl Checker<'_> {
                 self.ctx.loop_count -= 1;
                 scope
             }
-            NodeStmt::Assign(expr) => {
-                todo!("")
-                // let ident = match &expr {
-                //     NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-                //         NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-                //             tok.value.as_ref().unwrap().clone()
-                //         }
-                //         _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-                //     },
-                //     _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-                // };
+            NodeStmt::Assign {
+                expr,
+                dir_assign_ident,
+            } => {
+                let ident = match &expr {
+                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                            tok.value.as_ref().unwrap().clone()
+                        }
+                        _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                    },
+                    _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+                };
 
-                // // if 'eq', remove op & lhs, gen_expr(rhs)
-                // // else check if var exists, replace Op= with Op, e.g '+=' --> '='
-                // let mut new_expr: NodeExpr;
-                // let mut arith_assign = false;
-                // if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
-                //     if op == &TokenKind::Eq {
-                //         new_expr = **rhs;
-                //     } else {
-                //         arith_assign = true;
-                //         *expr = NodeExpr::BinaryExpr {
-                //             op: op.assign_to_arithmetic()?,
-                //             lhs: *lhs,
-                //             rhs: *rhs,
-                //         };
-                //     }
-                // }
+                // if 'eq', remove op & lhs, gen_expr(rhs)
+                // else check if var exists, remove Assign from OpAssign, e.g '+=' --> '+'
+                let mut arith_assign = false;
+                *expr = match expr {
+                    NodeExpr::BinaryExpr { op, lhs, rhs } => {
+                        if op == &TokenKind::Eq {
+                            *dir_assign_ident = Some(ident);
+                            *rhs.clone()
+                        } else {
+                            arith_assign = true;
+                            NodeExpr::BinaryExpr {
+                                op: op.assign_to_arithmetic()?,
+                                lhs: Box::new(*lhs.clone()),
+                                rhs: Box::new(*rhs.clone()),
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                };
 
-                // // check a variable is in the map,
-                // // .. in: if trying to bind new_var, NO! if not mutable, NO! else, all good.
-                // // .. not: being assigned in a 'let binding' or invalid (unreachable!)
-                // if let Some(var) = self.var_map.get(ident.as_str()) {
-                //     if self.ctx.binding_var.is_some() {
-                //         return Err(format!(
-                //             "{ERR_MSG} Attempted Re-initialisation of variable '{var:#?}'"
-                //         ));
-                //     } else if !var.mutable {
-                //         return Err(format!(
-                //             "{ERR_MSG} Attempted Re-assignment of constant: '{var:#?}'"
-                //         ));
-                //     }
-                //     self.check_expr(&expr)
-                // } else {
-                //     if arith_assign {
-                //         return Err(format!(
-                //             "{ERR_MSG} Attempted Compound Assignment on initialisation:\n'{ident:?}'"
-                //         ));
-                //     }
-                //     match self.ctx.binding_var.take() {
-                //         Some(mut var) => {
-                //             var.ident = Some(ident.clone());
-                //             self.stack.push(var.clone());
-                //             self.var_map.insert(ident, var);
-                //             self.check_expr(&expr)
-                //         }
-                //         None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
-                //     }
-                // }
+                // check a variable is in the map,
+                // .. in: if trying to bind new_var, NO! if not mutable, NO! else, all good.
+                // .. not: being assigned in a 'let binding' or invalid (unreachable!)
+                if let Some(var) = self.var_map.get(ident.as_str()) {
+                    if self.ctx.binding_var.is_some() {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Re-initialisation of variable '{var:#?}'"
+                        ));
+                    } else if !var.mutable {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Re-assignment of constant: '{var:#?}'"
+                        ));
+                    }
+                    self.check_expr(&expr)
+                } else {
+                    if arith_assign {
+                        return Err(format!(
+                            "{ERR_MSG} Attempted Compound Assignment on initialisation:\n'{ident:?}'"
+                        ));
+                    }
+                    match self.ctx.binding_var.take() {
+                        Some(mut var) => {
+                            var.ident = Some(ident.clone());
+                            self.stack.push(var.clone());
+                            self.var_map.insert(ident, var);
+                            self.check_expr(&expr)
+                        }
+                        None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
+                    }
+                }
             }
             // doesn't care about type, only that is valid.
             NodeStmt::Exit(expr) => self.check_expr(expr),
@@ -221,21 +228,33 @@ impl Checker<'_> {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let lhs_type = self.check_expr(&*lhs)?;
                 let rhs_type = self.check_expr(&*rhs)?;
+                let op_dbg = format!(
+                    "\n{lhs:?} .. {op:?} .. {rhs:?}\n{lhs_type:?} .. {op:?} .. {rhs_type:?}"
+                );
                 if LOG_DEBUG_INFO {
                     println!("{DBG_MSG} {lhs_type:?} .. {op:?}.. {rhs_type:?}")
                 }
 
                 // if lhs,rhs types don't match
-                // comp op on non-booleans
-                // arith op on bools
+                // arith op doesn't work on cmp
+                // logical doesn't work on arith
+                // cmp works on arith & cmp
                 if lhs_type != rhs_type {
-                    Err(format!("{ERR_MSG} Attempted binary expression of different types \n{lhs:?} .. {op:?} .. {rhs:?}\n{lhs_type:?} .. {op:?} .. {rhs_type:?}"))
-                } else if op.is_comparison() && !lhs_type.contains(TypeFlags::CMP)
-                    || op.is_arithmetic() && lhs_type.contains(TypeFlags::CMP)
-                {
-                    Err(format!("{ERR_MSG} Attempted binary expression with invalid op for operands\n{lhs:?} .. {op:?} .. {rhs:?}\n{lhs_type:?} .. {op:?} .. {rhs_type:?}"))
-                } else {
-                    Ok(lhs_type) // types are the same so can return lhs
+                    return Err(format!(
+                        "{ERR_MSG} Mismatched binary expression types:{op_dbg}"
+                    ));
+                }
+                match op.get_flags() {
+                    TokenFlags::ARITH if lhs_type.contains(TypeFlags::BOOLEAN) => Err(format!(
+                        "{ERR_MSG} Mismatched Operand and Op Types:{op_dbg}"
+                    )),
+                    TokenFlags::LOG if !lhs_type.contains(TypeFlags::BOOLEAN) => Err(format!(
+                        "{ERR_MSG} Mismatched Operand and Op Types:{op_dbg}"
+                    )),
+                    TokenFlags::ARITH => Ok(TypeFlags::SIGNED), // TODO(TOM): unsigned
+                    TokenFlags::LOG => Ok(TypeFlags::BOOLEAN),
+                    TokenFlags::CMP => Ok(TypeFlags::BOOLEAN),
+                    _ => Err(format!("{ERR_MSG} Unsupported Binary Expression:{op_dbg}")),
                 }
             }
             NodeExpr::UnaryExpr { op, operand } => {

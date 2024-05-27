@@ -13,7 +13,6 @@ const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
 struct Variable {
     stk_index: usize,
     ident: Option<String>,
-    mutable: bool,
 }
 
 struct Context {
@@ -61,7 +60,7 @@ impl Generator {
     // TODO: BYTE ARRAYS!
     fn gen_stmt(&mut self, stmt: NodeStmt) -> Result<String, String> {
         match stmt {
-            NodeStmt::Scope(scope) => self.gen_scope(scope),
+            NodeStmt::NakedScope(scope) => self.gen_scope(scope),
             NodeStmt::Exit(expr) => {
                 let expr_asm = self.gen_expr(expr, Some("rdi"))?;
                 Ok(format!(
@@ -71,79 +70,101 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::Let(assignment, mutable) => {
-                if self.ctx.binding_var.is_some() {
-                    return Err(format!("{ERR_MSG} Uhhh, trying to bind a binding?"));
-                }
-                if self.stack.len() != 0 {
-                    self.ctx.stk_ptr += 1;
-                }
-                let var = Variable {
-                    stk_index: self.ctx.stk_ptr,
-                    ident: None,
-                    mutable,
-                };
-                self.ctx.binding_var = Some(var);
-                self.gen_stmt(*assignment)
+            NodeStmt::Let { assign, .. } => {
+                todo!("let binding");
+                //     if self.ctx.binding_var.is_some() {
+                //         return Err(format!("{ERR_MSG} Uhhh, trying to bind a binding?"));
+                //     }
+                //     if self.stack.len() != 0 {
+                //         self.ctx.stk_ptr += 1;
+                //     }
+                //     let var = Variable {
+                //         stk_index: self.ctx.stk_ptr,
+                //         ident: None,
+                //         mutable,
+                //     };
+                //     self.ctx.binding_var = Some(var);
+                //     self.gen_stmt(*assign)
+                // }
             }
-            NodeStmt::Assign(mut expr) => {
-                if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} assign: {expr:#?}");
-                }
-                // check a variable is in the map,
-                // .. in: if mutable, all good, else ERR!
-                // .. not: is it an invalid variable, or being assigned in a 'let binding'?
-                let ident = match &expr {
-                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-                            tok.value.as_ref().unwrap().clone()
-                        }
-                        _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-                    },
-                    _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+            NodeStmt::Assign {
+                expr,
+                dir_assign_ident,
+            } => {
+                let ident = match dir_assign_ident {
+                    Some(ident) => ident,
+                    None => {}
                 };
-
-                // if '=', remove op & lhs, gen_expr(rhs)
-                // elif '', check if var exists, replace Op= with Op, e.g '+=' --> '='
-                let mut arith_assign = false;
-                if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
-                    if op == TokenKind::Assign {
-                        expr = *rhs;
-                    } else {
-                        arith_assign = true;
-                        expr = NodeExpr::BinaryExpr {
-                            op: op.assign_to_arithmetic()?,
-                            lhs,
-                            rhs,
-                        };
-                    }
-                }
-
-                // Re-assigning
-                if let Some(var) = self.var_map.get(ident.as_str()) {
-                    if !var.mutable {
-                        return Err(format!("{ERR_MSG} Re-assignment of constant: '{var:#?}'"));
-                    }
-                    let reg = self.gen_stk_pos(var.stk_index);
-                    return self.gen_expr(expr, Some(reg.as_str()));
-                }
-
-                // Binding new var, cannot arith-assign (e.g +=) to new var!
-                match self.ctx.binding_var.take() {
-                    Some(_) if arith_assign => Err(format!(
-                        "{ERR_MSG} Cannot arith-assign an unitialised variable:\n'{ident:?}'"
-                    )),
-                    Some(mut var) => {
+                match self.var_map.get(ident.as_str()) {
+                    Some(var) => {
                         let reg = self.gen_stk_pos(var.stk_index);
-                        var.ident = Some(ident.clone());
-                        self.stack.push(var.clone());
-                        self.var_map.insert(ident, var);
                         self.gen_expr(expr, Some(reg.as_str()))
                     }
-                    None => Err(format!("{ERR_MSG} No var to bind '{ident:?}' to")),
+                    None => unreachable!(""),
                 }
             }
-            NodeStmt::If(expr, scope, branches) => {
+            // NodeStmt::Assign(mut expr) => {
+            //     if LOG_DEBUG_INFO {
+            //         println!("{DBG_MSG} assign: {expr:#?}");
+            //     }
+            //     // check a variable is in the map,
+            //     // .. in: if mutable, all good, else ERR!
+            //     // .. not: is it an invalid variable, or being assigned in a 'let binding'?
+            //     let ident = match &expr {
+            //         NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+            //             NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+            //                 tok.value.as_ref().unwrap().clone()
+            //             }
+            //             _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+            //         },
+            //         _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
+            //     };
+
+            //     // if '=', remove op & lhs, gen_expr(rhs)
+            //     // elif '', check if var exists, replace Op= with Op, e.g '+=' --> '='
+            //     let mut arith_assign = false;
+            //     if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
+            //         if op == TokenKind::Assign {
+            //             expr = *rhs;
+            //         } else {
+            //             arith_assign = true;
+            //             expr = NodeExpr::BinaryExpr {
+            //                 op: op.assign_to_arithmetic()?,
+            //                 lhs,
+            //                 rhs,
+            //             };
+            //         }
+            //     }
+
+            //     // Re-assigning
+            //     if let Some(var) = self.var_map.get(ident.as_str()) {
+            //         if !var.mutable {
+            //             return Err(format!("{ERR_MSG} Re-assignment of constant: '{var:#?}'"));
+            //         }
+            //         let reg = self.gen_stk_pos(var.stk_index);
+            //         return self.gen_expr(expr, Some(reg.as_str()));
+            //     }
+
+            //     // Binding new var, cannot arith-assign (e.g +=) to new var!
+            //     match self.ctx.binding_var.take() {
+            //         Some(_) if arith_assign => Err(format!(
+            //             "{ERR_MSG} Cannot arith-assign an unitialised variable:\n'{ident:?}'"
+            //         )),
+            //         Some(mut var) => {
+            //             let reg = self.gen_stk_pos(var.stk_index);
+            //             var.ident = Some(ident.clone());
+            //             self.stack.push(var.clone());
+            //             self.var_map.insert(ident, var);
+            //             self.gen_expr(expr, Some(reg.as_str()))
+            //         }
+            //         None => Err(format!("{ERR_MSG} No var to bind '{ident:?}' to")),
+            //     }
+            // }
+            NodeStmt::If {
+                condition,
+                scope,
+                branches,
+            } => {
                 // TODO(TOM): operand changes jump instruction, e.g je (jump if equal)
                 // .. .. do the inverse of the condition:
                 // .. .. .. if expr is false (0): jump to else[if] // end of if statement scope.
@@ -157,7 +178,7 @@ impl Generator {
                 }
                 let false_label = self.gen_label("IF_FALSE");
 
-                let expr_asm = self.gen_expr(expr, None)?;
+                let condition_asm = self.gen_expr(condition, None)?;
                 let scope_asm = self.gen_scope(scope)?;
 
                 let mut branches_asm = String::new();
@@ -167,7 +188,7 @@ impl Generator {
 
                 Ok(format!(
                     "; If\n\
-                     {expr_asm}\
+                     {condition_asm}\
                      {SPACE}cmp rax, 0 \n\
                      {SPACE}je {false_label}\n\
                      {scope_asm}\
@@ -177,14 +198,14 @@ impl Generator {
                      {endif_goto}"
                 ))
             }
-            NodeStmt::ElseIf(expr, scope) => {
+            NodeStmt::ElseIf { condition, scope } => {
                 let false_label = self.gen_label("ELIF_FALSE");
                 let scope_asm = self.gen_scope(scope)?;
-                let expr_asm = self.gen_expr(expr, None)?;
+                let condition_asm = self.gen_expr(condition, None)?;
                 let endif_label = self.ctx.endif_label.as_str();
 
                 Ok(format!(
-                    "{expr_asm}\n\
+                    "{condition_asm}\n\
                      {SPACE}cmp rax, 0\n\
                      {SPACE}je {false_label}\n\
                      {scope_asm}\
@@ -199,14 +220,14 @@ impl Generator {
                      {scope_asm}"
                 ))
             }
-            NodeStmt::While(expr, scope) => {
+            NodeStmt::While { condition, scope } => {
                 let cmp_label = self.gen_label("WHILE_CMP");
                 let scope_label = self.gen_label("WHILE_SCOPE");
                 let loop_end_label = self.gen_label("WHILE_END");
                 self.ctx.loop_end_label = loop_end_label.clone();
 
                 let scope_asm = self.gen_scope(scope)?;
-                let cmp_asm = self.gen_expr(expr, None)?;
+                let condition_asm = self.gen_expr(condition, None)?;
 
                 Ok(format!(
                     "; While\n\
@@ -214,7 +235,7 @@ impl Generator {
                      {scope_label}:\n\
                      {scope_asm}\
                      {cmp_label}:\n\
-                     {cmp_asm}\
+                     {condition_asm}\
                      {SPACE}cmp rax, 0\n\
                      {SPACE}jne {scope_label}\n\
                      {loop_end_label}:\n"
@@ -271,8 +292,8 @@ impl Generator {
                 let op_asm = match op {
                     _ if op.is_bitwise() => self.gen_bitwise(op)?,
                     _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
-                    _ if op.is_comparison() => self.gen_comparison(op)?,
                     _ if op.is_logical() => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
+                    _ if op.is_comparison() => self.gen_comparison(op)?,
                     _ if op.is_assignment() => {
                         return Err(format!(
                             "{ERR_MSG} Unable to assign to a constant:\n{lhs_asm}{op:?}\n{rhs_asm}"
@@ -298,9 +319,9 @@ impl Generator {
 
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
-                    TokenKind::Subtract => todo!("unary sub. do '0-EXPR' ??"),
-                    TokenKind::BitwiseNot => format!("{SPACE}not {reg}\n",),
-                    TokenKind::LogicalNot => format!(
+                    TokenKind::Sub => todo!("unary sub. do '0-EXPR' ??"),
+                    // TokenKind:: => format!("{SPACE}not {reg}\n",),
+                    TokenKind::CmpNot => format!(
                         "{SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
@@ -368,7 +389,7 @@ impl Generator {
             self.release_reg();
         }
         match op {
-            TokenKind::LogicalAnd => {
+            TokenKind::CmpAnd => {
                 let false_label = self.gen_label("AND_FALSE");
                 let true_label = self.gen_label("AND_TRUE");
 
@@ -389,13 +410,13 @@ impl Generator {
                     {mov_ans}"
                 ))
             }
-            TokenKind::LogicalOr => {
+            TokenKind::CmpOr => {
                 let false_label = self.gen_label("OR_FALSE");
                 let true_label = self.gen_label("OR_TRUE");
                 let final_label = self.gen_label("OR_FINAL");
 
                 Ok(format!(
-                    "; LogicalOr\n\
+                    "; CmpOr\n\
                     {lhs_asm}\
                     {SPACE}cmp {reg1}, 0\n\
                     {SPACE}jne {true_label}\n\
@@ -420,11 +441,11 @@ impl Generator {
         let reg1 = self.get_reg(self.ctx.reg_count - 1); // because its a stack
         let reg2 = self.get_reg(self.ctx.reg_count);
         let operation_asm = match op {
-            TokenKind::Divide => format!("cqo\n{SPACE}idiv {reg2}"),
-            TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
-            TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
             TokenKind::Add => format!("add {reg1}, {reg2}"),
-            TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo' changes with reg size
+            TokenKind::Sub => format!("sub {reg1}, {reg2}"),
+            TokenKind::Mul => format!("imul {reg1}, {reg2}"),
+            TokenKind::Quo => format!("cqo\n{SPACE}idiv {reg2}"),
+            TokenKind::Mod => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo' changes with reg size
             _ => {
                 return Err(format!(
                     "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
@@ -438,11 +459,11 @@ impl Generator {
         let reg1 = self.get_reg(self.ctx.reg_count - 1);
         let reg2 = self.get_reg(self.ctx.reg_count);
         let asm = match op {
-            TokenKind::BitwiseOr => "or",
-            TokenKind::BitwiseXor => "xor",
-            TokenKind::BitwiseAnd => "and",
-            TokenKind::LeftShift => "sal",
-            TokenKind::RightShift => "sar",
+            TokenKind::BitOr => "or",
+            TokenKind::BitXor => "xor",
+            TokenKind::BitAnd => "and",
+            TokenKind::Shl => "sal",
+            TokenKind::Shr => "sar",
             // TODO: (Types) Unsigned shift: shl, shr
             _ => return Err(format!("{ERR_MSG} Unable to generate Bitwise operation")),
         };
@@ -466,12 +487,12 @@ impl Generator {
 
     fn gen_cmp_modifier(&mut self, op: TokenKind) -> Result<&str, String> {
         match op {
-            TokenKind::Equal => Ok("e"),
-            TokenKind::NotEqual => Ok("ne"),
-            TokenKind::GreaterThan => Ok("g"),
-            TokenKind::GreaterEqual => Ok("ge"),
-            TokenKind::LessThan => Ok("l"),
-            TokenKind::LessEqual => Ok("le"),
+            TokenKind::Eq => Ok("e"),
+            TokenKind::NotEq => Ok("ne"),
+            TokenKind::Gt => Ok("g"),
+            TokenKind::GtEq => Ok("ge"),
+            TokenKind::Lt => Ok("l"),
+            TokenKind::LtEq => Ok("le"),
             _ => Err(format!("{ERR_MSG} Unable to generate comparison modifier")),
         }
     }

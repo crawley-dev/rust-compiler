@@ -17,7 +17,9 @@ pub struct NodeScope {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
     Let {
-        assign: Box<NodeStmt>,
+        // assign: Box<NodeStmt>,
+        expr: NodeExpr,
+        ident: String,
         mutable: bool,
         var_type: ParseType,
     },
@@ -146,7 +148,11 @@ impl Parser {
             }
             TokenKind::Ident => {
                 if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
-                    NodeStmt::Assign(self.parse_expr(0)?)
+                    // let ident = tok.value.as_ref().unwrap().clone();
+                    NodeStmt::Assign {
+                        expr: self.parse_expr(0)?,
+                        dir_assign_ident: None,
+                    }
                 } else {
                     todo!("Naked Expression, Currently not valid.") // TODO(TOM): an expr is a scope's return statement, only valid if last stmt/expr.
                 }
@@ -167,7 +173,7 @@ impl Parser {
 
         // statments that do/don't require a ';' to end.
         match stmt {
-            NodeStmt::Exit(_) | NodeStmt::Assign(_) | NodeStmt::Break => {
+            NodeStmt::Exit(_) | NodeStmt::Assign { .. } | NodeStmt::Break => {
                 match self.try_consume(TokenKind::SemiColon) {
                     Ok(_) => Ok(stmt),
                     Err(e) => Err(format!("{e}.\n {stmt:#?}")),

@@ -12,8 +12,8 @@ use parse::*;
 
 mod semantic;
 
-// mod code_gen;
-// use code_gen::Generator;
+mod code_gen;
+use code_gen::Generator;
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
@@ -26,9 +26,8 @@ fn main() {
     let tokens = Lexer::new(input).tokenize();
     // print_tokens(&tokens);
     let mut ast = parse(tokens);
+    ast = semantic_check(ast);
     println!("\n\n{:#?}\n\n", ast);
-    let ast = semantic_check(ast);
-    // TODO(TOM): MAJOR SKILL ISSUE
     // code_gen(ast, file_name);
 }
 
@@ -44,14 +43,13 @@ fn parse(tokens: Vec<Token>) -> AST {
     }
 }
 
-fn semantic_check(ast: AST) -> AST {
+fn semantic_check(mut ast: AST) -> AST {
     match semantic::Checker::check_ast(ast) {
         Ok(ast) => ast,
         Err(e) => panic!("\n{e}\n"),
     }
 }
 
-/*
 fn code_gen(ast: AST, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(ast);
@@ -73,7 +71,6 @@ fn code_gen(ast: AST, file_name: String) {
         Err(e) => panic!("\n{e}\n"),
     };
 }
- */
 
 /*----------------------------------------------------------------------------------------
 ---- Misc --------------------------------------------------------------------------------

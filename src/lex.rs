@@ -2,7 +2,7 @@ use bitflags::bitflags;
 use std::{collections::HashMap, fmt};
 const LOG_DEBUG_INFO: bool = false;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     // Generic Symbols
     Comma,             // ","
@@ -17,7 +17,6 @@ pub enum TokenKind {
     CloseMultiComment, // "*/"
 
     // Operators
-    Not,    // "!"
     Ptr,    // "^"
     Eq,     // "="
     Add,    // "+"
@@ -49,6 +48,7 @@ pub enum TokenKind {
     CmpAnd, // "&&"
     CmpOr,  // "||"
     CmpEq,  // "=="
+    CmpNot, // "!"
     NotEq,  // "!="
     Lt,     // "<"
     Gt,     // ">"
@@ -79,7 +79,82 @@ pub enum Associativity {
 
 // TODO(TOM): Give TokenKind attributes, akin to impl, instead of some match statements
 // .. declare all attributes in bitflag, in one place, i.e ATTR::ASSIGN | ATTR::ARITH
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct TokenFlags: u8 {
+        const ASSIGN = 1 << 0;
+        const ARITH = 1 << 1;
+        const CMP = 1 << 2;
+        const LOG = 1 << 3;
+        const BIT = 1 << 4;
+        const UNARY = 1 << 5;
+    }
+}
 impl TokenKind {
+    pub fn get_flags(&self) -> TokenFlags {
+        match self {
+            // TokenKind::Ptr => TokenFlags::,    // "^"
+            TokenKind::Eq => TokenFlags::ASSIGN,  // "="
+            TokenKind::CmpNot => TokenFlags::LOG, // "!"
+            TokenKind::Add => TokenFlags::ARITH,  // "+"
+            TokenKind::Sub => TokenFlags::ARITH,  // "-"
+            TokenKind::Mul => TokenFlags::ARITH,  // "*"
+            TokenKind::Quo => TokenFlags::ARITH,  // "/"
+            TokenKind::Mod => TokenFlags::ARITH,  // "%"
+            TokenKind::BitAnd => TokenFlags::BIT, // "&"
+            TokenKind::BitOr => TokenFlags::BIT,  // "|"
+            TokenKind::BitXor => TokenFlags::BIT, // "~"
+            TokenKind::AndNot => TokenFlags::BIT, // "&~"
+            TokenKind::Shl => TokenFlags::BIT,    // "<<"
+            TokenKind::Shr => TokenFlags::BIT,    // ">>"
+
+            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
+            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
+            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
+            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
+            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
+            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+
+            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,
+            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,
+            TokenKind::CmpEq => TokenFlags::CMP,
+            TokenKind::NotEq => TokenFlags::CMP,
+            TokenKind::Lt => TokenFlags::CMP,
+            TokenKind::Gt => TokenFlags::CMP,
+            TokenKind::LtEq => TokenFlags::CMP,
+            TokenKind::GtEq => TokenFlags::CMP,
+
+            _ => TokenFlags::empty(),
+        }
+    }
+
+    // Precedence hierarchy: higher = done first
+    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
+    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
+    pub fn get_prec(&self) -> i32 {
+        match self {
+            TokenKind::Comma => 0,
+            _ if self.is_assignment() => 1,
+            TokenKind::CmpOr => 2,
+            TokenKind::CmpAnd => 3,
+            TokenKind::BitOr => 5,
+            TokenKind::BitXor => 6,
+            TokenKind::BitAnd => 7,
+            TokenKind::CmpEq | TokenKind::NotEq => 8,
+            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
+            TokenKind::Shl | TokenKind::Shr => 10,
+            TokenKind::Sub | TokenKind::Add => 11,
+            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
+            TokenKind::CmpNot => 13,
+            _ => -1,
+        }
+    }
+
     pub fn is_assignment(&self) -> bool {
         match self {
             TokenKind::Eq
@@ -132,9 +207,14 @@ impl TokenKind {
             | TokenKind::GtEq
             | TokenKind::Lt
             | TokenKind::LtEq
-            | TokenKind::CmpOr
-            | TokenKind::CmpAnd
-            | TokenKind::Not => true,
+            | TokenKind::CmpNot => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_logical(&self) -> bool {
+        match self {
+            TokenKind::CmpAnd | TokenKind::CmpOr | TokenKind::CmpNot => true,
             _ => false,
         }
     }
@@ -144,7 +224,7 @@ impl TokenKind {
             TokenKind::BitOr
             | TokenKind::BitXor
             | TokenKind::BitAnd
-            | TokenKind::Not
+            | TokenKind::CmpNot
             | TokenKind::Shl
             | TokenKind::Shr => true,
             _ => false,
@@ -153,7 +233,7 @@ impl TokenKind {
 
     pub fn is_unary(&self) -> bool {
         match self {
-            TokenKind::Not | TokenKind::Sub => true, // TODO(TOM): Unary minus!
+            TokenKind::CmpNot | TokenKind::Sub => true, // TODO(TOM): Unary minus!
             _ => false,
         }
     }
@@ -167,28 +247,6 @@ impl TokenKind {
             _ if self.is_binary() => Associativity::Left,
             _ if !self.is_assignment() => Associativity::None,
             _ => Associativity::Right,
-        }
-    }
-
-    // Precedence hierarchy: higher = done first
-    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
-    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
-    pub fn get_prec(&self) -> i32 {
-        match self {
-            TokenKind::Comma => 0,
-            _ if self.is_assignment() => 1,
-            TokenKind::CmpOr => 2,
-            TokenKind::CmpAnd => 3,
-            TokenKind::BitOr => 5,
-            TokenKind::BitXor => 6,
-            TokenKind::BitAnd => 7,
-            TokenKind::CmpEq | TokenKind::NotEq => 8,
-            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
-            TokenKind::Shl | TokenKind::Shr => 10,
-            TokenKind::Sub | TokenKind::Add => 11,
-            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
-            TokenKind::Not => 13,
-            _ => -1,
         }
     }
 }
@@ -231,7 +289,7 @@ impl Lexer {
             ("/*", TokenKind::OpenMultiComment),
             ("*/", TokenKind::CloseMultiComment),
             // Operators
-            ("!", TokenKind::Not),
+            ("!", TokenKind::CmpNot),
             ("^", TokenKind::Ptr),
             ("=", TokenKind::Eq),
             ("+", TokenKind::Add),
