@@ -4,21 +4,21 @@ _start:
     push rbp
     mov rbp, rsp
     ; Program Start
-    mov QWORD [rsp+0], 2
-    mov QWORD [rsp+8], 0
+    mov push, 2
+    mov push, 0
 ; While
     jmp .1_WHILE_CMP
 .2_WHILE_SCOPE:
-    mov rax, QWORD [rsp+0] ; Ident('ans')
+    mov rax, QWORD [rbp-0] ; Ident('ans')
     mov rcx, 2
     imul rax, rcx
-    mov QWORD [rsp+0], rax
-    mov rax, QWORD [rsp+8] ; Ident('i')
+    mov QWORD [rbp-0], rax
+    mov rax, QWORD [rbp-8] ; Ident('i')
     mov rcx, 1
     add rax, rcx
-    mov QWORD [rsp+8], rax
+    mov QWORD [rbp-8], rax
 ; If
-    mov rax, QWORD [rsp+8] ; Ident('i')
+    mov rax, QWORD [rbp-8] ; Ident('i')
     mov rcx, 5
     cmp rax, rcx
     setg al
