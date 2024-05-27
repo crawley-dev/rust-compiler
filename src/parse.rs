@@ -103,14 +103,15 @@ impl Parser {
             TokenKind::Let => {
                 self.try_consume(TokenKind::Let)?;
                 let mutable = self.try_consume(TokenKind::Mut).is_ok();
-                let ident_token = self.try_consume(TokenKind::Ident)?;
+                let ident = self.try_consume(TokenKind::Ident)?.value.unwrap();
                 self.try_consume(TokenKind::Colon)?;
                 let type_ident = self.try_consume(TokenKind::Ident)?;
                 let ptr = self.try_consume(TokenKind::Ptr).is_ok();
-                self.tokens.insert(self.position, ident_token); // put ident back for Stmt::Assign
+                self.try_consume(TokenKind::Eq)?;
 
                 NodeStmt::Let {
-                    assign: Box::new(self.parse_stmt()?),
+                    expr: self.parse_expr(0)?,
+                    ident,
                     mutable,
                     var_type: ParseType { type_ident, ptr },
                 }
@@ -147,12 +148,12 @@ impl Parser {
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
-                if self.token_matches(|kind| kind.is_assignment(), 1)? == true {
-                    // let ident = tok.value.as_ref().unwrap().clone();
-                    NodeStmt::Assign {
-                        expr: self.parse_expr(0)?,
-                        dir_assign_ident: None,
-                    }
+                if self.token_matches(|kind| kind.is_assignment() && kind != &TokenKind::Eq, 1)?
+                    == true
+                {
+                    let comp_assign = self.tokens.get_mut(self.position + 1).unwrap();
+                    comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
+                    NodeStmt::Assign(self.parse_expr(0)?)
                 } else {
                     todo!("Naked Expression, Currently not valid.") // TODO(TOM): an expr is a scope's return statement, only valid if last stmt/expr.
                 }
@@ -173,12 +174,13 @@ impl Parser {
 
         // statments that do/don't require a ';' to end.
         match stmt {
-            NodeStmt::Exit(_) | NodeStmt::Assign { .. } | NodeStmt::Break => {
-                match self.try_consume(TokenKind::SemiColon) {
-                    Ok(_) => Ok(stmt),
-                    Err(e) => Err(format!("{e}.\n {stmt:#?}")),
-                }
-            }
+            NodeStmt::Exit(_)
+            | NodeStmt::Assign { .. }
+            | NodeStmt::Let { .. }
+            | NodeStmt::Break => match self.try_consume(TokenKind::SemiColon) {
+                Ok(_) => Ok(stmt),
+                Err(e) => Err(format!("{e}.\n {stmt:#?}")),
+            },
             _ => Ok(stmt),
         }
     }

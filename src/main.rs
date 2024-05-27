@@ -28,7 +28,7 @@ fn main() {
     let mut ast = parse(tokens);
     ast = semantic_check(ast);
     println!("\n\n{:#?}\n\n", ast);
-    // code_gen(ast, file_name);
+    code_gen(ast, file_name);
 }
 
 /*----------------------------------------------------------------------------------------

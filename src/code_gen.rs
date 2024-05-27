@@ -18,7 +18,6 @@ struct Variable {
 struct Context {
     stk_ptr: usize,
     reg_count: usize,
-    binding_var: Option<Variable>,
     endif_label: String,
     loop_end_label: String,
 }
@@ -41,7 +40,6 @@ impl Generator {
             ctx: Context {
                 stk_ptr: 0,
                 reg_count: 0,
-                binding_var: None,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
@@ -70,8 +68,24 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::Let { assign, .. } => {
-                todo!("let binding");
+            NodeStmt::Let { expr, ident, .. } => {
+                if let Some(var) = self.var_map.get(ident.as_str()) {
+                    return Err(format!(
+                        "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
+                    ));
+                }
+                if self.stack.len() != 0 {
+                    self.ctx.stk_ptr += 1;
+                }
+                let var = Variable {
+                    ident: Some(ident.clone()),
+                    stk_index: self.ctx.stk_ptr,
+                };
+                let reg = self.gen_stk_pos(var.stk_index);
+                self.stack.push(var.clone());
+                self.var_map.insert(ident.clone(), var);
+                self.gen_expr(expr, Some(reg.as_str()))
+                //
                 //     if self.ctx.binding_var.is_some() {
                 //         return Err(format!("{ERR_MSG} Uhhh, trying to bind a binding?"));
                 //     }
@@ -87,15 +101,17 @@ impl Generator {
                 //     self.gen_stmt(*assign)
                 // }
             }
-            NodeStmt::Assign {
-                expr,
-                dir_assign_ident,
-            } => {
-                let ident = match dir_assign_ident {
-                    Some(ident) => ident,
-                    None => {}
+            NodeStmt::Assign(expr) => {
+                let ident = match &expr {
+                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                            tok.value.as_ref().unwrap().as_str()
+                        }
+                        _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
+                    },
+                    _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
                 };
-                match self.var_map.get(ident.as_str()) {
+                match self.var_map.get(ident) {
                     Some(var) => {
                         let reg = self.gen_stk_pos(var.stk_index);
                         self.gen_expr(expr, Some(reg.as_str()))
@@ -299,7 +315,11 @@ impl Generator {
                             "{ERR_MSG} Unable to assign to a constant:\n{lhs_asm}{op:?}\n{rhs_asm}"
                         ))
                     }
-                    _ => return Err(format!("{ERR_MSG} Unable to generate binary expression")),
+                    _ => {
+                        return Err(format!(
+                            "{ERR_MSG} Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
+                        ))
+                    }
                 };
                 self.release_reg(); // first reg stores arithmetic answer, don't release it.
 
@@ -487,7 +507,7 @@ impl Generator {
 
     fn gen_cmp_modifier(&mut self, op: TokenKind) -> Result<&str, String> {
         match op {
-            TokenKind::Eq => Ok("e"),
+            TokenKind::CmpEq => Ok("e"),
             TokenKind::NotEq => Ok("ne"),
             TokenKind::Gt => Ok("g"),
             TokenKind::GtEq => Ok("ge"),

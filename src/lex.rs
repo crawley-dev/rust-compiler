@@ -201,7 +201,7 @@ impl TokenKind {
 
     pub fn is_comparison(&self) -> bool {
         match self {
-            TokenKind::Eq
+            TokenKind::CmpEq
             | TokenKind::NotEq
             | TokenKind::Gt
             | TokenKind::GtEq

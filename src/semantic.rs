@@ -11,9 +11,10 @@
 //      - no implict type conversions, all explicit e.g: (type_1 as type_2)
 //      - intlit is not a concrete type, can be coerced into any integer, after bounds checked.
 
-#![allow(unused)]
-
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Binary,
+};
 
 use crate::{
     lex::TokenKind,
@@ -44,7 +45,6 @@ struct Variable {
 
 struct SemanticContext {
     loop_count: i32,
-    binding_var: Option<Variable>,
 }
 
 pub struct Checker<'a> {
@@ -57,10 +57,7 @@ pub struct Checker<'a> {
 impl Checker<'_> {
     pub fn check_ast(mut ast: AST) -> Result<AST, String> {
         let mut checker = Checker {
-            ctx: SemanticContext {
-                loop_count: 0,
-                binding_var: None,
-            },
+            ctx: SemanticContext { loop_count: 0 },
             stack: Vec::new(),
             var_map: HashMap::new(),
             types: HashMap::from([
@@ -89,18 +86,25 @@ impl Checker<'_> {
     fn check_stmt(&mut self, stmt: &mut NodeStmt) -> Result<TypeFlags, String> {
         match stmt {
             NodeStmt::Let {
-                assign,
+                expr,
+                ident,
                 mutable,
                 var_type,
             } => {
+                if let Some(var) = self.var_map.get(ident.as_str()) {
+                    return Err(format!(
+                        "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
+                    ));
+                }
                 self.is_valid_type(var_type.type_ident.value.as_ref().unwrap().as_str())?;
-                self.ctx.binding_var = Some(Variable {
-                    ident: None,
+                let var = Variable {
+                    ident: Some(ident.clone()),
                     mutable: *mutable,
                     type_ident: var_type.type_ident.value.as_ref().unwrap().clone(), //var_type.type_ident.value.unwrap(),
-                });
-                self.check_stmt(&mut *assign)?;
-                Ok(TypeFlags::empty()) // annoying.
+                };
+                self.stack.push(var.clone());
+                self.var_map.insert(ident.clone(), var);
+                self.check_expr(expr)
             }
             NodeStmt::If {
                 condition,
@@ -133,10 +137,25 @@ impl Checker<'_> {
                 self.ctx.loop_count -= 1;
                 scope
             }
-            NodeStmt::Assign {
-                expr,
-                dir_assign_ident,
-            } => {
+            NodeStmt::Assign(expr) => {
+                let ident = match &expr {
+                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
+                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
+                            tok.value.as_ref().unwrap().as_str()
+                        }
+                        _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
+                    },
+                    _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
+                };
+                match self.var_map.get(ident) {
+                    Some(var) if !var.mutable => {
+                        return Err(format!("{ERR_MSG} Re-Assignment of a Constant:\n{var:?}"))
+                    }
+                    None => return Err(format!("{ERR_MSG} Variable '{ident}' does not exist")),
+                    _ => (),
+                }
+                self.check_expr(expr)
+                /*
                 let ident = match &expr {
                     NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
                         NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
@@ -197,6 +216,7 @@ impl Checker<'_> {
                         None => unreachable!("{ERR_MSG} No variable to bind to '{ident:?}' to"),
                     }
                 }
+                 */
             }
             // doesn't care about type, only that is valid.
             NodeStmt::Exit(expr) => self.check_expr(expr),
@@ -212,8 +232,23 @@ impl Checker<'_> {
     }
 
     fn check_scope(&mut self, scope: &mut NodeScope) -> Result<TypeFlags, String> {
+        let var_count = self.stack.len();
         for stmt in &mut scope.stmts {
             self.check_stmt(stmt)?;
+        }
+
+        let pop_amt = self.stack.len() - var_count;
+        if LOG_DEBUG_INFO {
+            println!("{DBG_MSG} Ending scope, pop({pop_amt})");
+        }
+        for _ in 0..pop_amt {
+            let popped_var = match self.stack.pop() {
+                Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
+                None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
+            };
+            if LOG_DEBUG_INFO {
+                println!("{DBG_MSG} Scope ended, removing {popped_var:#?}");
+            }
         }
         Ok(TypeFlags::empty())
     }
