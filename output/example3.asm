@@ -37,6 +37,24 @@ _start:
     jne .2_WHILE_SCOPE
 .3_WHILE_END:
 ; Exit Program
-    mov rdi, QWORD [rsp+0] ; Ident('ans')
+    mov rsi, 10
+    mov rdi, 2
+    mov r8, 4
+    mov r9, 4
+    mov r10, 2
+    sub r9, r10
+    imul r8, r9
+    add rdi, r8
+    sub rsi, rdi
+    mov rdi, 1
+    mov r8, 1
+    add rdi, r8
+    cqo
+    idiv rdi
+    mov rdi, 4
+    mov r8, 1
+    sub rdi, r8
+    imul rsi, rdi
+    mov rdi, rsi
     mov rax, 60
     syscall

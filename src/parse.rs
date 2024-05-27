@@ -222,7 +222,9 @@ impl Parser {
             let next_prec = match op.get_associativity() {
                 Associativity::Left => prec + 1,
                 Associativity::Right => prec,
-                Associativity::None => return Err(format!("{ERR_MSG} uhh.. ")),
+                Associativity::None => {
+                    unreachable!("{ERR_MSG} Usage of a non-associative operator: {op:?}")
+                }
             };
 
             lhs = NodeExpr::BinaryExpr {

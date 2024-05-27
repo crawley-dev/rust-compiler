@@ -30,6 +30,7 @@ pub enum TokenKind {
     AndNot, // "&~"
     Shl,    // "<<"
     Shr,    // ">>"
+    // TODO(TOM): One's complement (bitwise not)
 
     // Combo Assign
     AddEq,    // "+="
@@ -245,7 +246,7 @@ impl TokenKind {
     pub fn get_associativity(&self) -> Associativity {
         match self {
             _ if self.is_binary() => Associativity::Left,
-            _ if !self.is_assignment() => Associativity::None,
+            _ if self.is_assignment() => Associativity::None,
             _ => Associativity::Right,
         }
     }
