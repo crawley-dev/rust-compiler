@@ -100,7 +100,7 @@ impl Checker<'_> {
                 let var = Variable {
                     ident: Some(ident.clone()),
                     mutable: *mutable,
-                    type_ident: var_type.type_ident.value.as_ref().unwrap().clone(), //var_type.type_ident.value.unwrap(),
+                    type_ident: var_type.type_ident.value.as_ref().unwrap().clone(),
                 };
                 self.stack.push(var.clone());
                 self.var_map.insert(ident.clone(), var);

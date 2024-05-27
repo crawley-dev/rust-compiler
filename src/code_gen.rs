@@ -16,7 +16,6 @@ struct Variable {
 }
 
 struct Context {
-    stk_ptr: usize,
     reg_count: usize,
     endif_label: String,
     loop_end_label: String,
@@ -38,7 +37,6 @@ impl Generator {
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: Context {
-                stk_ptr: 0,
                 reg_count: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
@@ -74,23 +72,13 @@ impl Generator {
                         "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
                     ));
                 }
-                if self.stack.len() != 0 {
-                    self.ctx.stk_ptr += 1;
-                }
                 let var = Variable {
                     ident: Some(ident.clone()),
-                    stk_index: self.ctx.stk_ptr,
+                    stk_index: self.stack.len() + 1,
                 };
-                // let stk_pos = self.gen_stk_pos(var.stk_index);
                 self.stack.push(var.clone());
                 self.var_map.insert(ident.clone(), var);
                 self.gen_expr(expr, Some("push"))
-                // let cur_reg = self.get_reg(self.ctx.reg_count);
-                // self.release_reg();
-                // let push = self.gen_push(cur_reg);
-                // Ok(format!("{expr}{push}"))
-
-                // Ok(self.gen_push(expr.as_str()))
             }
             NodeStmt::Assign(expr) => {
                 let ident = match &expr {
@@ -107,7 +95,7 @@ impl Generator {
                         let stk_pos = self.gen_stk_pos(var.stk_index);
                         self.gen_expr(expr, Some(stk_pos.as_str()))
                     }
-                    None => unreachable!("{ERR_MSG} Variable "),
+                    None => unreachable!("{ERR_MSG} Variable not found for ident: '{ident}'"),
                 }
             }
             NodeStmt::If {
@@ -214,7 +202,7 @@ impl Generator {
             println!("{DBG_MSG} Ending scope, pop({pop_amt})");
         }
         for _ in 0..pop_amt {
-            self.ctx.stk_ptr -= 1;
+            // self.ctx.stk_ptr -= 1;
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
                 None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
@@ -286,9 +274,8 @@ impl Generator {
         // don't need to release reg if its just operation, just doing stuff on data.
         // only release if changing stack data.
         if let Some(reg) = ans_reg {
-            println!("{reg}");
-            if reg.contains("push") {
-                asm += format!("{SPACE}push {reg} {}\n", self.get_reg(self.ctx.reg_count)).as_str();
+            if reg == "push" {
+                asm += format!("{SPACE}push {}\n", self.get_reg(self.ctx.reg_count)).as_str();
                 self.release_reg();
             } else {
                 asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
@@ -302,6 +289,9 @@ impl Generator {
         match term {
             NodeTerm::IntLit(tok) => {
                 let reg = match ans_reg {
+                    Some(reg) if reg == "push" => {
+                        return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()))
+                    }
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
@@ -490,20 +480,19 @@ impl Generator {
         self.ctx.reg_count -= 1;
     }
 
-    fn gen_push(&mut self, reg: &str) -> String {
-        self.ctx.stk_ptr += 1;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} pushing {reg} | {}", self.ctx.stk_ptr);
-        }
-        format!("{SPACE}push {reg}\n")
-    }
+    // #[allow(dead_code)]
+    // fn gen_push(&mut self, reg: &str) -> String {
+    //     if LOG_DEBUG_INFO {
+    //         println!("{DBG_MSG} pushing {reg} | {}", self.ctx.stk_ptr);
+    //     }
+    //     format!("{SPACE}push {reg}\n")
+    // }
 
-    #[allow(dead_code)]
-    fn gen_pop(&mut self, reg: &str) -> String {
-        self.ctx.stk_ptr -= 1;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} popping into {reg} | {}", self.ctx.stk_ptr);
-        }
-        format!("{SPACE}pop {reg}\n")
-    }
+    // #[allow(dead_code)]
+    // fn gen_pop(&mut self, reg: &str) -> String {
+    //     if LOG_DEBUG_INFO {
+    //         println!("{DBG_MSG} popping into {reg} | {}", self.ctx.stk_ptr);
+    //     }
+    //     format!("{SPACE}pop {reg}\n")
+    // }
 }
