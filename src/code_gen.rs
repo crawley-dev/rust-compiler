@@ -16,7 +16,6 @@ struct Variable {
 }
 
 struct Context {
-    stk_ptr: usize,
     reg_count: usize,
     endif_label: String,
     loop_end_label: String,
@@ -38,7 +37,6 @@ impl Generator {
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: Context {
-                stk_ptr: 0,
                 reg_count: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
@@ -74,32 +72,13 @@ impl Generator {
                         "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
                     ));
                 }
-                if self.stack.len() != 0 {
-                    self.ctx.stk_ptr += 1;
-                }
                 let var = Variable {
                     ident: Some(ident.clone()),
-                    stk_index: self.ctx.stk_ptr,
+                    stk_index: self.stack.len() + 1,
                 };
-                let reg = self.gen_stk_pos(var.stk_index);
                 self.stack.push(var.clone());
                 self.var_map.insert(ident.clone(), var);
-                self.gen_expr(expr, Some(reg.as_str()))
-                //
-                //     if self.ctx.binding_var.is_some() {
-                //         return Err(format!("{ERR_MSG} Uhhh, trying to bind a binding?"));
-                //     }
-                //     if self.stack.len() != 0 {
-                //         self.ctx.stk_ptr += 1;
-                //     }
-                //     let var = Variable {
-                //         stk_index: self.ctx.stk_ptr,
-                //         ident: None,
-                //         mutable,
-                //     };
-                //     self.ctx.binding_var = Some(var);
-                //     self.gen_stmt(*assign)
-                // }
+                self.gen_expr(expr, Some("push"))
             }
             NodeStmt::Assign(expr) => {
                 let ident = match &expr {
@@ -113,69 +92,12 @@ impl Generator {
                 };
                 match self.var_map.get(ident) {
                     Some(var) => {
-                        let reg = self.gen_stk_pos(var.stk_index);
-                        self.gen_expr(expr, Some(reg.as_str()))
+                        let stk_pos = self.gen_stk_pos(var.stk_index);
+                        self.gen_expr(expr, Some(stk_pos.as_str()))
                     }
-                    None => unreachable!(""),
+                    None => unreachable!("{ERR_MSG} Variable not found for ident: '{ident}'"),
                 }
             }
-            // NodeStmt::Assign(mut expr) => {
-            //     if LOG_DEBUG_INFO {
-            //         println!("{DBG_MSG} assign: {expr:#?}");
-            //     }
-            //     // check a variable is in the map,
-            //     // .. in: if mutable, all good, else ERR!
-            //     // .. not: is it an invalid variable, or being assigned in a 'let binding'?
-            //     let ident = match &expr {
-            //         NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-            //             NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-            //                 tok.value.as_ref().unwrap().clone()
-            //             }
-            //             _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-            //         },
-            //         _ => return Err(format!("{ERR_MSG} Invalid Assignment: '{expr:#?}'")),
-            //     };
-
-            //     // if '=', remove op & lhs, gen_expr(rhs)
-            //     // elif '', check if var exists, replace Op= with Op, e.g '+=' --> '='
-            //     let mut arith_assign = false;
-            //     if let NodeExpr::BinaryExpr { op, lhs, rhs } = expr {
-            //         if op == TokenKind::Assign {
-            //             expr = *rhs;
-            //         } else {
-            //             arith_assign = true;
-            //             expr = NodeExpr::BinaryExpr {
-            //                 op: op.assign_to_arithmetic()?,
-            //                 lhs,
-            //                 rhs,
-            //             };
-            //         }
-            //     }
-
-            //     // Re-assigning
-            //     if let Some(var) = self.var_map.get(ident.as_str()) {
-            //         if !var.mutable {
-            //             return Err(format!("{ERR_MSG} Re-assignment of constant: '{var:#?}'"));
-            //         }
-            //         let reg = self.gen_stk_pos(var.stk_index);
-            //         return self.gen_expr(expr, Some(reg.as_str()));
-            //     }
-
-            //     // Binding new var, cannot arith-assign (e.g +=) to new var!
-            //     match self.ctx.binding_var.take() {
-            //         Some(_) if arith_assign => Err(format!(
-            //             "{ERR_MSG} Cannot arith-assign an unitialised variable:\n'{ident:?}'"
-            //         )),
-            //         Some(mut var) => {
-            //             let reg = self.gen_stk_pos(var.stk_index);
-            //             var.ident = Some(ident.clone());
-            //             self.stack.push(var.clone());
-            //             self.var_map.insert(ident, var);
-            //             self.gen_expr(expr, Some(reg.as_str()))
-            //         }
-            //         None => Err(format!("{ERR_MSG} No var to bind '{ident:?}' to")),
-            //     }
-            // }
             NodeStmt::If {
                 condition,
                 scope,
@@ -280,7 +202,7 @@ impl Generator {
             println!("{DBG_MSG} Ending scope, pop({pop_amt})");
         }
         for _ in 0..pop_amt {
-            self.ctx.stk_ptr -= 1;
+            // self.ctx.stk_ptr -= 1;
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
                 None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
@@ -299,9 +221,10 @@ impl Generator {
                 "-".repeat(20)
             );
         }
+        let mut asm = String::new();
         match expr {
+            NodeExpr::Term(term) => return self.gen_term(term, ans_reg),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let mut asm = String::new();
                 let lhs_asm = self.gen_expr(*lhs, None)?;
                 let rhs_asm = self.gen_expr(*rhs, None)?;
 
@@ -326,21 +249,14 @@ impl Generator {
                 asm += lhs_asm.as_str();
                 asm += rhs_asm.as_str();
                 asm += op_asm.as_str();
-                if let Some(reg) = ans_reg {
-                    asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count))
-                        .as_str();
-                    self.release_reg();
-                }
-                Ok(asm)
             }
             NodeExpr::UnaryExpr { op, operand } => {
-                let mut asm = String::new();
                 asm += self.gen_expr(*operand, None)?.as_str();
 
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
+                    // TokenKind::Ones_Complement_Goes_HERE! => format!("{SPACE}not {reg}\n",),
                     TokenKind::Sub => todo!("unary sub. do '0-EXPR' ??"),
-                    // TokenKind:: => format!("{SPACE}not {reg}\n",),
                     TokenKind::CmpNot => format!(
                         "{SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
@@ -353,24 +269,30 @@ impl Generator {
                     }
                 };
                 asm += op_asm.as_str();
-                // don't need to release reg if its just operation, just doing stuff on data.
-                // only release if changing stack data.
-                if let Some(reg) = ans_reg {
-                    asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count))
-                        .as_str();
-                    self.release_reg();
-                }
-                Ok(asm)
             }
-            NodeExpr::Term(term) => self.gen_term(term, ans_reg),
         }
+        // don't need to release reg if its just operation, just doing stuff on data.
+        // only release if changing stack data.
+        if let Some(reg) = ans_reg {
+            if reg == "push" {
+                asm += format!("{SPACE}push {}\n", self.get_reg(self.ctx.reg_count)).as_str();
+                self.release_reg();
+            } else {
+                asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
+                self.release_reg();
+            }
+        }
+        Ok(asm)
     }
 
     fn gen_term(&mut self, term: NodeTerm, ans_reg: Option<&str>) -> Result<String, String> {
         match term {
             NodeTerm::IntLit(tok) => {
                 let reg = match ans_reg {
-                    Some(reg) => reg.to_string(),
+                    Some(reg) if reg == "push" => {
+                        return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()))
+                    }
+                    Some(reg) => reg,
                     None => self.next_reg(),
                 };
                 Ok(format!("{SPACE}mov {reg}, {}\n", tok.value.unwrap()))
@@ -381,7 +303,7 @@ impl Generator {
                     Some(var) => {
                         let stk_pos = self.gen_stk_pos(var.stk_index);
                         let reg = match ans_reg {
-                            Some(reg) => reg.to_string(),
+                            Some(reg) => reg,
                             None => self.next_reg(),
                         };
                         Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
@@ -392,8 +314,8 @@ impl Generator {
         }
     }
 
-    // TODO: Remove excess 'cmp', 'Constant Folding'
-    // "movzx {reg1},al" << zero inits reg && validates val is 1 or 0.
+    // TODO: Remove excess 'cmp', do 'Constant Folding'
+    // "movzx {reg1},al" << zeros reg && moves in al (0,1).
     fn gen_logical(
         &mut self,
         op: TokenKind,
@@ -458,14 +380,14 @@ impl Generator {
     }
 
     fn gen_arithmetic(&mut self, op: TokenKind) -> Result<String, String> {
-        let reg1 = self.get_reg(self.ctx.reg_count - 1); // because its a stack
+        let reg1 = self.get_reg(self.ctx.reg_count - 1); // first value is further down because its a stack
         let reg2 = self.get_reg(self.ctx.reg_count);
         let operation_asm = match op {
             TokenKind::Add => format!("add {reg1}, {reg2}"),
             TokenKind::Sub => format!("sub {reg1}, {reg2}"),
             TokenKind::Mul => format!("imul {reg1}, {reg2}"),
             TokenKind::Quo => format!("cqo\n{SPACE}idiv {reg2}"),
-            TokenKind::Mod => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo' changes with reg size
+            TokenKind::Mod => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo', instruction changes with reg size
             _ => {
                 return Err(format!(
                     "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
@@ -519,15 +441,15 @@ impl Generator {
 
     fn gen_label(&mut self, name: &'static str) -> String {
         self.label_count += 1;
-        format!(".{:X}_{name}", self.label_count) // '.' denotes a local scoped label
+        format!(".{:X}_{name}", self.label_count) // '.' denotes a local scoped label in asm
     }
 
     // TODO: in future, this will change depending on the size of var, e.g u8 or u32
     fn gen_stk_pos(&self, stk_index: usize) -> String {
-        format!("QWORD [rsp+{}]", stk_index * WORD_SIZE)
+        format!("QWORD [rbp-{}]", stk_index * WORD_SIZE)
     }
 
-    fn next_reg(&mut self) -> String {
+    fn next_reg(&mut self) -> &'static str {
         // preserved_registers = ["rdx", ...],
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         match scratch_registers.get(self.ctx.reg_count) {
@@ -536,20 +458,20 @@ impl Generator {
                 // if LOG_DEBUG_INFO {
                 //     println!("{DBG_MSG} next reg: {} | {}", reg, self.ctx.reg_count);
                 // }
-                reg.to_string()
+                reg
             }
             None => todo!("no available reg!"),
         }
     }
 
-    fn get_reg(&mut self, index: usize) -> String {
+    fn get_reg(&mut self, index: usize) -> &'static str {
         // preserved_registers = ["rdx", ...],
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         // if LOG_DEBUG_INFO {
         //     println!("{DBG_MSG} getting reg[{} - 1]", index);
         // }
         match scratch_registers.get(index - 1) {
-            Some(reg) => reg.to_string(), // TODO: need lifetimes, change to &'str
+            Some(reg) => reg,
             None => todo!("oob reg check"),
         }
     }
@@ -558,239 +480,19 @@ impl Generator {
         self.ctx.reg_count -= 1;
     }
 
-    #[allow(dead_code)]
-    fn push(&mut self, reg: &str) -> String {
-        self.ctx.stk_ptr += 1;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} pushing {reg} | {}", self.ctx.stk_ptr);
-        }
-        return format!("{SPACE}push {reg}");
-    }
+    // #[allow(dead_code)]
+    // fn gen_push(&mut self, reg: &str) -> String {
+    //     if LOG_DEBUG_INFO {
+    //         println!("{DBG_MSG} pushing {reg} | {}", self.ctx.stk_ptr);
+    //     }
+    //     format!("{SPACE}push {reg}\n")
+    // }
 
-    #[allow(dead_code)]
-    fn pop(&mut self, reg: &str) -> String {
-        self.ctx.stk_ptr -= 1;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} popping into {reg} | {}", self.ctx.stk_ptr);
-        }
-        return format!("{SPACE}pop {reg}");
-    }
+    // #[allow(dead_code)]
+    // fn gen_pop(&mut self, reg: &str) -> String {
+    //     if LOG_DEBUG_INFO {
+    //         println!("{DBG_MSG} popping into {reg} | {}", self.ctx.stk_ptr);
+    //     }
+    //     format!("{SPACE}pop {reg}\n")
+    // }
 }
-
-/*
-// TODO: logical or/and bug, causes duplicate asm.
-fn gen_expr(&mut self, expr: NodeExpr, reg: &str) -> Result<String, String> {
-    // TODO: remove if using int_lit, put directly in operation.
-    // let push_ans = if reg != "rax" {
-    //     format!("{SPACE}mov {reg}, rax\n")
-    // } else {
-    //     format!("{}\n", self.push("rax"))
-    // };
-    match expr {
-        NodeExpr::Term(term) => self.gen_term(*term, reg),
-        NodeExpr::BinaryExpr { op, lhs, rhs } => {
-            let comment = op.clone();
-            let reg1 = "rax";
-            let reg2 = "rcx";
-            // let ans_reg = self.next_reg();
-
-            let lhs_asm = self.gen_expr(*lhs, reg1.as_str())?;
-            let rhs_asm = self.gen_expr(*rhs, reg2.as_str())?;
-            let op_asm = match op {
-                _ if op.is_bitwise() => self.gen_bitwise(op, reg1.as_str(), reg2.as_str())?,
-                _ if op.is_comparison() => self.gen_cmp(op, reg1.as_str(), reg2.as_str())?,
-                _ if op.is_arithmetic() => {
-                    self.gen_arithmetic(op, reg1.as_str(), reg2.as_str())?
-                }
-                _ if op.is_logical() => {
-                    return self.gen_logical(
-                        op,
-                        "AAA".to_string(),
-                        reg1.as_str(),
-                        reg2.as_str(),
-                        &lhs_asm,
-                        &rhs_asm,
-                    )
-                }
-                _ => {
-                    return Err(format!(
-                        "{ERR_MSG} Unable to generate binary expression"
-                    ))
-                }
-            };
-
-            // self.ctx.reg_count -= 2;
-            // {push_ans}
-            Ok(format!(
-                "; {comment:?}\n\
-                 {lhs_asm}\
-                 {rhs_asm}\
-                 {op_asm}"
-            ))
-        }
-        NodeExpr::UnaryExpr { op, operand } => {
-            let comment = op.clone();
-            let op_asm = match op {
-                TokenKind::BitwiseNot => format!("{SPACE}not rax\n"),
-                _ => todo!("logical not."), // need to invert cmp.. do later.
-            };
-
-            let expr_asm = self.gen_expr(*operand, "rax")?;
-
-            // {push_ans}
-            Ok(format!(
-                "; {comment:?}\n\
-                 {expr_asm}\
-                 {op_asm}"
-            ))
-        }
-    }
-}
-
-fn gen_term(&mut self, term: NodeTerm, reg: &str) -> Result<String, String> {
-    match term {
-        NodeTerm::IntLit(token) => {
-            // reg might be e.g QWORD[rsp+____], but can't know variable ident in context
-            let int_lit = token.value.unwrap();
-            Ok(format!("{SPACE}mov {reg}, {int_lit}\n"))
-            // Ok(self.push("reg"))
-        }
-        NodeTerm::Ident(token) => {
-            let ident = token.value.clone().unwrap();
-            match self.var_map.get(ident.as_str()) {
-                Some(var) => {
-                    let stk_pos = self.gen_stk_pos(var.stk_index);
-                    // Ok(format!("{}; {token:?}\n", self.push(stk_pos.as_str())))
-                    Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {token:?}\n"))
-                }
-                None => Err(format!("{ERR_MSG} Variable: {ident:?} doesn't exist.")),
-            }
-        }
-        NodeTerm::Paren(expr) => self.gen_expr(expr, reg),
-    }
-}
-
-// TODO: branchless comparisons (MENTAL IDEA !!), Remove excess 'cmp'
-// "movzx {reg1},al" << zero inits reg && validates val is 1 or 0.
-fn gen_logical(
-    &mut self,
-    op: TokenKind,
-    mov_ans: String,
-    reg1: &str,
-    reg2: &str,
-    lhs_asm: &str,
-    rhs_asm: &str,
-) -> Result<String, String> {
-    match op {
-        TokenKind::LogicalAnd => {
-            let false_label = self.gen_label("AND_FALSE");
-            let true_label = self.gen_label("AND_TRUE");
-
-            Ok(format!(
-                "; LogicalAnd\n\
-                 {lhs_asm}\
-                 {SPACE}cmp {reg1}, 0\n\
-                 {SPACE}je {false_label}\n\
-                 {rhs_asm}\
-                 {SPACE}cmp {reg2}, 0\n\
-                 {SPACE}je {true_label}\n\
-                 {SPACE}mov {reg1}, 1\n\
-                 {SPACE}jmp {true_label}\n\
-                 {false_label}:\n\
-                 {SPACE}mov {reg1}, 0\n\
-                 {true_label}:\n\
-                 {SPACE}movzx {reg1}, al\n\
-                 {mov_ans}"
-            ))
-        }
-        TokenKind::LogicalOr => {
-            let false_label = self.gen_label("OR_FALSE");
-            let true_label = self.gen_label("OR_TRUE");
-            let final_label = self.gen_label("OR_FINAL");
-
-            Ok(format!(
-                "; LogicalOr\n\
-                 {lhs_asm}\
-                 {SPACE}cmp {reg1}, 0\n\
-                 {SPACE}jne {true_label}\n\
-                 {rhs_asm}\
-                 {SPACE}cmp {reg2}, 0\n\
-                 {SPACE}je {false_label}\n\
-                 {true_label}:\n\
-                 {SPACE}mov {reg1}, 1\n\
-                 {SPACE}jmp {final_label}\n\
-                 {false_label}:\n\
-                 {SPACE}mov {reg1}, 0\n\
-                 {final_label}:\n\
-                 {SPACE}movzx {reg1}, al\n\
-                 {mov_ans}"
-            ))
-        }
-        _ => Err(format!(
-            "{ERR_MSG} Unable to generate Logical comparison"
-        )),
-    }
-}
-
-fn gen_arithmetic(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-    let operation_asm = match op {
-        TokenKind::Divide => format!("cqo\n{SPACE}idiv {reg2}"),
-        TokenKind::Multiply => format!("imul {reg1}, {reg2}"),
-        TokenKind::Subtract => format!("sub {reg1}, {reg2}"),
-        TokenKind::Add => format!("add {reg1}, {reg2}"),
-        TokenKind::Remainder => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov rax, rdx"), // TODO: 'cqo' changes with reg size
-        _ => {
-            return Err(format!(
-                "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
-            ))
-        }
-    };
-
-    Ok(format!("{SPACE}{operation_asm}\n"))
-}
-
-fn gen_bitwise(&self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-    let asm = match op {
-        TokenKind::BitwiseOr => "or",
-        TokenKind::BitwiseXor => "xor",
-        TokenKind::BitwiseAnd => "and",
-        TokenKind::LeftShift => "sal",
-        TokenKind::RightShift => "sar",
-        // TODO: (Types) Unsigned shift: shl, shr
-        _ => {
-            return Err(format!(
-                "{ERR_MSG} Unable to generate Bitwise operation"
-            ))
-        }
-    };
-
-    Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
-}
-
-fn gen_cmp(&mut self, op: TokenKind, reg1: &str, reg2: &str) -> Result<String, String> {
-    let set_asm = format!("set{}", self.gen_cmp_modifier(op)?);
-
-    Ok(format!(
-        "{SPACE}cmp {reg1}, {reg2}\n\
-         {SPACE}{set_asm} al\n\
-         {SPACE}movzx {reg1}, al\n"
-    ))
-}
-                // parse & generate rhs first until its a term.
-                // .. then generate lhs.
-                // .. then asm order: lhs --> rhs.
-
-                // match *rhs {
-                //     NodeExpr::UnaryExpr { .. } => todo!(),
-                //     NodeExpr::BinaryExpr { .. } => asm += self.gen_expr(*rhs, None)?.as_str(),
-                //     NodeExpr::Term(term) => {
-                //         asm += self.gen_expr(*lhs, None)?.as_str();
-                //         asm += self.gen_term(*term, None)?.as_str();
-                //         // if let NodeTerm::Paren(paren_expr) = *term {
-                //         //     asm += self.gen_expr(paren_expr, None)?.as_str();
-                //         // } else {
-                //         //     asm += self.gen_term(*term, None)?.as_str();
-                //         // }
-                //     }
-                // }
-*/
