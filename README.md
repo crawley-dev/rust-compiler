@@ -58,13 +58,12 @@ aaa }
   - [x] dynamically place variables on stack if they are(nt) used immediately. 
     - don't push pop every intlit/var, use registers! 
   - [ ] Testing infrastructure.
-
   - [ ] data types
-    - [ ] bools: al register (8 bit)
-    - [ ] u8: al
-    - [ ] u16: ax 
-    - [ ] u32: eax 
-    - [ ] u64: rax
+    - bools: al register (8 bit)
+    - u8: al
+    - u16: ax 
+    - u32: eax 
+    - u64: rax
   - [ ] functions
     - return type
     - arguments 

@@ -66,6 +66,11 @@
 - break: exits current loop
 
 ## Type Registry:
+- All additional information is kept on the left, all operations are performed on the right, take from odin
+    - array: []TYPE
+        - access arr: VAR[OFFSET]
+    - ptr: ^TYPE
+        - de ref: var^
 - u8 .. u64: unsigned integers specified by bit length
 - i8 .. i64: signed integers specified by bit length
 - f32, f64: floats specified by bit length

@@ -94,44 +94,48 @@ bitflags! {
 impl TokenKind {
     pub fn get_flags(&self) -> TokenFlags {
         match self {
-            // TokenKind::Ptr => TokenFlags::,    // "^"
-            TokenKind::Eq => TokenFlags::ASSIGN,  // "="
-            TokenKind::CmpNot => TokenFlags::LOG, // "!"
-            TokenKind::Add => TokenFlags::ARITH,  // "+"
-            TokenKind::Sub => TokenFlags::ARITH,  // "-"
-            TokenKind::Mul => TokenFlags::ARITH,  // "*"
-            TokenKind::Quo => TokenFlags::ARITH,  // "/"
-            TokenKind::Mod => TokenFlags::ARITH,  // "%"
+            // TokenKind::Ptr => TokenFlags::UNARY,  // "^"
+            TokenKind::Eq => TokenFlags::ASSIGN, // "="
+            TokenKind::Add => TokenFlags::ARITH, // "+"
+            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-"
+            TokenKind::Mul => TokenFlags::ARITH, // "*"
+            TokenKind::Quo => TokenFlags::ARITH, // "/"
+            TokenKind::Mod => TokenFlags::ARITH, // "%"
             TokenKind::BitAnd => TokenFlags::BIT, // "&"
-            TokenKind::BitOr => TokenFlags::BIT,  // "|"
+            TokenKind::BitOr => TokenFlags::BIT, // "|"
             TokenKind::BitXor => TokenFlags::BIT, // "~"
             TokenKind::AndNot => TokenFlags::BIT, // "&~"
-            TokenKind::Shl => TokenFlags::BIT,    // "<<"
-            TokenKind::Shr => TokenFlags::BIT,    // ">>"
+            TokenKind::Shl => TokenFlags::BIT,   // "<<"
+            TokenKind::Shr => TokenFlags::BIT,   // ">>"
 
-            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
-            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
-            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
-            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
-            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH,
-            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,
-            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,
-            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,
-            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT,
-            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,
-            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,
+            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
+            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
+            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "*="
+            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "/="
+            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "%="
+            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "&="
+            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,    // "|="
+            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "~="
+            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&~="
+            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
+            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
 
-            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,
-            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,
-            TokenKind::CmpEq => TokenFlags::CMP,
-            TokenKind::NotEq => TokenFlags::CMP,
-            TokenKind::Lt => TokenFlags::CMP,
-            TokenKind::Gt => TokenFlags::CMP,
-            TokenKind::LtEq => TokenFlags::CMP,
-            TokenKind::GtEq => TokenFlags::CMP,
+            TokenKind::CmpNot => TokenFlags::LOG | TokenFlags::UNARY, // "!"
+            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,   // "&&"
+            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,    // "||"
+            TokenKind::CmpEq => TokenFlags::CMP,                      // "=="
+            TokenKind::NotEq => TokenFlags::CMP,                      // "!="
+            TokenKind::Lt => TokenFlags::CMP,                         // "<"
+            TokenKind::Gt => TokenFlags::CMP,                         // ">"
+            TokenKind::LtEq => TokenFlags::CMP,                       // "<="
+            TokenKind::GtEq => TokenFlags::CMP,                       // ">="
 
             _ => TokenFlags::empty(),
         }
+    }
+
+    pub fn has_flags(&self, flags: TokenFlags) -> bool {
+        self.get_flags().intersects(flags)
     }
 
     // Precedence hierarchy: higher = done first
@@ -140,7 +144,7 @@ impl TokenKind {
     pub fn get_prec(&self) -> i32 {
         match self {
             TokenKind::Comma => 0,
-            _ if self.is_assignment() => 1,
+            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
             TokenKind::CmpOr => 2,
             TokenKind::CmpAnd => 3,
             TokenKind::BitOr => 5,
@@ -153,24 +157,6 @@ impl TokenKind {
             TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
             TokenKind::CmpNot => 13,
             _ => -1,
-        }
-    }
-
-    pub fn is_assignment(&self) -> bool {
-        match self {
-            TokenKind::Eq
-            | TokenKind::AddEq
-            | TokenKind::SubEq
-            | TokenKind::MulEq
-            | TokenKind::QuoEq
-            | TokenKind::ModEq
-            | TokenKind::AndEq
-            | TokenKind::OrEq
-            | TokenKind::XorEq
-            | TokenKind::AndNotEq
-            | TokenKind::ShlEq
-            | TokenKind::ShrEq => true,
-            _ => false,
         }
     }
 
@@ -191,65 +177,83 @@ impl TokenKind {
         }
     }
 
-    pub fn is_arithmetic(&self) -> bool {
-        match self {
-            TokenKind::Add | TokenKind::Sub | TokenKind::Quo | TokenKind::Mul | TokenKind::Mod => {
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub fn is_comparison(&self) -> bool {
-        match self {
-            TokenKind::CmpEq
-            | TokenKind::NotEq
-            | TokenKind::Gt
-            | TokenKind::GtEq
-            | TokenKind::Lt
-            | TokenKind::LtEq
-            | TokenKind::CmpNot => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_logical(&self) -> bool {
-        match self {
-            TokenKind::CmpAnd | TokenKind::CmpOr | TokenKind::CmpNot => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_bitwise(&self) -> bool {
-        match self {
-            TokenKind::BitOr
-            | TokenKind::BitXor
-            | TokenKind::BitAnd
-            | TokenKind::CmpNot
-            | TokenKind::Shl
-            | TokenKind::Shr => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_unary(&self) -> bool {
-        match self {
-            TokenKind::CmpNot | TokenKind::Sub => true, // TODO(TOM): Unary minus!
-            _ => false,
-        }
-    }
-
-    pub fn is_binary(&self) -> bool {
-        !self.is_unary()
-    }
-
     pub fn get_associativity(&self) -> Associativity {
         match self {
-            _ if self.is_binary() => Associativity::Left,
-            _ if self.is_assignment() => Associativity::None,
+            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::None,
+            _ if self.has_flags(TokenFlags::UNARY) => Associativity::Left,
             _ => Associativity::Right,
         }
     }
+
+    // pub fn is_assignment(&self) -> bool {
+    //     match self {
+    //         TokenKind::Eq
+    //         | TokenKind::AddEq
+    //         | TokenKind::SubEq
+    //         | TokenKind::MulEq
+    //         | TokenKind::QuoEq
+    //         | TokenKind::ModEq
+    //         | TokenKind::AndEq
+    //         | TokenKind::OrEq
+    //         | TokenKind::XorEq
+    //         | TokenKind::AndNotEq
+    //         | TokenKind::ShlEq
+    //         | TokenKind::ShrEq => true,
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_arithmetic(&self) -> bool {
+    //     match self {
+    //         TokenKind::Add | TokenKind::Sub | TokenKind::Quo | TokenKind::Mul | TokenKind::Mod => {
+    //             true
+    //         }
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_comparison(&self) -> bool {
+    //     match self {
+    //         TokenKind::CmpEq
+    //         | TokenKind::NotEq
+    //         | TokenKind::Gt
+    //         | TokenKind::GtEq
+    //         | TokenKind::Lt
+    //         | TokenKind::LtEq
+    //         | TokenKind::CmpNot => true,
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_logical(&self) -> bool {
+    //     match self {
+    //         TokenKind::CmpAnd | TokenKind::CmpOr | TokenKind::CmpNot => true,
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_bitwise(&self) -> bool {
+    //     match self {
+    //         TokenKind::BitOr
+    //         | TokenKind::BitXor
+    //         | TokenKind::BitAnd
+    //         | TokenKind::CmpNot
+    //         | TokenKind::Shl
+    //         | TokenKind::Shr => true,
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_unary(&self) -> bool {
+    //     match self {
+    //         TokenKind::CmpNot | TokenKind::Sub => true, // TODO(TOM): Unary minus!
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn is_binary(&self) -> bool {
+    //     !self.is_unary()
+    // }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

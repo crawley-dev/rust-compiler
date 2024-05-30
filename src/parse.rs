@@ -1,4 +1,9 @@
-use crate::lex::{Associativity, Token, TokenKind};
+use bitflags::Flags;
+
+use crate::{
+    lex::{Associativity, Token, TokenFlags, TokenKind},
+    semantic::{Type, TypeFlags},
+};
 const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
 const DBG_MSG: &'static str = "[DEBUG_PARSE]";
@@ -17,11 +22,10 @@ pub struct NodeScope {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
     Let {
-        // assign: Box<NodeStmt>,
-        expr: NodeExpr,
         ident: String,
         mutable: bool,
-        var_type: ParseType,
+        var_type: Type,
+        init_expr: Option<NodeExpr>,
     },
     If {
         condition: NodeExpr,
@@ -63,12 +67,6 @@ pub enum NodeTerm {
     IntLit(Token),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ParseType {
-    pub type_ident: Token,
-    pub ptr: bool,
-}
-
 pub struct Parser {
     pub tokens: Vec<Token>,
     pub position: usize,
@@ -104,16 +102,26 @@ impl Parser {
                 self.try_consume(TokenKind::Let)?;
                 let mutable = self.try_consume(TokenKind::Mut).is_ok();
                 let ident = self.try_consume(TokenKind::Ident)?.value.unwrap();
+
                 self.try_consume(TokenKind::Colon)?;
-                let type_ident = self.try_consume(TokenKind::Ident)?;
                 let ptr = self.try_consume(TokenKind::Ptr).is_ok();
-                self.try_consume(TokenKind::Eq)?;
+                let type_ident = self.try_consume(TokenKind::Ident)?.value.unwrap();
+
+                let mut init_expr: Option<NodeExpr> = None;
+                if self.try_consume(TokenKind::Eq).is_ok() {
+                    init_expr = Some(self.parse_expr(0)?);
+                }
 
                 NodeStmt::Let {
-                    expr: self.parse_expr(0)?,
+                    init_expr,
                     ident,
                     mutable,
-                    var_type: ParseType { type_ident, ptr },
+                    var_type: Type {
+                        byte_width: 0,
+                        ident: type_ident,
+                        flags: TypeFlags::from_bits(ptr as u16 * TypeFlags::POINTER.bits())
+                            .unwrap(),
+                    },
                 }
             }
             TokenKind::If => {
@@ -148,8 +156,10 @@ impl Parser {
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
-                if self.token_matches(|kind| kind.is_assignment() && kind != &TokenKind::Eq, 1)?
-                    == true
+                if self.token_matches(
+                    |kind| kind.has_flags(TokenFlags::ASSIGN) && kind != &TokenKind::Eq,
+                    1,
+                )? == true
                 {
                     let comp_assign = self.tokens.get_mut(self.position + 1).unwrap();
                     comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
@@ -243,7 +253,7 @@ impl Parser {
         };
 
         match tok.kind {
-            op @ _ if op.is_unary() => {
+            op @ _ if op.has_flags(TokenFlags::UNARY) => {
                 let operand = self.parse_expr(op.get_prec() + 1)?;
                 Ok(NodeExpr::UnaryExpr {
                     op,

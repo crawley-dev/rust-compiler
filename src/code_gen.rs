@@ -1,6 +1,7 @@
 use crate::{
-    lex::TokenKind,
+    lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
+    semantic::{Type, TypeFlags},
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
@@ -11,11 +12,12 @@ const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
+    var_type: Type,
     stk_index: usize,
     ident: Option<String>,
 }
 
-struct Context {
+struct CodeGenContext {
     reg_count: usize,
     endif_label: String,
     loop_end_label: String,
@@ -26,7 +28,7 @@ pub struct Generator {
     label_count: usize,
     stack: Vec<Variable>,
     var_map: HashMap<String, Variable>,
-    ctx: Context,
+    ctx: CodeGenContext,
 }
 
 impl Generator {
@@ -36,7 +38,7 @@ impl Generator {
             label_count: 0,
             stack: Vec::new(),
             var_map: HashMap::new(),
-            ctx: Context {
+            ctx: CodeGenContext {
                 reg_count: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
@@ -66,7 +68,12 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::Let { expr, ident, .. } => {
+            NodeStmt::Let {
+                ident,
+                var_type,
+                init_expr,
+                ..
+            } => {
                 if let Some(var) = self.var_map.get(ident.as_str()) {
                     return Err(format!(
                         "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
@@ -75,10 +82,14 @@ impl Generator {
                 let var = Variable {
                     ident: Some(ident.clone()),
                     stk_index: self.stack.len() + 1,
+                    var_type,
                 };
                 self.stack.push(var.clone());
                 self.var_map.insert(ident.clone(), var);
-                self.gen_expr(expr, Some("push"))
+                if let Some(expr) = init_expr {
+                    return self.gen_expr(expr, Some("push"));
+                }
+                Ok("\n".to_string())
             }
             NodeStmt::Assign(expr) => {
                 let ident = match &expr {
@@ -228,16 +239,20 @@ impl Generator {
                 let lhs_asm = self.gen_expr(*lhs, None)?;
                 let rhs_asm = self.gen_expr(*rhs, None)?;
 
-                let op_asm = match op {
-                    _ if op.is_bitwise() => self.gen_bitwise(op)?,
-                    _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
-                    _ if op.is_logical() => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
-                    _ if op.is_comparison() => self.gen_comparison(op)?,
-                    _ if op.is_assignment() => {
-                        return Err(format!(
-                            "{ERR_MSG} Unable to assign to a constant:\n{lhs_asm}{op:?}\n{rhs_asm}"
-                        ))
-                    }
+                let op_asm = match op.get_flags() {
+                    // _ if op.is_bitwise() => self.gen_bitwise(op)?,
+                    // _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
+                    // _ if op.is_logical() => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
+                    // _ if op.is_comparison() => self.gen_comparison(op)?,
+                    // _ if op.is_assignment() => {
+                    //     return Err(format!(
+                    //         "{ERR_MSG} Unable to assign to a constant:\n{lhs_asm}{op:?}\n{rhs_asm}"
+                    //     ))
+                    // }
+                    TokenFlags::BIT => self.gen_bitwise(op)?,
+                    TokenFlags::ARITH => self.gen_arithmetic(op)?,
+                    TokenFlags::CMP => self.gen_comparison(op)?,
+                    TokenFlags::LOG => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
                     _ => {
                         return Err(format!(
                             "{ERR_MSG} Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"

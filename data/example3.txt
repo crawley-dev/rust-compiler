@@ -59,7 +59,7 @@ let n = 0 || 5 + 1 > 6;
 //    let mut dwa: i8 = 20;
 //}
 
-let mut i: i32 = 0;
+let mut i: ^i32 = 0;
 let mut ans: i32 = 2;
 
 while 1 == 1 {
