@@ -8,4 +8,6 @@ edition = "2021"
 [dependencies]
 bitflags = "2.5.0"
 cargo-watch = "8.5.2"
+indexed_valued_enums = "1.0.0"
+indexmap = "2.2.6"
 rand = "0.8.5"

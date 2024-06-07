@@ -887,6 +887,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "indexed_valued_enums"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "486a63740b183dd5e377bc0ad833081765b5a3b53e1300148f8b96fa1c26abf3"
+
+[[package]]
 name = "indexmap"
 version = "2.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1443,6 +1449,8 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.5.0",
  "cargo-watch",
+ "indexed_valued_enums",
+ "indexmap",
  "rand",
 ]
 
