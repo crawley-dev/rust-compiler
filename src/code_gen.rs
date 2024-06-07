@@ -2,6 +2,7 @@ use crate::{
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::{Type, TypeFlags},
+    SemanticInfo,
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
@@ -23,16 +24,17 @@ struct CodeGenContext {
     loop_end_label: String,
 }
 
-pub struct Generator {
+pub struct Generator<'a> {
     ast: AST,
+    sem_info: SemanticInfo<'a>,
     label_count: usize,
     stack: Vec<Variable>,
     var_map: HashMap<String, Variable>,
     ctx: CodeGenContext,
 }
 
-impl Generator {
-    pub fn new(ast: AST) -> Generator {
+impl Generator<'_> {
+    pub fn new(ast: AST, sem_info: SemanticInfo) -> Generator {
         Generator {
             ast,
             label_count: 0,
@@ -43,6 +45,7 @@ impl Generator {
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
+            sem_info,
         }
     }
 
@@ -199,9 +202,7 @@ impl Generator {
 
     // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} Beginning scope");
-        }
+        debug_print(format!("{DBG_MSG} Beginning scope").as_str());
         let var_count = self.stack.len();
         let mut asm = String::new();
         for stmt in scope.stmts {
@@ -209,29 +210,26 @@ impl Generator {
         }
 
         let pop_amt = self.stack.len() - var_count;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} Ending scope, pop({pop_amt})");
-        }
+        debug_print(format!("{DBG_MSG} Ending scope, pop({pop_amt})").as_str());
         for _ in 0..pop_amt {
             // self.ctx.stk_ptr -= 1;
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
                 None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
             };
-            if LOG_DEBUG_INFO {
-                println!("{DBG_MSG} Scope ended, removing {popped_var:#?}");
-            }
+            debug_print(format!("{DBG_MSG} Scope ended, removing {popped_var:#?}").as_str());
         }
         Ok(asm)
     }
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
-        if LOG_DEBUG_INFO {
-            println!(
-                "{0}\n{DBG_MSG} gen expr, reg: {ans_reg:?} \n{expr:#?}\n",
+        debug_print(
+            format!(
+                "{}\n{DBG_MSG} gen expr, reg: {ans_reg:?} \n{expr:#?}\n",
                 "-".repeat(20)
-            );
-        }
+            )
+            .as_str(),
+        );
         let mut asm = String::new();
         match expr {
             NodeExpr::Term(term) => return self.gen_term(term, ans_reg),
@@ -239,20 +237,12 @@ impl Generator {
                 let lhs_asm = self.gen_expr(*lhs, None)?;
                 let rhs_asm = self.gen_expr(*rhs, None)?;
 
-                let op_asm = match op.get_flags() {
-                    // _ if op.is_bitwise() => self.gen_bitwise(op)?,
-                    // _ if op.is_arithmetic() => self.gen_arithmetic(op)?,
-                    // _ if op.is_logical() => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
-                    // _ if op.is_comparison() => self.gen_comparison(op)?,
-                    // _ if op.is_assignment() => {
-                    //     return Err(format!(
-                    //         "{ERR_MSG} Unable to assign to a constant:\n{lhs_asm}{op:?}\n{rhs_asm}"
-                    //     ))
-                    // }
-                    TokenFlags::BIT => self.gen_bitwise(op)?,
-                    TokenFlags::ARITH => self.gen_arithmetic(op)?,
-                    TokenFlags::CMP => self.gen_comparison(op)?,
-                    TokenFlags::LOG => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
+                let flags = op.get_flags();
+                let op_asm = match flags {
+                    _ if flags.contains(TokenFlags::BIT) => self.gen_bitwise(op)?,
+                    _ if flags.contains(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
+                    _ if flags.contains(TokenFlags::CMP) => self.gen_comparison(op)?,
+                    _ if flags.contains(TokenFlags::LOG) => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
                     _ => {
                         return Err(format!(
                             "{ERR_MSG} Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
@@ -305,7 +295,8 @@ impl Generator {
             NodeTerm::IntLit(tok) => {
                 let reg = match ans_reg {
                     Some(reg) if reg == "push" => {
-                        return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()))
+                        return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()));
+                        // confusing, reg == "push "
                     }
                     Some(reg) => reg,
                     None => self.next_reg(),
@@ -510,4 +501,10 @@ impl Generator {
     //     }
     //     format!("{SPACE}pop {reg}\n")
     // }
+}
+
+fn debug_print(msg: &str) {
+    if LOG_DEBUG_INFO {
+        println!("{msg}")
+    }
 }

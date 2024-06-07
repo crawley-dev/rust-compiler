@@ -93,9 +93,7 @@ impl Parser {
             Some(tok) => tok,
             None => return Err(format!("{ERR_MSG} No statement to parse")),
         };
-        if LOG_DEBUG_INFO {
-            println!("\n{DBG_MSG} parsing statement: {:?}", self.peek(0).unwrap());
-        }
+        debug_print(format!("\n{DBG_MSG} parsing statement: {:?}", self.peek(0).unwrap()).as_str());
 
         let stmt = match tok.kind {
             TokenKind::Let => {
@@ -223,9 +221,7 @@ impl Parser {
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             let prec = op.get_prec();
             if prec < min_prec {
-                if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} climb ended: {op:?}({prec}) < {min_prec}");
-                }
+                debug_print(format!("{DBG_MSG} climb ended: {op:?}({prec}) < {min_prec}").as_str());
                 break;
             }
 
@@ -262,9 +258,8 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
-                if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} parsed parens {expr:#?}");
-                }
+                debug_print(format!("{DBG_MSG} parsed parens {expr:#?}").as_str());
+
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
@@ -302,9 +297,7 @@ impl Parser {
 
     // remove item from vec? << no clone, linear complexity though..
     fn consume(&mut self) -> Token {
-        if LOG_DEBUG_INFO {
-            println!("consuming: {:?}", self.peek(0).unwrap());
-        }
+        debug_print(format!("consuming: {:?}", self.peek(0).unwrap()).as_str());
         let i = self.position;
         self.position += 1;
         self.tokens.get(i).unwrap().clone()
@@ -313,5 +306,11 @@ impl Parser {
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
+    }
+}
+
+fn debug_print(msg: &str) {
+    if LOG_DEBUG_INFO {
+        println!("{msg}")
     }
 }

@@ -11,10 +11,11 @@
 //      - ✅ intlit is not a concrete type, can be coerced into any integer, after bounds checked.
 //      - no implict type conversions, all explicit e.g: (type_1 as type_2)
 //      - integer bounds checks
-//          - requires me to interpret every arith expression?
+//          - requires me to interpret every arith expression? let it be ub for now :)
 //      - ✅ pointers, always have usize, not a defined type but an attribute, that modifies byte_size?
 //          - kindof its own type (set size), but loose (inherits type's attr)
 //          - a ptr is the original type with modified byte_width (4) & ptr flag set.
+//      - hand typecontext to code gen
 
 use crate::{
     lex::{TokenFlags, TokenKind},
@@ -22,7 +23,7 @@ use crate::{
 };
 use std::collections::HashMap;
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
@@ -41,7 +42,6 @@ bitflags::bitflags! {
     }
 }
 
-// TODO(TOM): an enum instead of flags, atleast for ptr?
 #[derive(Clone, Debug, PartialEq)]
 pub struct Type {
     pub byte_width: u8,
@@ -61,26 +61,32 @@ impl Type {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Variable {
-    ident: Option<String>,
+    ident: String,
     mutable: bool,
     var_type: Type,
 }
 
-struct SemanticContext {
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticInfo<'a> {
+    pub type_map: HashMap<&'a str, Type>,
+}
+
+// a weak checker context..
+struct CheckerContext {
     loop_count: i32,
 }
 
 pub struct Checker<'a> {
-    ctx: SemanticContext,
+    ctx: CheckerContext,
     stack: Vec<Variable>,
     var_map: HashMap<String, Variable>,
     type_map: HashMap<&'a str, Type>,
 }
 
 impl Checker<'_> {
-    pub fn check_ast(mut ast: AST) -> Result<AST, String> {
+    pub fn check_ast(mut ast: AST) -> Result<SemanticInfo<'static>, String> {
         let mut checker = Checker {
-            ctx: SemanticContext { loop_count: 0 },
+            ctx: CheckerContext { loop_count: 0 },
             stack: Vec::new(),
             var_map: HashMap::new(),
             type_map: HashMap::from([
@@ -108,7 +114,9 @@ impl Checker<'_> {
         for stmt in &mut ast.stmts {
             checker.check_stmt(stmt)?;
         }
-        Ok(ast)
+        Ok(SemanticInfo {
+            type_map: checker.type_map,
+        })
     }
 
     fn check_stmt(&mut self, stmt: &mut NodeStmt) -> Result<&Type, String> {
@@ -125,12 +133,12 @@ impl Checker<'_> {
                         "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
                     ));
                 }
-                // if ptr flag set, set byte_width: 4?
+                // if ptr, byte_width -> 4, add pointer flags.
                 let sem_type = self.get_type(var_type.ident.as_str())?;
                 var_type.byte_width = sem_type.byte_width;
-                var_type.flags = sem_type.flags.union(var_type.flags); // adds pointer flag if found.
+                var_type.flags = sem_type.flags.union(var_type.flags);
                 let var = Variable {
-                    ident: Some(ident.clone()),
+                    ident: ident.clone(),
                     mutable: *mutable,
                     var_type: var_type.clone(),
                 };
@@ -210,39 +218,35 @@ impl Checker<'_> {
         }
 
         let pop_amt = self.stack.len() - var_count;
-        if LOG_DEBUG_INFO {
-            println!("{DBG_MSG} Ending scope, pop({pop_amt})");
-        }
+        debug_print(format!("{DBG_MSG} Ending scope, pop({pop_amt})").as_str());
+
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
-                Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
+                Some(var) => self.var_map.remove(var.ident.as_str()),
                 None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
             };
-            if LOG_DEBUG_INFO {
-                println!("{DBG_MSG} Scope ended, removing {popped_var:#?}");
-            }
+            debug_print(format!("{DBG_MSG} Scope ended, removing {popped_var:#?}").as_str());
         }
         Ok(self.get_type("nil")?)
     }
 
     fn check_expr(&self, expr: &NodeExpr) -> Result<&Type, String> {
-        // recurse check expr's
-        // binary:
-        //  - check type_map match
-        //  - check op is valid for operand type_map
-        // unary: check op is valid for operand's type
-        // term: get type
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let lhs_type = self.check_expr(&*lhs)?;
                 let rhs_type = self.check_expr(&*rhs)?;
                 let op_dbg = format!(
-                    "\n{lhs:#?}\n.. {op:?} ..\n{rhs:#?}\n{}\n{lhs_type:#?}\n.. {op:?} ..\n{rhs_type:#?}",
-                    "-".repeat(20)
+                    "{sep}{sep}BinExpr{sep}{sep}\n
+                        {lhs:#?}\n.. 
+                        {op:?} ..\n
+                        {rhs:#?}\n
+                    {sep}TYPE INFO{sep}\n
+                        {lhs_type:#?}\n.. 
+                        {op:?} ..\n
+                        {rhs_type:#?}",
+                    sep = "-".repeat(5),
                 );
-                if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} {lhs_type:?} .. {op:?}.. {rhs_type:?}")
-                }
+                debug_print(op_dbg.as_str());
 
                 // check if lhs,rhs are of same family of type_map
                 // .. if both are arithmetic,
@@ -282,9 +286,8 @@ impl Checker<'_> {
             NodeExpr::UnaryExpr { op, operand } => {
                 let operand_type = self.check_expr(&*operand)?;
                 let op_dbg = format!("{op:?} .. {operand:?}({operand_type:?})");
-                if LOG_DEBUG_INFO {
-                    println!("{DBG_MSG} {op:?} .. {operand_type:?}")
-                }
+                debug_print(op_dbg.as_str());
+
                 // unary sub fails on: non-arith, unsigned
                 // CmpNot fails on: non-boolean
                 match op {
@@ -325,5 +328,11 @@ impl Checker<'_> {
 
     fn check_flags_either(&self, t1: &Type, t2: &Type, flags: TypeFlags) -> bool {
         t1.flags.intersects(flags) || t2.flags.intersects(flags)
+    }
+}
+
+fn debug_print(msg: &str) {
+    if LOG_DEBUG_INFO {
+        println!("{msg}")
     }
 }

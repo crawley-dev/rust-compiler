@@ -17,7 +17,7 @@ aaa }
 - [x] operations: (boolean, logical//bitwise, binary)
 - [x] control flow branches: (if/else)
 - [x] loops: (while/for)
-- [ ] types 
+- [x] types 
 - [ ] functions: (recursion << should be free?)
 - [ ] array
 - [ ] user defined struct

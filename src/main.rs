@@ -11,6 +11,7 @@ mod parse;
 use parse::*;
 
 mod semantic;
+use semantic::*;
 
 mod code_gen;
 use code_gen::Generator;
@@ -26,9 +27,9 @@ fn main() {
     let tokens = Lexer::new(input).tokenize();
     // print_tokens(&tokens);
     let mut ast = parse(tokens);
-    ast = semantic_check(ast);
+    let sem_info = semantic_check(ast.clone()); // TODO(TOM): hurts..
     println!("\n\n{:#?}\n\n", ast);
-    code_gen(ast, file_name);
+    code_gen(ast, sem_info, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -43,16 +44,16 @@ fn parse(tokens: Vec<Token>) -> AST {
     }
 }
 
-fn semantic_check(mut ast: AST) -> AST {
+fn semantic_check(mut ast: AST) -> SemanticInfo<'static> {
     match semantic::Checker::check_ast(ast) {
-        Ok(ast) => ast,
+        Ok(info) => info,
         Err(e) => panic!("\n{e}\n"),
     }
 }
 
-fn code_gen(ast: AST, file_name: String) {
+fn code_gen(ast: AST, sem_info: SemanticInfo, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
-    let mut generator = Generator::new(ast);
+    let mut generator = Generator::new(ast, sem_info);
     match generator.gen_asm() {
         Ok(string) => {
             println!("[COMPILER] output placed in '{file_path}'");
