@@ -27,7 +27,7 @@ use crate::{
 };
 use std::{collections::HashMap, ptr::NonNull};
 
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
@@ -42,6 +42,7 @@ bitflags::bitflags! {
         const FLOAT = 1 << 4;
         const INTEGRAL = 1 << 5;
         const LITERAL = 1 << 6;
+        const VARIABLE = 1 << 7;
     }
 }
 
@@ -158,7 +159,8 @@ impl Checker<'_> {
                     ));
                 }
 
-                let (mut width, flags) = *self.prim_map.get(type_ident.as_str()).unwrap();
+                let (mut width, mut flags) = *self.prim_map.get(type_ident.as_str()).unwrap();
+                flags |= PrimFlags::VARIABLE;
                 let form = match ptr {
                     true => {
                         width = 8;
@@ -317,12 +319,14 @@ impl Checker<'_> {
                         if self.form_intersects(lform, PrimFlags::BOOLEAN, "").is_ok() {
                             return Err(err_msg);
                         }
+                        debug_print(&format!("Bin Expr all good: {lform:#?}"));
                         Ok(lform)
                     }
                     _ if op_flags.intersects(TokenFlags::LOG) => {
                         if self.form_intersects(lform, PrimFlags::INTEGRAL, "").is_ok() {
                             return Err(err_msg);
                         }
+                        debug_print(&format!("Bin Expr all good: {lform:#?}"));
                         Ok(lform)
                     } // TODO(TOM): floats not supported so don't match against.
                     _ => return Err(format!("{ERR_MSG} Unsupported binary expression:{op_dbg}")),
@@ -330,8 +334,8 @@ impl Checker<'_> {
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let operand_form = self.check_expr(&*operand)?;
-                let op_dbg = format!("{op:?} .. {operand:?}({operand_form:?})");
-                debug_print(op_dbg.as_str());
+                let op_dbg = format!("{op:?} .. {operand:#?}\n{operand_form:#?}");
+                debug_print(&op_dbg);
 
                 // unary sub fails on: non-arith, unsigned
                 // CmpNot fails on: non-boolean
@@ -341,9 +345,17 @@ impl Checker<'_> {
                         self.form_intersects(
                             operand_form,
                             PrimFlags::BOOLEAN,
-                            format!("{ERR_MSG} Mismatched Op:Operand =>{op_dbg}").as_str(),
+                            format!("{ERR_MSG} Mismatched Op:Operand => {op_dbg}").as_str(),
                         )?;
                         Ok(operand_form)
+                    }
+                    TokenKind::BitAnd => {
+                        // can only get mem address of variable.
+                        debug_print(&format!("mem addr of: {operand_form:#?}"));
+                        match self.form_intersects(operand_form, PrimFlags::VARIABLE, "") {
+                            Err(_) => Err(format!("{ERR_MSG} Mismatched Op:Operand => {op_dbg}")),
+                            Ok(_) => Ok(operand_form),
+                        }
                     }
                     _ => Err(format!("{ERR_MSG} Unsupported Unary Expression:{op_dbg}")),
                 }
@@ -427,7 +439,7 @@ impl Checker<'_> {
 
 fn debug_print(msg: &str) {
     if LOG_DEBUG_INFO {
-        println!("{msg}")
+        println!("{DBG_MSG} {msg}")
     }
 }
 

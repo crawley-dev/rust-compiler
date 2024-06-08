@@ -259,16 +259,22 @@ impl Generator {
                 asm += op_asm.as_str();
             }
             NodeExpr::UnaryExpr { op, operand } => {
-                asm += self.gen_expr(*operand, None)?.as_str();
+                let expr_asm = self.gen_expr(*operand, None)?;
+                // asm += self.gen_expr(*operand, None)?.as_str();
 
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
-                    // TokenKind::Ones_Complement_Goes_HERE! => format!("{SPACE}not {reg}\n",),
+                    // TokenKind::Ones_Complement_Goes_HERE! (bitwise not) => format!("{SPACE}not {reg}\n",),
                     TokenKind::Sub => todo!("unary sub. do '0-EXPR' ??"),
                     TokenKind::CmpNot => format!(
-                        "{SPACE}test {reg}, {reg}\n\
+                        "{expr_asm}\
+                         {SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
+                    ),
+                    TokenKind::BitAnd => format!(
+                        "{expr_asm}\
+                    {SPACE}lea rax, \n"
                     ),
                     _ => {
                         return Err(format!(
@@ -282,14 +288,8 @@ impl Generator {
         // don't need to release reg if its just operation, just doing stuff on data.
         // only release if changing stack data.
         if let Some(reg) = ans_reg {
-            // if reg == "push" {
-            //     asm += format!("{SPACE}push {}\n", self.get_reg(self.ctx.reg_count)).as_str();
-            //     self.release_reg();
-            // }
-            // else {
             asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
             self.release_reg();
-            // }
         }
         Ok(asm)
     }
@@ -298,10 +298,6 @@ impl Generator {
         match term {
             NodeTerm::IntLit(tok) => {
                 let reg = match ans_reg {
-                    // Some(reg) if reg == "push" => {
-                    //     return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()));
-                    //     // confusing, reg == "push "
-                    // }
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
@@ -496,22 +492,6 @@ impl Generator {
     fn release_reg(&mut self) {
         self.ctx.reg_count -= 1;
     }
-
-    // #[allow(dead_code)]
-    // fn gen_push(&mut self, reg: &str) -> String {
-    //     if LOG_DEBUG_INFO {
-    //         println!("{DBG_MSG} pushing {reg} | {}", self.ctx.stk_ptr);
-    //     }
-    //     format!("{SPACE}push {reg}\n")
-    // }
-
-    // #[allow(dead_code)]
-    // fn gen_pop(&mut self, reg: &str) -> String {
-    //     if LOG_DEBUG_INFO {
-    //         println!("{DBG_MSG} popping into {reg} | {}", self.ctx.stk_ptr);
-    //     }
-    //     format!("{SPACE}pop {reg}\n")
-    // }
 }
 
 fn debug_print(msg: &str) {

@@ -59,8 +59,9 @@ let n = 0 || 5 + 1 > 6;
 //    let mut dwa: i8 = 20;
 //}
 
-let mut i: ^i32 = 0;
+let mut i: i32 = 0;
 let mut ans: i8 = 2;
+let i_ptr: ^i32 = &(i + 5);
 
 while 1 == 1 {
     ans *= 2;

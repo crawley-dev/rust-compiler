@@ -101,7 +101,7 @@ impl TokenKind {
             TokenKind::Mul => TokenFlags::ARITH, // "*"
             TokenKind::Quo => TokenFlags::ARITH, // "/"
             TokenKind::Mod => TokenFlags::ARITH, // "%"
-            TokenKind::BitAnd => TokenFlags::BIT, // "&"
+            TokenKind::BitAnd => TokenFlags::BIT | TokenFlags::UNARY, // "&"
             TokenKind::BitOr => TokenFlags::BIT, // "|"
             TokenKind::BitXor => TokenFlags::BIT, // "~"
             TokenKind::AndNot => TokenFlags::BIT, // "&~"
