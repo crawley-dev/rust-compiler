@@ -26,10 +26,10 @@ fn main() {
 
     let tokens = Lexer::new(input).tokenize();
     // print_tokens(&tokens);
-    let mut ast = parse(tokens);
-    let sem_info = semantic_check(ast.clone()); // TODO(TOM): hurts..
-    println!("\n\n{:#?}\n\n", ast);
-    code_gen(ast, sem_info, file_name);
+    let ast = parse(tokens);
+    let gen_data = semantic_check(ast);
+    println!("\n\n{:#?}\n\n", gen_data.ast);
+    code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -44,16 +44,16 @@ fn parse(tokens: Vec<Token>) -> AST {
     }
 }
 
-fn semantic_check(mut ast: AST) -> SemanticInfo<'static> {
+fn semantic_check(mut ast: AST) -> CodeGenData {
     match semantic::Checker::check_ast(ast) {
         Ok(info) => info,
         Err(e) => panic!("\n{e}\n"),
     }
 }
 
-fn code_gen(ast: AST, sem_info: SemanticInfo, file_name: String) {
+fn code_gen(gen_data: CodeGenData, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
-    let mut generator = Generator::new(ast, sem_info);
+    let mut generator = Generator::new(gen_data);
     match generator.gen_asm() {
         Ok(string) => {
             println!("[COMPILER] output placed in '{file_path}'");

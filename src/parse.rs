@@ -1,8 +1,7 @@
-use bitflags::Flags;
-
+// >>PARSER<< Constructs statements out of tokens from the lexer.
 use crate::{
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::{Type, TypeFlags},
+    semantic::SemVariable,
 };
 const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
@@ -21,11 +20,12 @@ pub struct NodeScope {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
-    Let {
-        ident: String,
-        mutable: bool,
-        var_type: Type,
+    Decl {
         init_expr: Option<NodeExpr>,
+        ident: String,
+        type_ident: String,
+        mutable: bool,
+        ptr: bool, // TODO(TOM): turn this into enum for different forms, e.g array
     },
     If {
         condition: NodeExpr,
@@ -45,6 +45,8 @@ pub enum NodeStmt {
     Exit(NodeExpr),
     NakedScope(NodeScope),
     Break,
+    // SEMANTIC STMT "CONVERSIONS"
+    SemDecl(SemVariable),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -105,21 +107,23 @@ impl Parser {
                 let ptr = self.try_consume(TokenKind::Ptr).is_ok();
                 let type_ident = self.try_consume(TokenKind::Ident)?.value.unwrap();
 
-                let mut init_expr: Option<NodeExpr> = None;
-                if self.try_consume(TokenKind::Eq).is_ok() {
-                    init_expr = Some(self.parse_expr(0)?);
-                }
+                let init_expr = match self.try_consume(TokenKind::Eq) {
+                    Ok(_) => Some(self.parse_expr(0)?),
+                    Err(_) => None,
+                };
 
-                NodeStmt::Let {
+                NodeStmt::Decl {
                     init_expr,
                     ident,
+                    type_ident,
                     mutable,
-                    var_type: Type {
-                        byte_width: 0,
-                        ident: type_ident,
-                        flags: TypeFlags::from_bits(ptr as u16 * TypeFlags::POINTER.bits())
-                            .unwrap(),
-                    },
+                    ptr,
+                    // var_type: Type {
+                    //     byte_width: 0,
+                    //     ident: type_ident,
+                    //     flags: TypeFlags::from_bits(ptr as u16 * TypeFlags::POINTER.bits())
+                    //         .unwrap(),
+                    // },
                 }
             }
             TokenKind::If => {
@@ -184,7 +188,7 @@ impl Parser {
         match stmt {
             NodeStmt::Exit(_)
             | NodeStmt::Assign { .. }
-            | NodeStmt::Let { .. }
+            | NodeStmt::Decl { .. }
             | NodeStmt::Break => match self.try_consume(TokenKind::SemiColon) {
                 Ok(_) => Ok(stmt),
                 Err(e) => Err(format!("{e}.\n {stmt:#?}")),
@@ -214,7 +218,7 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return Err(format!("{ERR_MSG} No operand to parse")),
+                None => return Err(format!("{ERR_MSG} No operand to parse near => \n{lhs:#?}")),
             };
 
             // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
@@ -259,7 +263,6 @@ impl Parser {
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
                 debug_print(format!("{DBG_MSG} parsed parens {expr:#?}").as_str());
-
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }

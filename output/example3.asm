@@ -4,21 +4,21 @@ _start:
     push rbp
     mov rbp, rsp
     ; Program Start
-    push 0
-    push 2
+    mov qword [rbp-8], 0
+    mov byte [rbp-9], 2
 ; While
     jmp .1_WHILE_CMP
 .2_WHILE_SCOPE:
-    mov rax, QWORD [rbp-16] ; Ident('ans')
+    mov rax, [rbp-9] ; Ident('ans')
     mov rcx, 2
     imul rax, rcx
-    mov QWORD [rbp-16], rax
-    mov rax, QWORD [rbp-8] ; Ident('i')
+    mov byte [rbp-9], rax
+    mov rax, [rbp-8] ; Ident('i')
     mov rcx, 1
     add rax, rcx
-    mov QWORD [rbp-8], rax
+    mov qword [rbp-8], rax
 ; If
-    mov rax, QWORD [rbp-8] ; Ident('i')
+    mov rax, [rbp-8] ; Ident('i')
     mov rcx, 5
     cmp rax, rcx
     setg al
@@ -51,6 +51,10 @@ _start:
     jne .6_WHILE_SCOPE
 .7_WHILE_END:
 .4_IF_FALSE:
+    mov rdi, [rbp-8] ; Ident('i')
+    mov r8, 2
+    add rdi, r8
+    mov qword [rbp-8], rdi
 .1_WHILE_CMP:
     mov rdi, 1
     mov r8, 1
@@ -60,7 +64,3 @@ _start:
     cmp rax, 0
     jne .2_WHILE_SCOPE
 .3_WHILE_END:
-; Exit Program
-    mov rdi, QWORD [rbp-16] ; Ident('ans')
-    mov rax, 60
-    syscall

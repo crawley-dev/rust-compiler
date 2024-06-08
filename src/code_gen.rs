@@ -1,8 +1,12 @@
+// >>CODE GEN<< Taking AST from parse && info from semantic and generating (hopefully optimising) code!
+// Useful Semantic Info:
+//      - types && type_map, provides info on byte size, etc (is array...)
+//      - Let stmt --> Semantic Variable created, use that! don't need to consume
+
 use crate::{
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{Type, TypeFlags},
-    SemanticInfo,
+    semantic::{CodeGenData, PrimFlags, Type},
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
@@ -12,40 +16,40 @@ const ERR_MSG: &'static str = "[ERROR_CODEGEN]";
 const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
 
 #[derive(Debug, Clone, PartialEq)]
-struct Variable {
+struct GenVariable {
+    ident: String,
     var_type: Type,
     stk_index: usize,
-    ident: Option<String>,
 }
 
 struct CodeGenContext {
     reg_count: usize,
-    endif_label: String,
-    loop_end_label: String,
-}
-
-pub struct Generator<'a> {
-    ast: AST,
-    sem_info: SemanticInfo<'a>,
     label_count: usize,
-    stack: Vec<Variable>,
-    var_map: HashMap<String, Variable>,
-    ctx: CodeGenContext,
+    endif_label: String,
+    loop_end_label: String, //Vec<String>,
 }
 
-impl Generator<'_> {
-    pub fn new(ast: AST, sem_info: SemanticInfo) -> Generator {
+pub struct Generator {
+    ast: AST,
+    ctx: CodeGenContext,
+    stk_pos: usize,
+    stack: Vec<GenVariable>,
+    var_map: HashMap<String, GenVariable>,
+}
+
+impl Generator {
+    pub fn new(gen_data: CodeGenData) -> Generator {
         Generator {
-            ast,
-            label_count: 0,
+            ast: gen_data.ast,
+            stk_pos: 0,
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: CodeGenContext {
                 reg_count: 0,
+                label_count: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
-            sem_info,
         }
     }
 
@@ -71,28 +75,25 @@ impl Generator<'_> {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::Let {
-                ident,
-                var_type,
-                init_expr,
-                ..
-            } => {
-                if let Some(var) = self.var_map.get(ident.as_str()) {
+            NodeStmt::SemDecl(sem_var) => {
+                if let Some(var) = self.var_map.get(sem_var.ident.as_str()) {
                     return Err(format!(
-                        "{ERR_MSG} Re-Initialisation of a Variable:\n{var:?}"
+                        "{ERR_MSG} Re-Initialisation of a GenVariable:\n{sem_var:#?}"
                     ));
                 }
-                let var = Variable {
-                    ident: Some(ident.clone()),
-                    stk_index: self.stack.len() + 1,
-                    var_type,
+                let width = sem_var.var_type.width;
+                let var = GenVariable {
+                    ident: sem_var.ident.clone(),
+                    stk_index: self.stk_pos + width,
+                    var_type: sem_var.var_type,
                 };
+                self.stk_pos += width;
                 self.stack.push(var.clone());
-                self.var_map.insert(ident.clone(), var);
-                if let Some(expr) = init_expr {
-                    return self.gen_expr(expr, Some("push"));
+                self.var_map.insert(var.ident.clone(), var);
+                if let Some(expr) = sem_var.init_expr {
+                    return self.gen_expr(expr, Some(&self.gen_stk_access(self.stk_pos, width)));
                 }
-                Ok("\n".to_string())
+                Ok("\n".to_string()) // just variable decl, no assignment.
             }
             NodeStmt::Assign(expr) => {
                 let ident = match &expr {
@@ -105,11 +106,11 @@ impl Generator<'_> {
                     _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
                 };
                 match self.var_map.get(ident) {
-                    Some(var) => {
-                        let stk_pos = self.gen_stk_pos(var.stk_index);
-                        self.gen_expr(expr, Some(stk_pos.as_str()))
-                    }
-                    None => unreachable!("{ERR_MSG} Variable not found for ident: '{ident}'"),
+                    Some(var) => self.gen_expr(
+                        expr,
+                        Some(&self.gen_stk_access(var.stk_index, var.var_type.width)),
+                    ),
+                    None => unreachable!("{ERR_MSG} GenVariable not found for ident: '{ident}'"),
                 }
             }
             NodeStmt::If {
@@ -197,6 +198,7 @@ impl Generator<'_> {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
+            NodeStmt::Decl { .. } => unreachable!("{ERR_MSG} Found {stmt:#?}.. shouldn't have."),
         }
     }
 
@@ -212,11 +214,12 @@ impl Generator<'_> {
         let pop_amt = self.stack.len() - var_count;
         debug_print(format!("{DBG_MSG} Ending scope, pop({pop_amt})").as_str());
         for _ in 0..pop_amt {
-            // self.ctx.stk_ptr -= 1;
             let popped_var = match self.stack.pop() {
-                Some(var) => self.var_map.remove(var.ident.as_ref().unwrap()),
+                Some(var) => var,
                 None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
             };
+            self.stk_pos -= popped_var.var_type.width;
+            self.var_map.remove(popped_var.ident.as_str()).unwrap();
             debug_print(format!("{DBG_MSG} Scope ended, removing {popped_var:#?}").as_str());
         }
         Ok(asm)
@@ -239,10 +242,10 @@ impl Generator<'_> {
 
                 let flags = op.get_flags();
                 let op_asm = match flags {
-                    _ if flags.contains(TokenFlags::BIT) => self.gen_bitwise(op)?,
-                    _ if flags.contains(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
-                    _ if flags.contains(TokenFlags::CMP) => self.gen_comparison(op)?,
-                    _ if flags.contains(TokenFlags::LOG) => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
+                    _ if flags.intersects(TokenFlags::BIT) => self.gen_bitwise(op)?,
+                    _ if flags.intersects(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
+                    _ if flags.intersects(TokenFlags::CMP) => self.gen_comparison(op)?,
+                    _ if flags.intersects(TokenFlags::LOG) => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
                     _ => {
                         return Err(format!(
                             "{ERR_MSG} Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
@@ -279,13 +282,14 @@ impl Generator<'_> {
         // don't need to release reg if its just operation, just doing stuff on data.
         // only release if changing stack data.
         if let Some(reg) = ans_reg {
-            if reg == "push" {
-                asm += format!("{SPACE}push {}\n", self.get_reg(self.ctx.reg_count)).as_str();
-                self.release_reg();
-            } else {
-                asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
-                self.release_reg();
-            }
+            // if reg == "push" {
+            //     asm += format!("{SPACE}push {}\n", self.get_reg(self.ctx.reg_count)).as_str();
+            //     self.release_reg();
+            // }
+            // else {
+            asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
+            self.release_reg();
+            // }
         }
         Ok(asm)
     }
@@ -294,10 +298,10 @@ impl Generator<'_> {
         match term {
             NodeTerm::IntLit(tok) => {
                 let reg = match ans_reg {
-                    Some(reg) if reg == "push" => {
-                        return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()));
-                        // confusing, reg == "push "
-                    }
+                    // Some(reg) if reg == "push" => {
+                    //     return Ok(format!("{SPACE}{reg} {}\n", tok.value.unwrap()));
+                    //     // confusing, reg == "push "
+                    // }
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
@@ -307,14 +311,14 @@ impl Generator<'_> {
                 let ident = tok.value.clone().unwrap();
                 match self.var_map.get(ident.as_str()) {
                     Some(var) => {
-                        let stk_pos = self.gen_stk_pos(var.stk_index);
+                        let stk_pos = self.gen_var_access(var.stk_index, var.var_type.width);
                         let reg = match ans_reg {
                             Some(reg) => reg,
                             None => self.next_reg(),
                         };
                         Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
                     }
-                    None => Err(format!("{ERR_MSG} Variable: {ident:?} doesn't exist.")),
+                    None => Err(format!("{ERR_MSG} GenVariable: {ident:?} doesn't exist.")),
                 }
             }
         }
@@ -446,13 +450,26 @@ impl Generator<'_> {
     }
 
     fn gen_label(&mut self, name: &'static str) -> String {
-        self.label_count += 1;
-        format!(".{:X}_{name}", self.label_count) // '.' denotes a local scoped label in asm
+        self.ctx.label_count += 1;
+        format!(".{:X}_{name}", self.ctx.label_count) // '.' denotes a local scoped label in asm
     }
 
-    // TODO: in future, this will change depending on the size of var, e.g u8 or u32
-    fn gen_stk_pos(&self, stk_index: usize) -> String {
-        format!("QWORD [rbp-{}]", stk_index * WORD_SIZE)
+    fn gen_var_access(&self, stk_index: usize, word_size: usize) -> String {
+        format!("[rbp-{stk_index}]")
+    }
+
+    fn gen_stk_access(&self, stk_index: usize, word_size: usize) -> String {
+        format!("{} [rbp-{stk_index}]", self.gen_access_size(word_size))
+    }
+
+    fn gen_access_size(&self, word_size: usize) -> &str {
+        match word_size {
+            1 => "byte",
+            2 => "word",
+            4 => "dword",
+            8 => "qword",
+            _ => unreachable!("{ERR_MSG} Invalid word_size found: '{word_size}'"),
+        }
     }
 
     fn next_reg(&mut self) -> &'static str {
@@ -461,9 +478,6 @@ impl Generator<'_> {
         match scratch_registers.get(self.ctx.reg_count) {
             Some(reg) => {
                 self.ctx.reg_count += 1;
-                // if LOG_DEBUG_INFO {
-                //     println!("{DBG_MSG} next reg: {} | {}", reg, self.ctx.reg_count);
-                // }
                 reg
             }
             None => todo!("no available reg!"),
@@ -473,9 +487,6 @@ impl Generator<'_> {
     fn get_reg(&mut self, index: usize) -> &'static str {
         // preserved_registers = ["rdx", ...],
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
-        // if LOG_DEBUG_INFO {
-        //     println!("{DBG_MSG} getting reg[{} - 1]", index);
-        // }
         match scratch_registers.get(index - 1) {
             Some(reg) => reg,
             None => todo!("oob reg check"),

@@ -59,11 +59,10 @@ aaa }
     - don't push pop every intlit/var, use registers! 
   - [ ] Testing infrastructure.
   - [ ] data types
-    - bools: al register (8 bit)
-    - u8: al
-    - u16: ax 
-    - u32: eax 
-    - u64: rax
+    - [x] primitives
+    - [ ] pointers // get mem location of a val.
+    - [ ] structs
+    - [ ] arrays // just heap pointers?
   - [ ] functions
     - return type
     - arguments 

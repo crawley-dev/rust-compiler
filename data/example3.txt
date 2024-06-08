@@ -60,10 +60,9 @@ let n = 0 || 5 + 1 > 6;
 //}
 
 let mut i: ^i32 = 0;
-let mut ans: i32 = 2;
+let mut ans: i8 = 2;
 
 while 1 == 1 {
-    //dwa += 10; // crashes, concrete type, intlit is ALWAYS i32!
     ans *= 2;
     i += 1;
     if i > 5 {
@@ -76,4 +75,9 @@ while 1 == 1 {
     }
 }
 
-exit(ans);
+//if 5 == 5 {
+//    ans *= 2;
+//    if 10 == 10 {
+//        ans += 5;
+//    }
+//}
