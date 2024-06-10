@@ -157,14 +157,8 @@ impl Checker<'_> {
                 mutable,
                 ptr,
             } => {
-                if self.var_map.contains_key(ident.as_str()) {
-                    return err!("Attempted re-initialisation of a Variable: '{ident}'",);
-                } else if self.prim_map.contains_key(ident.as_str()) {
-                    return err!("Illegal Variable name, Types are keywords: '{ident}'",);
-                }
-
+                self.validate_ident(ident.as_str());
                 let (mut width, mut flags) = *self.prim_map.get(type_ident.as_str()).unwrap();
-                // flags |= PrimFlags::VARIABLE;
                 let form = match ptr {
                     true => {
                         width = 8;
@@ -185,7 +179,6 @@ impl Checker<'_> {
                 if let Some(ref expr) = var.init_expr {
                     self.check_expr(expr)?;
                 }
-
                 return Ok(NodeStmt::SemDecl(var));
             }
             NodeStmt::If {
@@ -366,6 +359,7 @@ impl Checker<'_> {
     fn check_term(&self, term: &NodeTerm) -> Result<&TypeForm, String> {
         match term {
             NodeTerm::Ident(name) => {
+                self.validate_term(term)?;
                 match self.var_map.get(name.value.as_ref().unwrap().as_str()) {
                     Some(var) => Ok(&var.var_type.form),
                     None => err!("Variable Not Found '{}'", name.value.as_ref().unwrap()),
@@ -425,6 +419,29 @@ impl Checker<'_> {
 
     fn flags_either_equal(&self, t1: PrimFlags, t2: PrimFlags, flags: PrimFlags) -> bool {
         t1.intersects(flags) || t2.intersects(flags)
+    }
+
+    fn validate_term(&self, term: &NodeTerm) -> Result<(), String> {
+        match term {
+            NodeTerm::Ident(name) => {
+                let ident = name.value.as_ref().unwrap().as_str();
+                if self.var_map.contains_key(ident) {
+                    return err!("Attempted re-initialisation of a Variable: '{ident}'",);
+                } else if self.prim_map.contains_key(ident) {
+                    return err!("Illegal Variable name, Types are keywords: '{ident}'",);
+                }
+                Ok(())
+            }
+            NodeTerm::IntLit(val) => err!("Integer Literal '{val:?}' Found, not ident",),
+        }
+    }
+    fn validate_ident(&self, ident: &str) -> Result<(), String> {
+        if self.var_map.contains_key(ident) {
+            return err!("Attempted re-initialisation of a Variable: '{ident}'",);
+        } else if self.prim_map.contains_key(ident) {
+            return err!("Illegal Variable name, Types are keywords: '{ident}'",);
+        }
+        Ok(())
     }
 }
 
