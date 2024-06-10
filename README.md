@@ -60,7 +60,7 @@ aaa }
   - [ ] Testing infrastructure.
   - [ ] data types
     - [x] primitives
-    - [ ] pointers // get mem location of a val.
+    - [ ] pointers // get mem location of a val (impl '&')
     - [ ] structs
     - [ ] arrays // just heap pointers?
   - [ ] functions
