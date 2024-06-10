@@ -1,9 +1,10 @@
 // >>CODE GEN<< Taking AST from parse && info from semantic and generating (hopefully optimising) code!
-// Useful Semantic Info:
-//      - types && type_map, provides info on byte size, etc (is array...)
+//  Useful Semantic Info:
+//      - ✅ replace stmt NodeStmt with semantic equivalent (holds different info, types etc.)
 //      - Let stmt --> Semantic Variable created, use that! don't need to consume
 
 use crate::{
+    debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::{CodeGenData, PrimFlags, Type},
@@ -26,7 +27,7 @@ struct CodeGenContext {
     reg_count: usize,
     label_count: usize,
     endif_label: String,
-    loop_end_label: String, //Vec<String>,
+    loop_end_label: String,
 }
 
 pub struct Generator {
@@ -77,9 +78,7 @@ impl Generator {
             }
             NodeStmt::SemDecl(sem_var) => {
                 if let Some(var) = self.var_map.get(sem_var.ident.as_str()) {
-                    return Err(format!(
-                        "{ERR_MSG} Re-Initialisation of a GenVariable:\n{sem_var:#?}"
-                    ));
+                    return err!("Re-Initialisation of a GenVariable:\n{sem_var:#?}",);
                 }
                 let width = sem_var.var_type.width;
                 let var = GenVariable {
@@ -110,7 +109,7 @@ impl Generator {
                         expr,
                         Some(&self.gen_stk_access(var.stk_index, var.var_type.width)),
                     ),
-                    None => unreachable!("{ERR_MSG} GenVariable not found for ident: '{ident}'"),
+                    None => unreachable!("{ERR_MSG} Variable not found for ident: '{ident}'"),
                 }
             }
             NodeStmt::If {
@@ -198,13 +197,13 @@ impl Generator {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
-            NodeStmt::Decl { .. } => unreachable!("{ERR_MSG} Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::Decl { .. } => err!("Found {stmt:#?}.. shouldn't have.",),
         }
     }
 
     // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
-        debug_print(format!("{DBG_MSG} Beginning scope").as_str());
+        debug!("Beginning scope",);
         let var_count = self.stack.len();
         let mut asm = String::new();
         for stmt in scope.stmts {
@@ -212,26 +211,23 @@ impl Generator {
         }
 
         let pop_amt = self.stack.len() - var_count;
-        debug_print(format!("{DBG_MSG} Ending scope, pop({pop_amt})").as_str());
+        debug!("Ending scope, pop({pop_amt})",);
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => var,
-                None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
+                None => return err!("uhh.. scope messed up",),
             };
             self.stk_pos -= popped_var.var_type.width;
             self.var_map.remove(popped_var.ident.as_str()).unwrap();
-            debug_print(format!("{DBG_MSG} Scope ended, removing {popped_var:#?}").as_str());
+            debug!("Scope ended, removing {popped_var:#?}",);
         }
         Ok(asm)
     }
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
-        debug_print(
-            format!(
-                "{}\n{DBG_MSG} gen expr, reg: {ans_reg:?} \n{expr:#?}\n",
-                "-".repeat(20)
-            )
-            .as_str(),
+        debug!(
+            "{}\ngen expr, reg: {ans_reg:?} \n{expr:#?}\n",
+            "-".repeat(20)
         );
         let mut asm = String::new();
         match expr {
@@ -245,11 +241,13 @@ impl Generator {
                     _ if flags.intersects(TokenFlags::BIT) => self.gen_bitwise(op)?,
                     _ if flags.intersects(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
                     _ if flags.intersects(TokenFlags::CMP) => self.gen_comparison(op)?,
-                    _ if flags.intersects(TokenFlags::LOG) => return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm),
+                    _ if flags.intersects(TokenFlags::LOG) => {
+                        return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm)
+                    }
                     _ => {
-                        return Err(format!(
-                            "{ERR_MSG} Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
-                        ))
+                        return err!(
+                            "Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}",
+                        )
                     }
                 };
                 self.release_reg(); // first reg stores arithmetic answer, don't release it.
@@ -259,28 +257,22 @@ impl Generator {
                 asm += op_asm.as_str();
             }
             NodeExpr::UnaryExpr { op, operand } => {
-                let expr_asm = self.gen_expr(*operand, None)?;
-                // asm += self.gen_expr(*operand, None)?.as_str();
+                asm += self.gen_expr(*operand, None)?.as_str();
 
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
                     // TokenKind::Ones_Complement_Goes_HERE! (bitwise not) => format!("{SPACE}not {reg}\n",),
-                    TokenKind::Sub => todo!("unary sub. do '0-EXPR' ??"),
+                    TokenKind::Sub => todo!("{ERR_MSG} unary sub. do '0-EXPR' ??"),
                     TokenKind::CmpNot => format!(
-                        "{expr_asm}\
-                         {SPACE}test {reg}, {reg}\n\
+                        "{SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
                     ),
-                    TokenKind::BitAnd => format!(
-                        "{expr_asm}\
-                    {SPACE}lea rax, \n"
+                    //format!("{SPACE}lea {reg} \n"),
+                    TokenKind::BitAnd => todo!(
+                        "{ERR_MSG} need to get variable's stk_pos for 'lea [rbp+___]' (gets addr)"
                     ),
-                    _ => {
-                        return Err(format!(
-                            "{ERR_MSG} Unable to generate unary expression: '{op:?}'"
-                        ))
-                    }
+                    _ => return err!("Unable to generate unary expression: '{op:?}'",),
                 };
                 asm += op_asm.as_str();
             }
@@ -314,7 +306,7 @@ impl Generator {
                         };
                         Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
                     }
-                    None => Err(format!("{ERR_MSG} GenVariable: {ident:?} doesn't exist.")),
+                    None => err!("GenVariable: {ident:?} doesn't exist.",),
                 }
             }
         }
@@ -381,7 +373,7 @@ impl Generator {
                     {mov_ans}"
                 ))
             }
-            _ => Err(format!("{ERR_MSG} Unable to generate Logical comparison")),
+            _ => err!("Unable to generate Logical comparison",),
         }
     }
 
@@ -394,11 +386,7 @@ impl Generator {
             TokenKind::Mul => format!("imul {reg1}, {reg2}"),
             TokenKind::Quo => format!("cqo\n{SPACE}idiv {reg2}"),
             TokenKind::Mod => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo', instruction changes with reg size
-            _ => {
-                return Err(format!(
-                    "{ERR_MSG} Unable to generate Arithmetic operation: '{op:?}'"
-                ))
-            }
+            _ => return err!("Unable to generate Arithmetic operation: '{op:?}'",),
         };
         Ok(format!("{SPACE}{operation_asm}\n"))
     }
@@ -413,7 +401,7 @@ impl Generator {
             TokenKind::Shl => "sal",
             TokenKind::Shr => "sar",
             // TODO: (Types) Unsigned shift: shl, shr
-            _ => return Err(format!("{ERR_MSG} Unable to generate Bitwise operation")),
+            _ => return err!("Unable to generate Bitwise operation",),
         };
 
         Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
@@ -441,7 +429,7 @@ impl Generator {
             TokenKind::GtEq => Ok("ge"),
             TokenKind::Lt => Ok("l"),
             TokenKind::LtEq => Ok("le"),
-            _ => Err(format!("{ERR_MSG} Unable to generate comparison modifier")),
+            _ => err!("Unable to generate comparison modifier",),
         }
     }
 
@@ -476,7 +464,7 @@ impl Generator {
                 self.ctx.reg_count += 1;
                 reg
             }
-            None => todo!("no available reg!"),
+            None => todo!("{ERR_MSG} out of registers!"),
         }
     }
 
@@ -485,17 +473,12 @@ impl Generator {
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         match scratch_registers.get(index - 1) {
             Some(reg) => reg,
-            None => todo!("oob reg check"),
+            None => todo!("{ERR_MSG} out of registers!"),
+            // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
         }
     }
 
     fn release_reg(&mut self) {
         self.ctx.reg_count -= 1;
-    }
-}
-
-fn debug_print(msg: &str) {
-    if LOG_DEBUG_INFO {
-        println!("{msg}")
     }
 }

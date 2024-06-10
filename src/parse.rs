@@ -1,5 +1,6 @@
 // >>PARSER<< Constructs statements out of tokens from the lexer.
 use crate::{
+    debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::SemVariable,
 };
@@ -83,7 +84,7 @@ impl Parser {
     }
 
     pub fn parse_prog(&mut self) -> Result<AST, String> {
-        let mut ast = AST { stmts: vec![] };
+        let mut ast = AST { stmts: Vec::new() };
         while self.peek(0).is_some() {
             ast.stmts.push(self.parse_stmt()?);
         }
@@ -93,9 +94,9 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
-            None => return Err(format!("{ERR_MSG} No statement to parse")),
+            None => return err!("No statement to parse",),
         };
-        debug_print(format!("\n{DBG_MSG} parsing statement: {:?}", self.peek(0).unwrap()).as_str());
+        debug!("\nparsing statement: {:?}", self.peek(0).unwrap());
 
         let stmt = match tok.kind {
             TokenKind::Let => {
@@ -118,12 +119,6 @@ impl Parser {
                     type_ident,
                     mutable,
                     ptr,
-                    // var_type: Type {
-                    //     byte_width: 0,
-                    //     ident: type_ident,
-                    //     flags: TypeFlags::from_bits(ptr as u16 * TypeFlags::POINTER.bits())
-                    //         .unwrap(),
-                    // },
                 }
             }
             TokenKind::If => {
@@ -181,7 +176,7 @@ impl Parser {
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return Err(format!("{ERR_MSG} Invalid Statement: '{tok:?}'",)),
+            _ => return err!("Invalid Statement: '{tok:?}'",),
         };
 
         // statments that do/don't require a ';' to end.
@@ -198,13 +193,12 @@ impl Parser {
     }
 
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
+        // consumes statements until a matching closebrace is found.
         self.try_consume(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
-        // consumes statements until a matching closebrace is found.
-        while self.token_equals(TokenKind::CloseBrace, 0).is_err() {
+        while self.try_consume(TokenKind::CloseBrace).is_err() {
             stmts.push(self.parse_stmt()?);
         }
-        self.try_consume(TokenKind::CloseBrace)?;
 
         Ok(NodeScope {
             stmts,
@@ -218,14 +212,14 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return Err(format!("{ERR_MSG} No operand to parse near => \n{lhs:#?}")),
+                None => return err!("No operand to parse near => \n{lhs:#?}",),
             };
 
             // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             let prec = op.get_prec();
             if prec < min_prec {
-                debug_print(format!("{DBG_MSG} climb ended: {op:?}({prec}) < {min_prec}").as_str());
+                debug!("climb ended: {op:?}({prec}) < {min_prec}",);
                 break;
             }
 
@@ -249,7 +243,7 @@ impl Parser {
     fn parse_term(&mut self) -> Result<NodeExpr, String> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return Err(format!("{ERR_MSG} No term to parse")),
+            None => return err!("No term to parse",),
         };
 
         match tok.kind {
@@ -262,24 +256,21 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
-                debug_print(format!("{DBG_MSG} parsed parens {expr:#?}").as_str());
+                debug!("parsed parens {expr:#?}",);
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            _ => Err(format!("{ERR_MSG} Invalid Term: '{tok:?}'")),
+            _ => err!("Invalid Term: '{tok:?}'",),
         }
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
-            Some(tok) => Err(format!(
-                "{ERR_MSG} expected '{kind:?}', found {:?}",
-                tok.kind
-            )),
-            None => Err(format!("{ERR_MSG} No token to evaluate")),
+            Some(tok) => err!("expected '{kind:?}', found {:?}", tok.kind,),
+            None => err!("No token to evaluate",),
         }
     }
 
@@ -290,7 +281,7 @@ impl Parser {
     ) -> Result<bool, String> {
         match self.peek(offset) {
             Some(tok) => Ok(pattern(&tok.kind)),
-            None => Err(format!("{ERR_MSG} No token to evalutate")),
+            None => err!("No token to evalutate",),
         }
     }
 
@@ -300,7 +291,7 @@ impl Parser {
 
     // remove item from vec? << no clone, linear complexity though..
     fn consume(&mut self) -> Token {
-        debug_print(format!("consuming: {:?}", self.peek(0).unwrap()).as_str());
+        debug!("consuming: {:?}", self.peek(0).unwrap());
         let i = self.position;
         self.position += 1;
         self.tokens.get(i).unwrap().clone()
@@ -309,11 +300,5 @@ impl Parser {
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
-    }
-}
-
-fn debug_print(msg: &str) {
-    if LOG_DEBUG_INFO {
-        println!("{msg}")
     }
 }

@@ -9,7 +9,7 @@ _start:
     mov rax, [rbp-4] ; Ident('i')
     mov rcx, 5
     add rax, rcx
-    lea rax, 
+    lea rax 
     mov qword [rbp-13], rax
 ; While
     jmp .1_WHILE_CMP

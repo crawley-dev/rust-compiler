@@ -5,6 +5,7 @@ use std::{
 };
 
 mod lex;
+mod macros;
 use lex::*;
 
 mod parse;

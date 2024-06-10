@@ -15,13 +15,17 @@
 //      - ✅ pointers, always have usize, not a defined type but an attribute, that modifies byte_size?
 //          - kindof its own type (set size), but loose (inherits type's attr)
 //          - a ptr is the original type with modified byte_width (4) & ptr flag set.
-//      FORM:
+//      ✅ FORM:
 //          - Types have a form, which is the group they fall under, e.g struct or array.
 //          - each form has unique behaviour, such as a literal being non-concrete or an array being index-able
-//      FLAGS:
-//          - form independent flags for a type.
+//      ADDRESSING MODES:
+//          - todo with how the computer reads memory (idk if it matters tbh)
+//      CLONING!:
+//          - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
+//          - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
 
 use crate::{
+    debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
 };
@@ -42,7 +46,7 @@ bitflags::bitflags! {
         const FLOAT = 1 << 4;
         const INTEGRAL = 1 << 5;
         const LITERAL = 1 << 6;
-        const VARIABLE = 1 << 7;
+        // const VARIABLE = 1 << 7;
     }
 }
 
@@ -153,14 +157,14 @@ impl Checker<'_> {
                 mutable,
                 ptr,
             } => {
-                if let Some(var) = self.var_map.get(ident.as_str()) {
-                    return Err(format!(
-                        "{ERR_MSG} Re-Initialisation of a SemVariable:\n{var:?}"
-                    ));
+                if self.var_map.contains_key(ident.as_str()) {
+                    return err!("Attempted re-initialisation of a Variable: '{ident}'",);
+                } else if self.prim_map.contains_key(ident.as_str()) {
+                    return err!("Illegal Variable name, Types are keywords: '{ident}'",);
                 }
 
                 let (mut width, mut flags) = *self.prim_map.get(type_ident.as_str()).unwrap();
-                flags |= PrimFlags::VARIABLE;
+                // flags |= PrimFlags::VARIABLE;
                 let form = match ptr {
                     true => {
                         width = 8;
@@ -189,12 +193,9 @@ impl Checker<'_> {
                 scope,
                 branches,
             } => {
-                self.form_intersects(
-                    self.check_expr(&condition)?,
-                    PrimFlags::BOOLEAN,
-                    format!("{ERR_MSG} 'If' statement condition not 'boolean'\n{condition:#?}")
-                        .as_str(),
-                )?;
+                if self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                    return err!("'If' statement condition not 'boolean'\n{condition:#?}",);
+                }
 
                 let mut new_branches = Vec::new();
                 for branch in branches {
@@ -207,12 +208,9 @@ impl Checker<'_> {
                 });
             }
             NodeStmt::ElseIf { condition, scope } => {
-                self.form_intersects(
-                    self.check_expr(&condition)?,
-                    PrimFlags::BOOLEAN,
-                    format!("{ERR_MSG} 'ElseIf' statement condition not 'boolean'\n{condition:#?}")
-                        .as_str(),
-                )?;
+                if self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                    return err!("'ElseIf' statement condition not 'boolean'\n{condition:#?}",);
+                };
                 return Ok(NodeStmt::ElseIf {
                     condition,
                     scope: self.check_scope(scope)?,
@@ -241,9 +239,9 @@ impl Checker<'_> {
                 };
                 match self.var_map.get(ident) {
                     Some(var) if !var.mutable => {
-                        return Err(format!("{ERR_MSG} Re-Assignment of a Constant:\n{var:?}"))
+                        return err!("Re-Assignment of a Constant:\n{var:?}",)
                     }
-                    None => return Err(format!("{ERR_MSG} SemVariable '{ident}' does not exist")),
+                    None => return err!("SemVariable '{ident}' does not exist",),
                     _ => (),
                 }
                 self.check_expr(expr)?;
@@ -256,7 +254,7 @@ impl Checker<'_> {
             }
             NodeStmt::Break => {
                 if self.ctx.loop_count <= 0 {
-                    return Err(format!("{ERR_MSG} Not inside a loop! cannot break"));
+                    return err!("Not inside a loop! cannot break",);
                 }
             }
             NodeStmt::SemDecl { .. } => unreachable!("{ERR_MSG} Found {stmt:#?}.. shouldn't have."),
@@ -273,14 +271,14 @@ impl Checker<'_> {
         }
 
         let pop_amt = self.stack.len() - var_count;
-        debug_print(format!("{DBG_MSG} Ending scope, pop({pop_amt})").as_str());
+        debug!("Ending scope, pop({pop_amt})",);
 
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(var.as_str()),
-                None => return Err(format!("{ERR_MSG} uhh.. scope messed up")),
+                None => return err!("uhh.. scope messed up",),
             };
-            debug_print(format!("{DBG_MSG} Scope ended, removing {popped_var:#?}").as_str());
+            debug!("Scope ended, removing {popped_var:#?}",);
         }
 
         Ok(NodeScope {
@@ -292,7 +290,7 @@ impl Checker<'_> {
     fn check_expr(&self, expr: &NodeExpr) -> Result<&TypeForm, String> {
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let lform = self.check_expr(&*lhs)?;
+                let mut lform = self.check_expr(&*lhs)?;
                 let rform = self.check_expr(&*rhs)?;
                 let op_dbg = format!(
                     "\n{sep}{sep}BinExpr{sep}{sep}\n\
@@ -304,10 +302,11 @@ impl Checker<'_> {
                         {rform:#?}",
                     sep = "-".repeat(5),
                 );
-                debug_print(op_dbg.as_str());
+                debug!("{op_dbg}",);
 
-                let err_msg = format!("{ERR_MSG} Mismatched Op:Operand =>{op_dbg}");
-                self.check_type_equality(lform, rform, err_msg.as_str()); // recursive so has to be seperate function
+                if !self.check_type_equality(lform, rform) {
+                    return err!("Mismatched Op:Operand =>{op_dbg}",);
+                } // recursive so has to be seperate function
 
                 // arithmetic operator doesn't work on boolean        operand
                 // logical    operator doesn't work on integral/float operand
@@ -316,48 +315,48 @@ impl Checker<'_> {
                 match op_flags {
                     _ if op_flags.intersects(TokenFlags::CMP) => Ok(&self.ctx.base_bool),
                     _ if op_flags.intersects(TokenFlags::ARITH) => {
-                        if self.form_intersects(lform, PrimFlags::BOOLEAN, "").is_ok() {
-                            return Err(err_msg);
+                        if self.form_intersects(lform, PrimFlags::BOOLEAN) {
+                            return err!("Mismatched Op:Operand =>{op_dbg}",);
                         }
-                        debug_print(&format!("Bin Expr all good: {lform:#?}"));
-                        Ok(lform)
+                        debug!("Bin Expr all good: {lform:#?}",);
+                        Ok(lform) // TODO(TOM): need flags.intersection()
                     }
                     _ if op_flags.intersects(TokenFlags::LOG) => {
-                        if self.form_intersects(lform, PrimFlags::INTEGRAL, "").is_ok() {
-                            return Err(err_msg);
+                        if self.form_intersects(lform, PrimFlags::INTEGRAL) {
+                            return err!("Mismatched Op:Operand =>{op_dbg}",);
                         }
-                        debug_print(&format!("Bin Expr all good: {lform:#?}"));
+                        debug!("Bin Expr all good: {lform:#?}",);
                         Ok(lform)
                     } // TODO(TOM): floats not supported so don't match against.
-                    _ => return Err(format!("{ERR_MSG} Unsupported binary expression:{op_dbg}")),
+                    _ => return err!("Unsupported binary expression:{op_dbg}",),
                 }
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let operand_form = self.check_expr(&*operand)?;
                 let op_dbg = format!("{op:?} .. {operand:#?}\n{operand_form:#?}");
-                debug_print(&op_dbg);
+                debug!("{op_dbg}",);
 
                 // unary sub fails on: non-arith, unsigned
                 // CmpNot fails on: non-boolean
+                // Addr of fails on: non-allocated
                 match op {
                     TokenKind::Sub => todo!("unary sub semantics"),
                     TokenKind::CmpNot => {
-                        self.form_intersects(
-                            operand_form,
-                            PrimFlags::BOOLEAN,
-                            format!("{ERR_MSG} Mismatched Op:Operand => {op_dbg}").as_str(),
-                        )?;
-                        Ok(operand_form)
-                    }
-                    TokenKind::BitAnd => {
-                        // can only get mem address of variable.
-                        debug_print(&format!("mem addr of: {operand_form:#?}"));
-                        match self.form_intersects(operand_form, PrimFlags::VARIABLE, "") {
-                            Err(_) => Err(format!("{ERR_MSG} Mismatched Op:Operand => {op_dbg}")),
-                            Ok(_) => Ok(operand_form),
+                        match self.form_intersects(operand_form, PrimFlags::BOOLEAN) {
+                            true => err!("Mismatched Op:Operand => {op_dbg}",),
+                            false => Ok(operand_form),
                         }
                     }
-                    _ => Err(format!("{ERR_MSG} Unsupported Unary Expression:{op_dbg}")),
+                    TokenKind::BitAnd => {
+                        debug!("mem addr of: {operand_form:#?}",);
+                        match &**operand { // jesus double de-ref + ref??
+                            NodeExpr::Term(NodeTerm::Ident(_)) => Ok(operand_form), // this works on types ?/
+                            _ => err!(
+                                "Cannot de-reference an expression / literal, no associated memory address\n{op_dbg}",
+                            ),
+                        }
+                    }
+                    _ => err!("Unsupported Unary Expression:{op_dbg}",),
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),
@@ -369,10 +368,7 @@ impl Checker<'_> {
             NodeTerm::Ident(name) => {
                 match self.var_map.get(name.value.as_ref().unwrap().as_str()) {
                     Some(var) => Ok(&var.var_type.form),
-                    None => Err(format!(
-                        "{ERR_MSG} SemVariable not found '{}'",
-                        name.value.as_ref().unwrap()
-                    )),
+                    None => err!("Variable Not Found '{}'", name.value.as_ref().unwrap()),
                 }
             }
             NodeTerm::IntLit(val) => Ok(&self.ctx.base_intlit),
@@ -381,16 +377,15 @@ impl Checker<'_> {
 
     fn check_type_equality<'a>(
         &'a self,
-        lform: &TypeForm,
+        lform: &TypeForm, // modify lform, as its returned out of check_expr()
         rform: &TypeForm,
-        dbg_msg: &'a str,
-    ) -> Result<(), &str> {
+    ) -> bool {
         // check if lhs,rhs are of same form
         // .. if both are arithmetic,
         // .. .. check if either side is a literal,
         // .. .. check sign is the same.
         if lform == rform {
-            return Ok(());
+            return true;
         }
         match lform {
             TypeForm::Primitive { flags: lf } => match rform {
@@ -399,32 +394,28 @@ impl Checker<'_> {
                         || !(self.flags_equal(*lf, *rf, PrimFlags::UNSIGNED)
                             || self.flags_equal(*lf, *rf, PrimFlags::SIGNED)))
                     {
-                        return Err(dbg_msg);
+                        return false;
                     }
-                    Ok(())
+                    // *lf = lf.intersection(*rf); // settings bits of lform to be common bits between the 2.
+                    true
                 }
-                _ => Err(dbg_msg),
+                _ => false,
             },
-            _ => Err(dbg_msg),
+            _ => false,
         }
     }
 
-    fn form_intersects<'a>(
-        &'a self,
-        form: &TypeForm,
-        desired_flags: PrimFlags,
-        err_msg: &'a str,
-    ) -> Result<(), &str> {
+    fn form_intersects<'a>(&'a self, form: &TypeForm, desired_flags: PrimFlags) -> bool {
         match form {
-            TypeForm::Primitive { flags } if flags.intersects(desired_flags) => Ok(()),
-            _ => Err(err_msg),
+            TypeForm::Primitive { flags } if flags.intersects(desired_flags) => true,
+            _ => false,
         }
     }
 
     fn get_primflags(&self, ident: &str) -> Result<&(usize, PrimFlags), String> {
         match self.prim_map.get(ident) {
             Some(data) => Ok(data),
-            None => Err(format!("{ERR_MSG} Primitive Type '{ident}' not found")),
+            None => err!("Primitive Type '{ident}' not found",),
         }
     }
 
@@ -434,12 +425,6 @@ impl Checker<'_> {
 
     fn flags_either_equal(&self, t1: PrimFlags, t2: PrimFlags, flags: PrimFlags) -> bool {
         t1.intersects(flags) || t2.intersects(flags)
-    }
-}
-
-fn debug_print(msg: &str) {
-    if LOG_DEBUG_INFO {
-        println!("{DBG_MSG} {msg}")
     }
 }
 
