@@ -4,7 +4,7 @@ use crate::{
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::SemVariable,
 };
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
 const DBG_MSG: &'static str = "[DEBUG_PARSE]";
 
@@ -94,7 +94,7 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
-            None => return err!("No statement to parse",),
+            None => return err!("No statement to parse"),
         };
         debug!("\nparsing statement: {:?}", self.peek(0).unwrap());
 
@@ -176,7 +176,7 @@ impl Parser {
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return err!("Invalid Statement: '{tok:?}'",),
+            _ => return err!("Invalid Statement: '{tok:?}'"),
         };
 
         // statments that do/don't require a ';' to end.
@@ -212,14 +212,14 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!("No operand to parse near => \n{lhs:#?}",),
+                None => return err!("No operand to parse near => \n{lhs:#?}"),
             };
 
             // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             let prec = op.get_prec();
             if prec < min_prec {
-                debug!("climb ended: {op:?}({prec}) < {min_prec}",);
+                debug!("climb ended: {op:?}({prec}) < {min_prec}");
                 break;
             }
 
@@ -243,7 +243,7 @@ impl Parser {
     fn parse_term(&mut self) -> Result<NodeExpr, String> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return err!("No term to parse",),
+            None => return err!("No term to parse"),
         };
 
         match tok.kind {
@@ -256,13 +256,13 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 let expr = self.parse_expr(0)?;
-                debug!("parsed parens {expr:#?}",);
+                debug!("parsed parens {expr:#?}");
                 self.try_consume(TokenKind::CloseParen)?;
                 Ok(expr)
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            _ => err!("Invalid Term: '{tok:?}'",),
+            _ => err!("Invalid Term: '{tok:?}'"),
         }
     }
 
@@ -270,7 +270,7 @@ impl Parser {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
             Some(tok) => err!("expected '{kind:?}', found {:?}", tok.kind,),
-            None => err!("No token to evaluate",),
+            None => err!("No token to evaluate"),
         }
     }
 
@@ -281,7 +281,7 @@ impl Parser {
     ) -> Result<bool, String> {
         match self.peek(offset) {
             Some(tok) => Ok(pattern(&tok.kind)),
-            None => err!("No token to evalutate",),
+            None => err!("No token to evalutate"),
         }
     }
 

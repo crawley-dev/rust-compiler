@@ -78,7 +78,7 @@ impl Generator {
             }
             NodeStmt::SemDecl(sem_var) => {
                 if let Some(var) = self.var_map.get(sem_var.ident.as_str()) {
-                    return err!("Re-Initialisation of a GenVariable:\n{sem_var:#?}",);
+                    return err!("Re-Initialisation of a GenVariable:\n{sem_var:#?}");
                 }
                 let width = sem_var.var_type.width;
                 let var = GenVariable {
@@ -197,13 +197,13 @@ impl Generator {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
-            NodeStmt::Decl { .. } => err!("Found {stmt:#?}.. shouldn't have.",),
+            NodeStmt::Decl { .. } => err!("Found {stmt:#?}.. shouldn't have."),
         }
     }
 
     // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
-        debug!("Beginning scope",);
+        debug!("Beginning scope");
         let var_count = self.stack.len();
         let mut asm = String::new();
         for stmt in scope.stmts {
@@ -211,15 +211,15 @@ impl Generator {
         }
 
         let pop_amt = self.stack.len() - var_count;
-        debug!("Ending scope, pop({pop_amt})",);
+        debug!("Ending scope, pop({pop_amt})");
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => var,
-                None => return err!("uhh.. scope messed up",),
+                None => return err!("uhh.. scope messed up"),
             };
             self.stk_pos -= popped_var.var_type.width;
             self.var_map.remove(popped_var.ident.as_str()).unwrap();
-            debug!("Scope ended, removing {popped_var:#?}",);
+            debug!("Scope ended, removing {popped_var:#?}");
         }
         Ok(asm)
     }
@@ -246,7 +246,7 @@ impl Generator {
                     }
                     _ => {
                         return err!(
-                            "Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}",
+                            "Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
                         )
                     }
                 };
@@ -272,7 +272,7 @@ impl Generator {
                     TokenKind::BitAnd => todo!(
                         "{ERR_MSG} need to get variable's stk_pos for 'lea [rbp+___]' (gets addr)"
                     ),
-                    _ => return err!("Unable to generate unary expression: '{op:?}'",),
+                    _ => return err!("Unable to generate unary expression: '{op:?}'"),
                 };
                 asm += op_asm.as_str();
             }
@@ -306,7 +306,7 @@ impl Generator {
                         };
                         Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
                     }
-                    None => err!("GenVariable: {ident:?} doesn't exist.",),
+                    None => err!("GenVariable: {ident:?} doesn't exist."),
                 }
             }
         }
@@ -373,7 +373,7 @@ impl Generator {
                     {mov_ans}"
                 ))
             }
-            _ => err!("Unable to generate Logical comparison",),
+            _ => err!("Unable to generate Logical comparison"),
         }
     }
 
@@ -386,7 +386,7 @@ impl Generator {
             TokenKind::Mul => format!("imul {reg1}, {reg2}"),
             TokenKind::Quo => format!("cqo\n{SPACE}idiv {reg2}"),
             TokenKind::Mod => format!("cqo\n{SPACE}idiv {reg2}\n{SPACE}mov {reg1}, rdx"), // TODO: 'cqo', instruction changes with reg size
-            _ => return err!("Unable to generate Arithmetic operation: '{op:?}'",),
+            _ => return err!("Unable to generate Arithmetic operation: '{op:?}'"),
         };
         Ok(format!("{SPACE}{operation_asm}\n"))
     }
@@ -401,7 +401,7 @@ impl Generator {
             TokenKind::Shl => "sal",
             TokenKind::Shr => "sar",
             // TODO: (Types) Unsigned shift: shl, shr
-            _ => return err!("Unable to generate Bitwise operation",),
+            _ => return err!("Unable to generate Bitwise operation"),
         };
 
         Ok(format!("{SPACE}{asm} {reg1}, {reg2}\n"))
@@ -429,7 +429,7 @@ impl Generator {
             TokenKind::GtEq => Ok("ge"),
             TokenKind::Lt => Ok("l"),
             TokenKind::LtEq => Ok("le"),
-            _ => err!("Unable to generate comparison modifier",),
+            _ => err!("Unable to generate comparison modifier"),
         }
     }
 
