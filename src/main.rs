@@ -38,9 +38,8 @@ fn main() {
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn parse(tokens: Vec<Token>) -> AST {
-    let deque = VecDeque::from(tokens);
-    let mut parser = Parser::new(deque);
+fn parse(tokens: VecDeque<Token>) -> AST {
+    let mut parser = Parser::new(tokens);
     match parser.parse_ast() {
         Ok(t) => t,
         Err(e) => panic!("\n{e}\n"),

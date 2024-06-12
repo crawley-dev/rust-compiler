@@ -1,5 +1,8 @@
 use bitflags::bitflags;
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+};
 const LOG_DEBUG_INFO: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +206,6 @@ pub struct Token {
 pub struct Lexer {
     pos: usize,
     input: Vec<u8>,
-    buffer: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
     is_multicomment: bool,
@@ -272,15 +274,14 @@ impl Lexer {
         Lexer {
             pos: 0,
             input: input.into_bytes(),
-            buffer: Vec::new(),
             reg,
             is_linecomment: false,
             is_multicomment: false,
         }
     }
 
-    pub fn tokenize(&mut self) -> Vec<Token> {
-        let mut tokens = Vec::new();
+    pub fn tokenize(&mut self) -> VecDeque<Token> {
+        let mut tokens = VecDeque::new();
         while self.pos < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {
@@ -289,11 +290,11 @@ impl Lexer {
                     TokenKind::CloseMultiComment => self.is_multicomment = false,
                     _ if self.is_multicomment => (),
                     _ => {
-                        tokens.push(tok);
+                        tokens.push_back(tok);
                         if LOG_DEBUG_INFO {
                             println!(
                                 "[LEX_DEBUG] new tok: {:?} | pos {}\n",
-                                tokens.last(),
+                                tokens.back(),
                                 self.pos
                             );
                         }
@@ -306,7 +307,7 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Option<Token> {
-        self.buffer = Vec::new();
+        let mut buffer = Vec::new();
         let mut buf_type = BufKind::Illegal;
 
         loop {
@@ -321,13 +322,13 @@ impl Lexer {
             // next iter: hits '\n', stop linecomment. CORRECT!
             // .. otherwise, it would consume "//" && \n, then: linecomment = true. BAD!
             if next_char == b'\n' {
-                if self.buffer.is_empty() {
+                if buffer.is_empty() {
                     self.pos += 1;
                 }
                 self.is_linecomment = false;
                 break;
             } else if self.is_linecomment || next_char.is_ascii_whitespace() {
-                if self.buffer.is_empty() {
+                if buffer.is_empty() {
                     self.pos += 1;
                 }
                 break;
@@ -341,7 +342,7 @@ impl Lexer {
                 _ => break,
             };
 
-            if self.buffer.is_empty() {
+            if buffer.is_empty() {
                 buf_type = char_type.clone();
             }
             if char_type != buf_type {
@@ -349,10 +350,10 @@ impl Lexer {
             }
 
             let ch = self.consume();
-            self.buffer.push(ch);
+            buffer.push(ch);
         }
 
-        let buf_str: String = self.buffer.iter().map(|x| *x as char).collect();
+        let buf_str: String = buffer.into_iter().map(|x| x as char).collect();
         if LOG_DEBUG_INFO {
             println!("\n[LEX_DEBUG] buf: '{buf_str}' | pos: {}", self.pos);
         }
