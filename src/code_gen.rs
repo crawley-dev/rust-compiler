@@ -94,23 +94,10 @@ impl Generator {
                 }
                 Ok("\n".to_string()) // just variable decl, no assignment.
             }
-            NodeStmt::Assign(expr) => {
-                let ident = match &expr {
-                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-                            tok.value.as_ref().unwrap().as_str()
-                        }
-                        _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
-                    },
-                    _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
-                };
-                match self.var_map.get(ident) {
-                    Some(var) => self.gen_expr(
-                        expr,
-                        Some(&self.gen_stk_access(var.stk_index, var.var_type.width)),
-                    ),
-                    None => unreachable!("{ERR_MSG} Variable not found for ident: '{ident}'"),
-                }
+            NodeStmt::Assign { ident, expr } => {
+                let var = self.var_map.get(ident.as_str()).unwrap();
+                let ans_reg = self.gen_stk_access(var.stk_index, var.var_type.width);
+                self.gen_expr(expr, Some(ans_reg.as_str()))
             }
             NodeStmt::If {
                 condition,

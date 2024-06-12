@@ -1,5 +1,6 @@
 #![allow(unused)]
 use std::{
+    collections::VecDeque,
     env, fs,
     io::{BufRead, BufReader, Write},
 };
@@ -38,8 +39,9 @@ fn main() {
 ----------------------------------------------------------------------------------------*/
 
 fn parse(tokens: Vec<Token>) -> AST {
-    let mut parser = Parser::new(tokens);
-    match parser.parse_prog() {
+    let deque = VecDeque::from(tokens);
+    let mut parser = Parser::new(deque);
+    match parser.parse_ast() {
         Ok(t) => t,
         Err(e) => panic!("\n{e}\n"),
     }

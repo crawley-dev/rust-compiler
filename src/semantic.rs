@@ -23,6 +23,7 @@
 //      CLONING!:
 //          - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
 //          - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
+//          - Can't manipulate current AST freely, because it has to be rigid in size, its on the STACK!
 
 use crate::{
     debug, err,
@@ -186,7 +187,7 @@ impl Checker<'_> {
                 scope,
                 branches,
             } => {
-                if self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                if !self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
                     return err!("'If' statement condition not 'boolean'\n{condition:#?}");
                 }
 
@@ -201,7 +202,7 @@ impl Checker<'_> {
                 });
             }
             NodeStmt::ElseIf { condition, scope } => {
-                if self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                if !self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
                     return err!("'ElseIf' statement condition not 'boolean'\n{condition:#?}");
                 };
                 return Ok(NodeStmt::ElseIf {
@@ -220,17 +221,11 @@ impl Checker<'_> {
                     scope: new_scope,
                 });
             }
-            NodeStmt::Assign(ref expr) => {
-                let ident = match &expr {
-                    NodeExpr::BinaryExpr { lhs, .. } => match **lhs {
-                        NodeExpr::Term(NodeTerm::Ident(ref tok)) => {
-                            tok.value.as_ref().unwrap().as_str()
-                        }
-                        _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
-                    },
-                    _ => unreachable!("{ERR_MSG} Invalid Assignment: '{expr:#?}'"),
-                };
-                match self.var_map.get(ident) {
+            NodeStmt::Assign {
+                ref ident,
+                ref expr,
+            } => {
+                match self.var_map.get(ident.as_str()) {
                     Some(var) if !var.mutable => {
                         return err!("Re-Assignment of a Constant:\n{var:?}")
                     }
@@ -240,7 +235,7 @@ impl Checker<'_> {
                 self.check_expr(expr)?;
             }
             NodeStmt::Exit(ref expr) => {
-                self.check_expr(expr)?;
+                self.check_expr(&expr)?;
             }
             NodeStmt::NakedScope(scope) => {
                 return Ok(NodeStmt::NakedScope(self.check_scope(scope)?));
@@ -299,7 +294,7 @@ impl Checker<'_> {
 
                 if !self.check_type_equality(lform, rform) {
                     return err!("Mismatched Op:Operand =>{op_dbg}");
-                } // recursive so has to be seperate function
+                } // recursive so has to be seperate functione
 
                 // arithmetic operator doesn't work on boolean        operand
                 // logical    operator doesn't work on integral/float operand
@@ -312,7 +307,7 @@ impl Checker<'_> {
                             return err!("Mismatched Op:Operand =>{op_dbg}");
                         }
                         debug!("Bin Expr all good: {lform:#?}");
-                        Ok(lform) // TODO(TOM): need flags.intersection()
+                        Ok(lform) // TODO(TOM): need flags.intersection() on both forms in future.
                     }
                     _ if op_flags.intersects(TokenFlags::LOG) => {
                         if self.form_intersects(lform, PrimFlags::INTEGRAL) {

@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 // >>PARSER<< Constructs statements out of tokens from the lexer.
 use crate::{
     debug, err,
@@ -42,7 +44,10 @@ pub enum NodeStmt {
         condition: NodeExpr,
         scope: NodeScope,
     },
-    Assign(NodeExpr),
+    Assign {
+        ident: String,
+        expr: NodeExpr,
+    },
     Exit(NodeExpr),
     NakedScope(NodeScope),
     Break,
@@ -71,20 +76,21 @@ pub enum NodeTerm {
 }
 
 pub struct Parser {
-    pub tokens: Vec<Token>,
+    // pub tokens: Vec<Token>,
+    pub tokens: VecDeque<Token>,
     pub position: usize,
 }
 
 impl Parser {
-    pub fn new(input: Vec<Token>) -> Parser {
+    pub fn new(input: VecDeque<Token>) -> Parser {
         Parser {
             tokens: input,
             position: 0,
         }
     }
 
-    pub fn parse_prog(&mut self) -> Result<AST, String> {
-        let mut ast = AST { stmts: Vec::new() };
+    pub fn parse_ast(&mut self) -> Result<AST, String> {
+        let mut ast: AST = AST { stmts: Vec::new() };
         while self.peek(0).is_some() {
             ast.stmts.push(self.parse_stmt()?);
         }
@@ -96,11 +102,11 @@ impl Parser {
             Some(tok) => tok,
             None => return err!("No statement to parse"),
         };
-        debug!("\nparsing statement: {:?}", self.peek(0).unwrap());
+        debug!("\nparsing statement: {tok:?}");
 
         let stmt = match tok.kind {
             TokenKind::Let => {
-                self.try_consume(TokenKind::Let)?;
+                self.consume();
                 let mutable = self.try_consume(TokenKind::Mut).is_ok();
                 let ident = self.try_consume(TokenKind::Ident)?.value.unwrap();
 
@@ -112,7 +118,6 @@ impl Parser {
                     Ok(_) => Some(self.parse_expr(0)?),
                     Err(_) => None,
                 };
-
                 NodeStmt::Decl {
                     init_expr,
                     ident,
@@ -122,7 +127,7 @@ impl Parser {
                 }
             }
             TokenKind::If => {
-                self.try_consume(TokenKind::If)?;
+                self.consume();
                 let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
 
@@ -147,32 +152,42 @@ impl Parser {
                 }
             }
             TokenKind::While => {
-                self.try_consume(TokenKind::While)?;
+                self.try_consume(TokenKind::While);
                 let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
-                if self.token_matches(
-                    |kind| kind.has_flags(TokenFlags::ASSIGN) && kind != &TokenKind::Eq,
-                    1,
-                )? == true
-                {
-                    let comp_assign = self.tokens.get_mut(self.position + 1).unwrap();
-                    comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
-                    NodeStmt::Assign(self.parse_expr(0)?)
-                } else {
-                    todo!("Naked Expression, Currently not valid.") // TODO(TOM): an expr is a scope's return statement, only valid if last stmt/expr.
+                // Assignment: consume assign. parse expr. "ident = expr"
+                // Compound Assign: switch compound assign to its arith counterpart
+                //      - reuse stmt, parse it as an expr, "ident += expr" => "ident + expr"
+                //      - "expr" = "ident + expr"
+                let mut ident = String::new();
+                match self.peek(1) {
+                    Some(tok) if tok.kind == TokenKind::Eq => {
+                        ident = self.consume().value.unwrap();
+                        self.try_consume(TokenKind::Eq)?;
+                    }
+                    Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
+                        ident = self.peek(0).as_ref().unwrap().value.clone().unwrap();
+                        let comp_assign = self.peek_mut(1).unwrap();
+                        comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
+                    }
+                    _ => return err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
+                };
+                NodeStmt::Assign {
+                    ident,
+                    expr: self.parse_expr(0)?,
                 }
             }
             TokenKind::Exit => {
-                self.try_consume(TokenKind::Exit)?;
+                self.consume();
                 self.token_equals(TokenKind::OpenParen, 0)?;
                 let expr = self.parse_expr(0)?;
                 NodeStmt::Exit(expr)
             }
             TokenKind::Break => {
-                self.try_consume(TokenKind::Break)?;
+                self.consume();
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
@@ -274,31 +289,37 @@ impl Parser {
         }
     }
 
-    fn token_matches(
-        &self,
-        pattern: impl Fn(&TokenKind) -> bool,
-        offset: usize,
-    ) -> Result<bool, String> {
-        match self.peek(offset) {
-            Some(tok) => Ok(pattern(&tok.kind)),
-            None => err!("No token to evalutate"),
-        }
-    }
-
     fn peek(&self, offset: usize) -> Option<&Token> {
         self.tokens.get(self.position + offset)
     }
 
-    // remove item from vec? << no clone, linear complexity though..
+    fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
+        self.tokens.get_mut(self.position + offset)
+    }
+
+    // "can" fail, but trusted to not!
     fn consume(&mut self) -> Token {
         debug!("consuming: {:?}", self.peek(0).unwrap());
-        let i = self.position;
-        self.position += 1;
-        self.tokens.get(i).unwrap().clone()
+        self.tokens.pop_front().unwrap()
+        // let i = self.position;
+        // self.position += 1;
+        // self.tokens.get(i).unwrap().clone()
     }
 
     fn try_consume(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
     }
+
+    // just wanted to test out "impl Fn()" args!
+    // fn token_matches(
+    //     &self,
+    //     pattern: impl Fn(&TokenKind) -> bool,
+    //     offset: usize,
+    // ) -> Result<bool, String> {
+    //     match self.peek(offset) {
+    //         Some(tok) => Ok(pattern(&tok.kind)),
+    //         None => err!("No token to evalutate"),
+    //     }
+    // }
 }

@@ -15,7 +15,7 @@
 - LineComment '//' | starts a comment for that line.
 - Parentheses "(, )" | function calls & expression precedence.
 - CurlyBraces "{, }" | defines a scope
-- MultiComment "/*, */" | a multi-line comment...
+- Open|Close Comment "/*, */" | defines a commented area of code....
 
 ## Operator Registry
 - Precedence determines the order of operations of an expression
@@ -27,7 +27,7 @@
 - Multiply         '*'  prec = 12      
 - Divide           '/'  prec = 12      
 - Remainder        '%'  prec = 12      
-- Subtract         '-'  prec = 11      
+- Subtract         '-'  prec = 11       
 - Add              '+'  prec = 11       
 - Left Shift       '<<' prec = 10       
 - Right Shift      '>>' prec = 10       
@@ -37,7 +37,7 @@
 - Greater          '>'  prec = 8       
 - Lesser or Equal  '<=' prec = 8        
 - Greater or Equal '>=' prec = 8       
-- Bitwise And      '&'  prec = 7       
+- Bitwise And      '&'  prec = 7        
 - Bitwise Xor      '~'  prec = 6       
 - Bitwise Or       '|'  prec = 5       
 - Logical And      '&&' prec = 4       
@@ -53,7 +53,7 @@
 - Scope: a block of code, with optional variable inheritance
     - OPEN_CURLY STATEMENT(s) CLOSE_CURLY
 - let: defining a variable, with optional mutability
-    - LET (MUTABLE) IDENT TYPE_SEPARATOR TYPE ASSIGN EXPR STATEMENT_END 
+    - LET (MUTABLE) IDENT COLON TYPE ASSIGN EXPR STATEMENT_END 
 - If:
     - IF EXPR SCOPE (ELSE_IF) (ELSE)
     - Else If:

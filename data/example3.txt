@@ -59,12 +59,12 @@ let n = 0 || 5 + 1 > 6;
 //    let mut dwa: i8 = 20;
 //}
 
-let U8: i32 = 5;
+let dwa: i32 = 5;
 let mut i: i32 = 0;
 let mut ans: i8 = 2;
-let i_ptr: ^i32 = &(U8);
+i = -5;
+//let i_ptr: ^i32 = &(i);
 
-/*
 while 1 == 1 {
     ans *= 2;
     i += 1;
@@ -78,9 +78,13 @@ while 1 == 1 {
     }
 }
 
-//if 5 == 5 {
-//    ans *= 2;
-//    if 10 == 10 {
-//        ans += 5;
-//    }
+if 5 == 5 {
+    ans *= 2;
+    if 10 == 10 {
+        ans += 5;
+    }
+} 
+//else if 5 + 5{
+//    // this shouldn't be hit.
+//    exit(69);
 //}
