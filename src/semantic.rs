@@ -39,7 +39,7 @@ const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 // TODO(TOM): addressing modes
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct PrimFlags: u16 {
+    pub struct TypeFlags: u16 {
         const NONE = 1 << 0;
         const UNSIGNED = 1 << 1;
         const SIGNED = 1 << 2;
@@ -60,7 +60,7 @@ bitflags::bitflags! {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeForm {
     Primitive {
-        flags: PrimFlags,
+        flags: TypeFlags,
     }, // e.g: "i16" => Type { ident: "i16", form: Primitive { flags: INTEGER} }
     Pointer {
         underlying: Box<TypeForm>,
@@ -105,7 +105,7 @@ pub struct Checker<'a> {
     ctx: CheckerContext,
     stack: Vec<String>, // TODO(TOM): remove stack, store &'a str.
     var_map: HashMap<String, SemVariable>, // TODO(TOM): this can be a <&'str, &SemVariable>
-    prim_map: HashMap<&'a str, (usize, PrimFlags)>,
+    prim_map: HashMap<&'a str, (usize, TypeFlags)>,
 }
 
 impl Checker<'_> {
@@ -114,30 +114,30 @@ impl Checker<'_> {
             ctx: CheckerContext {
                 loop_count: 0,
                 base_intlit: TypeForm::Primitive {
-                    flags: PrimFlags::INTEGRAL | PrimFlags::LITERAL,
+                    flags: TypeFlags::INTEGRAL | TypeFlags::LITERAL,
                 },
                 base_bool: TypeForm::Primitive {
-                    flags: PrimFlags::BOOLEAN,
+                    flags: TypeFlags::BOOLEAN,
                 },
             },
             stack: Vec::new(),
             var_map: HashMap::new(),
             prim_map: HashMap::from([
                 // TODO(TOM): generic solution for flags for any type form
-                ("nil", (0, PrimFlags::NONE)),
-                ("bool", (1, PrimFlags::BOOLEAN)),
-                ("u8", (1, PrimFlags::UNSIGNED | PrimFlags::INTEGRAL)),
-                ("u16", (2, PrimFlags::UNSIGNED | PrimFlags::INTEGRAL)),
-                ("u32", (4, PrimFlags::UNSIGNED | PrimFlags::INTEGRAL)),
-                ("u64", (8, PrimFlags::UNSIGNED | PrimFlags::INTEGRAL)),
-                ("usize", (8, PrimFlags::UNSIGNED | PrimFlags::INTEGRAL)),
-                ("i8", (1, PrimFlags::SIGNED | PrimFlags::INTEGRAL)),
-                ("i16", (2, PrimFlags::SIGNED | PrimFlags::INTEGRAL)),
-                ("i32", (4, PrimFlags::SIGNED | PrimFlags::INTEGRAL)),
-                ("i64", (8, PrimFlags::SIGNED | PrimFlags::INTEGRAL)),
-                ("isize", (8, PrimFlags::SIGNED | PrimFlags::INTEGRAL)),
-                ("f32", (4, PrimFlags::SIGNED | PrimFlags::FLOAT)),
-                ("f64", (8, PrimFlags::SIGNED | PrimFlags::FLOAT)),
+                ("nil", (0, TypeFlags::NONE)),
+                ("bool", (1, TypeFlags::BOOLEAN)),
+                ("u8", (1, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("u16", (2, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("u32", (4, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("u64", (8, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("usize", (8, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("i8", (1, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
+                ("i16", (2, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
+                ("i32", (4, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
+                ("i64", (8, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
+                ("isize", (8, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
+                ("f32", (4, TypeFlags::SIGNED | TypeFlags::FLOAT)),
+                ("f64", (8, TypeFlags::SIGNED | TypeFlags::FLOAT)),
             ]),
         };
 
@@ -187,7 +187,7 @@ impl Checker<'_> {
                 scope,
                 branches,
             } => {
-                if !self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                if !self.form_has_flags(self.check_expr(&condition)?, TypeFlags::BOOLEAN) {
                     return err!("'If' statement condition not 'boolean'\n{condition:#?}");
                 }
 
@@ -202,7 +202,7 @@ impl Checker<'_> {
                 });
             }
             NodeStmt::ElseIf { condition, scope } => {
-                if !self.form_intersects(self.check_expr(&condition)?, PrimFlags::BOOLEAN) {
+                if !self.form_has_flags(self.check_expr(&condition)?, TypeFlags::BOOLEAN) {
                     return err!("'ElseIf' statement condition not 'boolean'\n{condition:#?}");
                 };
                 return Ok(NodeStmt::ElseIf {
@@ -303,14 +303,14 @@ impl Checker<'_> {
                 match op_flags {
                     _ if op_flags.intersects(TokenFlags::CMP) => Ok(&self.ctx.base_bool),
                     _ if op_flags.intersects(TokenFlags::ARITH) => {
-                        if self.form_intersects(lform, PrimFlags::BOOLEAN) {
+                        if self.form_has_flags(lform, TypeFlags::BOOLEAN) {
                             return err!("Mismatched Op:Operand =>{op_dbg}");
                         }
                         debug!("Bin Expr all good: {lform:#?}");
                         Ok(lform) // TODO(TOM): need flags.intersection() on both forms in future.
                     }
                     _ if op_flags.intersects(TokenFlags::LOG) => {
-                        if self.form_intersects(lform, PrimFlags::INTEGRAL) {
+                        if self.form_has_flags(lform, TypeFlags::INTEGRAL) {
                             return err!("Mismatched Op:Operand =>{op_dbg}");
                         }
                         debug!("Bin Expr all good: {lform:#?}");
@@ -324,15 +324,24 @@ impl Checker<'_> {
                 let op_dbg = format!("{op:?} .. {operand:#?}\n{operand_form:#?}");
                 debug!("{op_dbg}");
 
-                // unary sub fails on: non-arith, unsigned
-                // CmpNot fails on: non-boolean
-                // Addr of fails on: non-allocated
+                // unary sub works on: integral, thats signed or literal
+                // CmpNot works on: boolean
+                // Addr of works on: variables
                 match op {
-                    TokenKind::Sub => todo!("unary sub semantics"),
+                    TokenKind::Sub => {
+                        match self.form_has_flags(operand_form, TypeFlags::INTEGRAL)
+                            && self.form_has_some_flags(
+                                operand_form,
+                                TypeFlags::LITERAL | TypeFlags::SIGNED,
+                            ) {
+                            true => Ok(operand_form),
+                            false => err!("Mismatched Op:Operand => {op_dbg}"),
+                        }
+                    }
                     TokenKind::CmpNot => {
-                        match self.form_intersects(operand_form, PrimFlags::BOOLEAN) {
-                            true => err!("Mismatched Op:Operand => {op_dbg}"),
-                            false => Ok(operand_form),
+                        match self.form_has_flags(operand_form, TypeFlags::BOOLEAN) {
+                            true => Ok(operand_form),
+                            false => err!("Mismatched Op:Operand => {op_dbg}"),
                         }
                     }
                     TokenKind::BitAnd => {
@@ -379,9 +388,9 @@ impl Checker<'_> {
         match lform {
             TypeForm::Primitive { flags: lf } => match rform {
                 TypeForm::Primitive { flags: rf } => {
-                    if !(self.flags_either_equal(*lf, *rf, PrimFlags::LITERAL)
-                        || !(self.flags_equal(*lf, *rf, PrimFlags::UNSIGNED)
-                            || self.flags_equal(*lf, *rf, PrimFlags::SIGNED)))
+                    if !(self.flags_either_equal(*lf, *rf, TypeFlags::LITERAL)
+                        || !(self.flags_equal(*lf, *rf, TypeFlags::UNSIGNED)
+                            || self.flags_equal(*lf, *rf, TypeFlags::SIGNED)))
                     {
                         return false;
                     }
@@ -403,25 +412,32 @@ impl Checker<'_> {
         Ok(())
     }
 
-    fn form_intersects<'a>(&'a self, form: &TypeForm, desired_flags: PrimFlags) -> bool {
+    fn form_has_flags<'a>(&'a self, form: &TypeForm, desired_flags: TypeFlags) -> bool {
+        match form {
+            TypeForm::Primitive { flags } if flags.contains(desired_flags) => true,
+            _ => false,
+        }
+    }
+
+    fn form_has_some_flags<'a>(&'a self, form: &TypeForm, desired_flags: TypeFlags) -> bool {
         match form {
             TypeForm::Primitive { flags } if flags.intersects(desired_flags) => true,
             _ => false,
         }
     }
 
-    fn get_typeflags(&self, ident: &str) -> Result<&(usize, PrimFlags), String> {
+    fn get_typeflags(&self, ident: &str) -> Result<&(usize, TypeFlags), String> {
         match self.prim_map.get(ident) {
             Some(data) => Ok(data),
             None => err!("Primitive Type '{ident}' not found"),
         }
     }
 
-    fn flags_equal(&self, t1: PrimFlags, t2: PrimFlags, flags: PrimFlags) -> bool {
+    fn flags_equal(&self, t1: TypeFlags, t2: TypeFlags, flags: TypeFlags) -> bool {
         t1.intersects(flags) && t2.intersects(flags)
     }
 
-    fn flags_either_equal(&self, t1: PrimFlags, t2: PrimFlags, flags: PrimFlags) -> bool {
+    fn flags_either_equal(&self, t1: TypeFlags, t2: TypeFlags, flags: TypeFlags) -> bool {
         t1.intersects(flags) || t2.intersects(flags)
     }
 }

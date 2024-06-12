@@ -62,7 +62,9 @@ let n = 0 || 5 + 1 > 6;
 let dwa: i32 = 5;
 let mut i: i32 = 0;
 let mut ans: i8 = 2;
+let unsigned_int: u8 = 5;
 i = -5;
+//i = -unsigned_int;
 //let i_ptr: ^i32 = &(i);
 
 while 1 == 1 {

@@ -7,7 +7,7 @@ use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{CodeGenData, PrimFlags, Type},
+    semantic::{CodeGenData, Type, TypeFlags},
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;

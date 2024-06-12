@@ -6,7 +6,7 @@ use crate::{
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::SemVariable,
 };
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_PARSE]";
 const DBG_MSG: &'static str = "[DEBUG_PARSE]";
 
