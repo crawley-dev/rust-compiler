@@ -9,7 +9,7 @@ use crate::{
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::{CodeGenData, Type, TypeFlags},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 const LOG_DEBUG_INFO: bool = false;
 const WORD_SIZE: usize = 8;
 const SPACE: &'static str = "    ";
@@ -34,8 +34,8 @@ pub struct Generator {
     ast: AST,
     ctx: CodeGenContext,
     stk_pos: usize,
-    stack: Vec<GenVariable>,
-    var_map: HashMap<String, GenVariable>,
+    stack: Vec<GenVariable>,         // stack contains variables,
+    var_map: HashMap<String, usize>, // var_map contains index to variable
 }
 
 impl Generator {
@@ -77,25 +77,27 @@ impl Generator {
                 ))
             }
             NodeStmt::SemDecl(sem_var) => {
-                if let Some(var) = self.var_map.get(sem_var.ident.as_str()) {
-                    return err!("Re-Initialisation of a GenVariable:\n{sem_var:#?}");
+                if let Ok(var) = self.get_var(sem_var.ident.as_str()) {
+                    return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let width = sem_var.var_type.width;
                 let var = GenVariable {
-                    ident: sem_var.ident.clone(),
+                    ident: sem_var.ident,
                     stk_index: self.stk_pos + width,
                     var_type: sem_var.var_type,
                 };
+
                 self.stk_pos += width;
-                self.stack.push(var.clone());
-                self.var_map.insert(var.ident.clone(), var);
+                self.var_map.insert(var.ident.clone(), self.stack.len());
+                self.stack.push(var);
+
                 if let Some(expr) = sem_var.init_expr {
                     return self.gen_expr(expr, Some(&self.gen_stk_access(self.stk_pos, width)));
                 }
                 Ok("\n".to_string()) // just variable decl, no assignment.
             }
             NodeStmt::Assign { ident, expr } => {
-                let var = self.var_map.get(ident.as_str()).unwrap();
+                let var = self.get_var(ident.as_str())?;
                 let ans_reg = self.gen_stk_access(var.stk_index, var.var_type.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
@@ -249,7 +251,7 @@ impl Generator {
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
                     // TokenKind::Ones_Complement_Goes_HERE! (bitwise not) => format!("{SPACE}not {reg}\n",),
-                    TokenKind::Sub => todo!("{ERR_MSG} unary sub. do '0-EXPR' ??"),
+                    TokenKind::Sub => format!("{SPACE}neg {reg}\n"),
                     TokenKind::CmpNot => format!(
                         "{SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
@@ -284,17 +286,13 @@ impl Generator {
             }
             NodeTerm::Ident(tok) => {
                 let ident = tok.value.clone().unwrap();
-                match self.var_map.get(ident.as_str()) {
-                    Some(var) => {
-                        let stk_pos = self.gen_var_access(var.stk_index, var.var_type.width);
-                        let reg = match ans_reg {
-                            Some(reg) => reg,
-                            None => self.next_reg(),
-                        };
-                        Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
-                    }
-                    None => err!("GenVariable: {ident:?} doesn't exist."),
-                }
+                let var = self.get_var(ident.as_str())?;
+                let stk_pos = self.gen_var_access(var.stk_index, var.var_type.width);
+                let reg = match ans_reg {
+                    Some(reg) => reg,
+                    None => self.next_reg(),
+                };
+                Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
             }
         }
     }
@@ -467,5 +465,12 @@ impl Generator {
 
     fn release_reg(&mut self) {
         self.ctx.reg_count -= 1;
+    }
+
+    fn get_var(&self, ident: &str) -> Result<&GenVariable, String> {
+        match self.var_map.get(ident) {
+            Some(idx) => Ok(self.stack.get(*idx).unwrap()),
+            None => err!("Variable: {ident:?} doesn't exist."),
+        }
     }
 }

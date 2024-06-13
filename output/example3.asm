@@ -7,7 +7,10 @@ _start:
     mov dword [rbp-4], 5
     mov dword [rbp-8], 0
     mov byte [rbp-9], 2
-    mov dword [rbp-8], 5
+    mov byte [rbp-10], 5
+    mov rax, 5
+    neg rax
+    mov dword [rbp-8], rax
 ; While
     jmp .1_WHILE_CMP
 .2_WHILE_SCOPE:

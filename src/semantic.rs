@@ -29,8 +29,9 @@ use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
+    Token,
 };
-use std::{collections::HashMap, ptr::NonNull};
+use std::{any::Any, collections::HashMap, ptr::NonNull};
 
 const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
@@ -103,8 +104,8 @@ struct CheckerContext {
 
 pub struct Checker<'a> {
     ctx: CheckerContext,
-    stack: Vec<String>, // TODO(TOM): remove stack, store &'a str.
-    var_map: HashMap<String, SemVariable>, // TODO(TOM): this can be a <&'str, &SemVariable>
+    stack: Vec<SemVariable>, // TODO(TOM): remove stack, store &'a str.
+    var_map: HashMap<String, usize>, // TODO(TOM): this can be a <&'str, &SemVariable>
     prim_map: HashMap<&'a str, (usize, TypeFlags)>,
 }
 
@@ -170,13 +171,13 @@ impl Checker<'_> {
                     false => TypeForm::Primitive { flags },
                 };
                 let var = SemVariable {
-                    ident: ident,
-                    mutable: mutable,
-                    var_type: Type::new(type_ident, width, form),
+                    ident,
+                    mutable,
                     init_expr,
+                    var_type: Type::new(type_ident, width, form),
                 };
-                self.stack.push(var.ident.clone());
-                self.var_map.insert(var.ident.clone(), var.clone());
+                self.var_map.insert(var.ident.clone(), self.stack.len());
+                self.stack.push(var.clone());
                 if let Some(ref expr) = var.init_expr {
                     self.check_expr(expr)?;
                 }
@@ -225,12 +226,9 @@ impl Checker<'_> {
                 ref ident,
                 ref expr,
             } => {
-                match self.var_map.get(ident.as_str()) {
-                    Some(var) if !var.mutable => {
-                        return err!("Re-Assignment of a Constant:\n{var:?}")
-                    }
-                    None => return err!("SemVariable '{ident}' does not exist"),
-                    _ => (),
+                let var = self.get_var(ident.as_str())?;
+                if !var.mutable {
+                    return err!("Re-Assignment of a Constant:\n{var:?}");
                 }
                 self.check_expr(expr)?;
             }
@@ -263,7 +261,7 @@ impl Checker<'_> {
 
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
-                Some(var) => self.var_map.remove(var.as_str()),
+                Some(var) => self.var_map.remove(var.ident.as_str()),
                 None => return err!("uhh.. scope messed up"),
             };
             debug!("Scope ended, removing {popped_var:#?}");
@@ -362,14 +360,12 @@ impl Checker<'_> {
 
     fn check_term(&self, term: &NodeTerm) -> Result<&TypeForm, String> {
         match term {
-            NodeTerm::Ident(name) => {
+            NodeTerm::Ident(tok) => {
                 // self.validate_term(term)?;
-                match self.var_map.get(name.value.as_ref().unwrap().as_str()) {
-                    Some(var) => Ok(&var.var_type.form),
-                    None => err!("Variable Not Found '{}'", name.value.as_ref().unwrap()),
-                }
+                let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
+                Ok(&var.var_type.form)
             }
-            NodeTerm::IntLit(val) => Ok(&self.ctx.base_intlit),
+            NodeTerm::IntLit(_) => Ok(&self.ctx.base_intlit),
         }
     }
 
@@ -412,6 +408,20 @@ impl Checker<'_> {
         Ok(())
     }
 
+    fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
+        match self.var_map.get(ident) {
+            Some(idx) => Ok(self.stack.get(*idx).unwrap()),
+            None => err!("Variable: {ident:?} doesn't exist."),
+        }
+    }
+
+    fn get_typeflags(&self, ident: &str) -> Result<&(usize, TypeFlags), String> {
+        match self.prim_map.get(ident) {
+            Some(data) => Ok(data),
+            None => err!("Primitive Type '{ident}' not found"),
+        }
+    }
+
     fn form_has_flags<'a>(&'a self, form: &TypeForm, desired_flags: TypeFlags) -> bool {
         match form {
             TypeForm::Primitive { flags } if flags.contains(desired_flags) => true,
@@ -423,13 +433,6 @@ impl Checker<'_> {
         match form {
             TypeForm::Primitive { flags } if flags.intersects(desired_flags) => true,
             _ => false,
-        }
-    }
-
-    fn get_typeflags(&self, ident: &str) -> Result<&(usize, TypeFlags), String> {
-        match self.prim_map.get(ident) {
-            Some(data) => Ok(data),
-            None => err!("Primitive Type '{ident}' not found"),
         }
     }
 
