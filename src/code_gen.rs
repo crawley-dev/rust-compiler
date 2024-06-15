@@ -2,16 +2,17 @@
 //  Useful Semantic Info:
 //      - ✅ replace stmt NodeStmt with semantic equivalent (holds different info, types etc.)
 //      - Let stmt --> Semantic Variable created, use that! don't need to consume
+//  Pointers:
+//      - get var stk_offset when getting addr of!
 
 use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{CodeGenData, Type, TypeFlags},
+    semantic::{CodeGenData, Type},
 };
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
-const WORD_SIZE: usize = 8;
 const SPACE: &'static str = "    ";
 const ERR_MSG: &'static str = "[ERROR_CODEGEN]";
 const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
@@ -76,8 +77,8 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::SemDecl(sem_var) => {
-                if let Ok(var) = self.get_var(sem_var.ident.as_str()) {
+            NodeStmt::SemVarDecl(sem_var) => {
+                if self.get_var(sem_var.ident.as_str()).is_ok() {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let width = sem_var.var_type.width;
@@ -94,7 +95,7 @@ impl Generator {
                 if let Some(expr) = sem_var.init_expr {
                     return self.gen_expr(expr, Some(&self.gen_stk_access(self.stk_pos, width)));
                 }
-                Ok("\n".to_string()) // just variable decl, no assignment.
+                Ok("\n".to_string()) // just variable VarDecl, no assignment.
             }
             NodeStmt::Assign { ident, expr } => {
                 let var = self.get_var(ident.as_str())?;
@@ -186,7 +187,7 @@ impl Generator {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
-            NodeStmt::Decl { .. } => err!("Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::VarDecl { .. } => err!("Found {stmt:#?}.. shouldn't have."),
         }
     }
 
@@ -227,10 +228,10 @@ impl Generator {
 
                 let flags = op.get_flags();
                 let op_asm = match flags {
-                    _ if flags.intersects(TokenFlags::BIT) => self.gen_bitwise(op)?,
-                    _ if flags.intersects(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
-                    _ if flags.intersects(TokenFlags::CMP) => self.gen_comparison(op)?,
-                    _ if flags.intersects(TokenFlags::LOG) => {
+                    _ if flags.contains(TokenFlags::BIT) => self.gen_bitwise(op)?,
+                    _ if flags.contains(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
+                    _ if flags.contains(TokenFlags::CMP) => self.gen_comparison(op)?,
+                    _ if flags.contains(TokenFlags::LOG) => {
                         return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm)
                     }
                     _ => {
@@ -246,21 +247,36 @@ impl Generator {
                 asm += op_asm.as_str();
             }
             NodeExpr::UnaryExpr { op, operand } => {
+                let dwa = *operand.clone();
                 asm += self.gen_expr(*operand, None)?.as_str();
 
                 let reg = self.get_reg(self.ctx.reg_count);
                 let op_asm = match op {
-                    // TokenKind::Ones_Complement_Goes_HERE! (bitwise not) => format!("{SPACE}not {reg}\n",),
+                    TokenKind::Tilde => format!("{SPACE}not {reg}\n"),
                     TokenKind::Sub => format!("{SPACE}neg {reg}\n"),
                     TokenKind::CmpNot => format!(
                         "{SPACE}test {reg}, {reg}\n\
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
                     ),
-                    //format!("{SPACE}lea {reg} \n"),
-                    TokenKind::BitAnd => todo!(
-                        "{ERR_MSG} need to get variable's stk_pos for 'lea [rbp+___]' (gets addr)"
-                    ),
+                    TokenKind::Ampersand => match dwa {
+                        NodeExpr::Term(NodeTerm::Ident(name)) => {
+                            let stk_pos = self
+                                .get_var(name.value.as_ref().unwrap().as_str())?
+                                .stk_index;
+                            format!("{SPACE}lea [rbp+{stk_pos}]\n")
+                        }
+                        _ => return err!("Attempted 'addr_of' operation, found right hand value"),
+                    },
+                    // TokenKind::Ptr => match dwa {
+                    // NodeExpr::Term(NodeTerm::Ident(name)) => {
+                    //     let stk_pos = self
+                    //         .get_var(name.value.as_ref().unwrap().as_str())?
+                    //         .stk_index;
+                    //     format!("")
+                    // }
+                    //     _ => return err!("Attempted 'deref' operation, found right hand value"),
+                    // },
                     _ => return err!("Unable to generate unary expression: '{op:?}'"),
                 };
                 asm += op_asm.as_str();
@@ -380,9 +396,9 @@ impl Generator {
         let reg1 = self.get_reg(self.ctx.reg_count - 1);
         let reg2 = self.get_reg(self.ctx.reg_count);
         let asm = match op {
-            TokenKind::BitOr => "or",
-            TokenKind::BitXor => "xor",
-            TokenKind::BitAnd => "and",
+            TokenKind::Bar => "or",
+            TokenKind::Tilde => "xor",
+            TokenKind::Ampersand => "and",
             TokenKind::Shl => "sal",
             TokenKind::Shr => "sar",
             // TODO: (Types) Unsigned shift: shl, shr

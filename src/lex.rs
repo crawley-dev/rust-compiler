@@ -3,7 +3,11 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
 };
+
+use crate::{debug, err};
 const LOG_DEBUG_INFO: bool = false;
+const ERR_MSG: &'static str = "[ERROR_LEX]";
+const DBG_MSG: &'static str = "[DEBUG_LEX]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
@@ -20,20 +24,19 @@ pub enum TokenKind {
     CloseMultiComment, // "*/"
 
     // Operators
-    Ptr,    // "^"
-    Eq,     // "="
-    Add,    // "+"
-    Sub,    // "-"
-    Mul,    // "*"
-    Quo,    // "/"
-    Mod,    // "%"
-    BitAnd, // "&"
-    BitOr,  // "|"
-    BitXor, // "~"
-    AndNot, // "&~"
-    Shl,    // "<<"
-    Shr,    // ">>"
-    // TODO(TOM): One's complement (bitwise not)
+    Ptr,       // "^"
+    Eq,        // "="
+    Add,       // "+"
+    Sub,       // "-"
+    Mul,       // "*"
+    Quo,       // "/"
+    Mod,       // "%"
+    Ampersand, // "&" BitAnd, Address-of
+    Bar,       // "|" BitOr
+    Tilde,     // "~" BitXor, Ones Complement
+    AndNot,    // "&~"
+    Shl,       // "<<"
+    Shr,       // ">>"
 
     // Combo Assign
     AddEq,    // "+="
@@ -97,19 +100,19 @@ bitflags! {
 impl TokenKind {
     pub fn get_flags(&self) -> TokenFlags {
         match self {
-            // TokenKind::Ptr => TokenFlags::UNARY,  // "^"
-            TokenKind::Eq => TokenFlags::ASSIGN, // "="
-            TokenKind::Add => TokenFlags::ARITH, // "+"
+            TokenKind::Ptr => TokenFlags::UNARY,                     // "^"
+            TokenKind::Eq => TokenFlags::ASSIGN,                     // "="
+            TokenKind::Add => TokenFlags::ARITH,                     // "+"
             TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-"
-            TokenKind::Mul => TokenFlags::ARITH, // "*"
-            TokenKind::Quo => TokenFlags::ARITH, // "/"
-            TokenKind::Mod => TokenFlags::ARITH, // "%"
-            TokenKind::BitAnd => TokenFlags::BIT | TokenFlags::UNARY, // "&"
-            TokenKind::BitOr => TokenFlags::BIT, // "|"
-            TokenKind::BitXor => TokenFlags::BIT, // "~"
-            TokenKind::AndNot => TokenFlags::BIT, // "&~"
-            TokenKind::Shl => TokenFlags::BIT,   // "<<"
-            TokenKind::Shr => TokenFlags::BIT,   // ">>"
+            TokenKind::Mul => TokenFlags::ARITH,                     // "*"
+            TokenKind::Quo => TokenFlags::ARITH,                     // "/"
+            TokenKind::Mod => TokenFlags::ARITH,                     // "%"
+            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
+            TokenKind::Bar => TokenFlags::BIT,                       // "|"
+            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~"
+            TokenKind::AndNot => TokenFlags::BIT,                    // "&~"
+            TokenKind::Shl => TokenFlags::BIT,                       // "<<"
+            TokenKind::Shr => TokenFlags::BIT,                       // ">>"
 
             TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
             TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
@@ -138,28 +141,39 @@ impl TokenKind {
     }
 
     pub fn has_flags(&self, flags: TokenFlags) -> bool {
-        self.get_flags().intersects(flags)
+        self.get_flags().contains(flags)
     }
 
     // Precedence hierarchy: higher = done first
     // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
     // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
-    pub fn get_prec(&self) -> i32 {
+    pub fn get_prec_binary(&self) -> i32 {
         match self {
-            TokenKind::Comma => 0,
             _ if self.has_flags(TokenFlags::ASSIGN) => 1,
-            TokenKind::CmpOr => 2,
-            TokenKind::CmpAnd => 3,
-            TokenKind::BitOr => 5,
-            TokenKind::BitXor => 6,
-            TokenKind::BitAnd => 7,
-            TokenKind::CmpEq | TokenKind::NotEq => 8,
-            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
-            TokenKind::Shl | TokenKind::Shr => 10,
-            TokenKind::Sub | TokenKind::Add => 11,
             TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
-            TokenKind::CmpNot => 13,
-            _ => -1,
+            TokenKind::Sub | TokenKind::Add => 11,
+            TokenKind::Shl | TokenKind::Shr => 10,
+            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
+            TokenKind::CmpEq | TokenKind::NotEq => 8,
+            TokenKind::Ampersand => 7, // BitAnd
+            TokenKind::Tilde => 6,     // BitXor
+            TokenKind::Bar => 5,
+            TokenKind::CmpAnd => 3,
+            TokenKind::CmpOr => 2,
+            TokenKind::Comma => 0,
+            _ => -100,
+        }
+    }
+
+    // Precedence hierarchy for unary operators, may be a variant of a multi-purpose operator
+    // unary operators for now have a precedence of 13, may have some edge-cases.
+    // .. e.g: "&":
+    // .. .. Binary: BitAnd, prec: 7
+    // .. .. Unary: Address-of, prec: 13
+    pub fn get_prec_unary(&self) -> i32 {
+        match self {
+            _ if self.has_flags(TokenFlags::UNARY) => 13,
+            _ => -100,
         }
     }
 
@@ -170,21 +184,21 @@ impl TokenKind {
             TokenKind::MulEq => Ok(TokenKind::Mul),
             TokenKind::QuoEq => Ok(TokenKind::Quo),
             TokenKind::ModEq => Ok(TokenKind::Mod),
-            TokenKind::AndEq => Ok(TokenKind::BitAnd),
-            TokenKind::OrEq => Ok(TokenKind::BitOr),
-            TokenKind::XorEq => Ok(TokenKind::BitXor),
+            TokenKind::AndEq => Ok(TokenKind::Ampersand),
+            TokenKind::OrEq => Ok(TokenKind::Bar),
+            TokenKind::XorEq => Ok(TokenKind::Tilde),
             TokenKind::AndNotEq => Ok(TokenKind::AndNot),
             TokenKind::ShlEq => Ok(TokenKind::Shl),
             TokenKind::ShrEq => Ok(TokenKind::Shr),
-            _ => Err(format!("{self:?} cannot be converted to arithmetic")),
+            _ => err!("{self:?} cannot be converted to arithmetic"),
         }
     }
 
     pub fn get_associativity(&self) -> Associativity {
         match self {
-            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::None,
-            _ if self.has_flags(TokenFlags::UNARY) => Associativity::Left,
-            _ => Associativity::Right,
+            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::Right,
+            _ if self.has_flags(TokenFlags::UNARY) => Associativity::Right,
+            _ => Associativity::Left,
         }
     }
 }
@@ -234,9 +248,9 @@ impl Lexer {
             ("*", TokenKind::Mul),
             ("/", TokenKind::Quo),
             ("%", TokenKind::Mod),
-            ("&", TokenKind::BitAnd),
-            ("|", TokenKind::BitOr),
-            ("~", TokenKind::BitXor),
+            ("&", TokenKind::Ampersand),
+            ("|", TokenKind::Bar),
+            ("~", TokenKind::Tilde),
             ("&~", TokenKind::AndNot),
             ("<<", TokenKind::Shl),
             (">>", TokenKind::Shr),
@@ -291,13 +305,7 @@ impl Lexer {
                     _ if self.is_multicomment => (),
                     _ => {
                         tokens.push_back(tok);
-                        if LOG_DEBUG_INFO {
-                            println!(
-                                "[LEX_DEBUG] new tok: {:?} | pos {}\n",
-                                tokens.back(),
-                                self.pos
-                            );
-                        }
+                        debug!("new tok: {:?} | pos {}\n", tokens.back(), self.pos);
                     }
                 },
                 None => continue,
@@ -354,9 +362,7 @@ impl Lexer {
         }
 
         let buf_str: String = buffer.into_iter().map(|x| x as char).collect();
-        if LOG_DEBUG_INFO {
-            println!("\n[LEX_DEBUG] buf: '{buf_str}' | pos: {}", self.pos);
-        }
+        debug!("buf: '{buf_str}' | pos: {}", self.pos);
 
         match buf_type {
             BufKind::Illegal => None,
@@ -394,9 +400,7 @@ impl Lexer {
                 None => {
                     buf_str.pop();
                     self.pos -= 1;
-                    if LOG_DEBUG_INFO {
-                        println!("[LEX_DEBUG] reduce {} | new pos: {}", buf_str, self.pos);
-                    }
+                    debug!("reduce {} | new pos: {}", buf_str, self.pos);
                 }
             }
         }
@@ -411,13 +415,11 @@ impl Lexer {
     fn consume(&mut self) -> u8 {
         let i = self.pos;
         self.pos += 1;
-        if LOG_DEBUG_INFO {
-            println!(
-                "[LEX_DEBUG] consuming '{}' | new pos {}",
-                self.input.get(i).copied().unwrap() as char,
-                self.pos
-            );
-        }
+        debug!(
+            "consuming '{}' | new pos {}",
+            self.input.get(i).copied().unwrap() as char,
+            self.pos
+        );
         self.input.get(i).copied().unwrap()
     }
 }

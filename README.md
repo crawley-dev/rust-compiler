@@ -13,7 +13,7 @@ aaa }
 ```
 
 ## Core Functionality Required:
-- [x] variables WITH DATA TYPES 
+- [x] variables
 - [x] operations: (boolean, logical//bitwise, binary)
 - [x] control flow branches: (if/else)
 - [x] loops: (while/for)
@@ -27,7 +27,7 @@ aaa }
     - [x] rework lexer to handle multi-symbol keywords (i.e "==" or "<=")
     - [x] parse boolean comparison 
     - [x]  else & else if parsing
-    - [ ] code generation
+    - [x] code generation
       - [x] invert 'jump' conditions
       - [ ] unsigned vs signed comparison (diff jump instructions) (no types, all signed)
       - [x] binary expr conditions
@@ -38,7 +38,7 @@ aaa }
     - [x] types of scope
       - inherits variables from parent scope (if, else if, else) 
       - doesn't (new function, UNLESS class, inherits 'self')
-  - [x] (kinda done) split 'TokenKind': 'Symbol' .. 'LogicalOp' .. 'BinaryOp' .. etc
+  - [x] split 'TokenKind': 'Symbol' .. 'LogicalOp' .. 'BinaryOp' .. etc
   - [x] comments
   - [x] re-design multi-symbol in Lexer: match against longest multi-symbol to shortest, until finds match (or illegal token.) 
   - [x] update grammar to match code. 
@@ -55,12 +55,13 @@ aaa }
     - [x] unary
       - [x] LogicalNot
       - [x] BitwiseNot
+      - [ ] left hand && right hand unary, e.g &(var) or val_ptr^
   - [x] dynamically place variables on stack if they are(nt) used immediately. 
     - don't push pop every intlit/var, use registers! 
   - [ ] Testing infrastructure.
   - [ ] data types
     - [x] primitives
-    - [ ] pointers // get mem location of a val (impl '&')
+    - [x] pointers // get mem location of a val (impl '&')
     - [ ] structs
     - [ ] arrays // just heap pointers?
   - [ ] functions

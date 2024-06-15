@@ -29,9 +29,8 @@ use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    Token,
 };
-use std::{any::Any, collections::HashMap, ptr::NonNull};
+use std::collections::HashMap;
 
 const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
@@ -42,13 +41,11 @@ bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct TypeFlags: u16 {
         const NONE = 1 << 0;
-        const UNSIGNED = 1 << 1;
         const SIGNED = 1 << 2;
         const BOOLEAN = 1 << 3;
         const FLOAT = 1 << 4;
         const INTEGRAL = 1 << 5;
         const LITERAL = 1 << 6;
-        // const VARIABLE = 1 << 7;
     }
 }
 
@@ -110,7 +107,7 @@ pub struct Checker<'a> {
 }
 
 impl Checker<'_> {
-    pub fn check_ast(mut ast: AST) -> Result<CodeGenData, String> {
+    pub fn check_ast(ast: AST) -> Result<CodeGenData, String> {
         let mut checker = Checker {
             ctx: CheckerContext {
                 loop_count: 0,
@@ -127,11 +124,11 @@ impl Checker<'_> {
                 // TODO(TOM): generic solution for flags for any type form
                 ("nil", (0, TypeFlags::NONE)),
                 ("bool", (1, TypeFlags::BOOLEAN)),
-                ("u8", (1, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
-                ("u16", (2, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
-                ("u32", (4, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
-                ("u64", (8, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
-                ("usize", (8, TypeFlags::UNSIGNED | TypeFlags::INTEGRAL)),
+                ("u8", (1, TypeFlags::INTEGRAL)),
+                ("u16", (2, TypeFlags::INTEGRAL)),
+                ("u32", (4, TypeFlags::INTEGRAL)),
+                ("u64", (8, TypeFlags::INTEGRAL)),
+                ("usize", (8, TypeFlags::INTEGRAL)),
                 ("i8", (1, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
                 ("i16", (2, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
                 ("i32", (4, TypeFlags::SIGNED | TypeFlags::INTEGRAL)),
@@ -152,23 +149,23 @@ impl Checker<'_> {
 
     fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
-            NodeStmt::Decl {
+            NodeStmt::VarDecl {
                 init_expr,
                 ident,
                 type_ident,
                 mutable,
                 ptr,
             } => {
-                self.check_var_ident(ident.as_str());
-                let (mut width, mut flags) = self.get_typeflags(type_ident.as_str())?;
+                self.check_var_ident(ident.as_str())?;
+                let (mut width, flags) = self.get_typeflags(type_ident.as_str())?;
                 let form = match ptr {
                     true => {
                         width = 8;
                         TypeForm::Pointer {
-                            underlying: Box::new(TypeForm::Primitive { flags }),
+                            underlying: Box::new(TypeForm::Primitive { flags: *flags }),
                         }
                     } // TODO(TOM): not generic to any type form.
-                    false => TypeForm::Primitive { flags },
+                    false => TypeForm::Primitive { flags: *flags },
                 };
                 let var = SemVariable {
                     ident,
@@ -181,7 +178,7 @@ impl Checker<'_> {
                 if let Some(ref expr) = var.init_expr {
                     self.check_expr(expr)?;
                 }
-                return Ok(NodeStmt::SemDecl(var));
+                return Ok(NodeStmt::SemVarDecl(var));
             }
             NodeStmt::If {
                 condition,
@@ -243,7 +240,7 @@ impl Checker<'_> {
                     return err!("Not inside a loop! cannot break");
                 }
             }
-            NodeStmt::SemDecl { .. } => unreachable!("{ERR_MSG} Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::SemVarDecl { .. } => return err!("Found {stmt:#?}.. shouldn't have."),
         };
         Ok(stmt)
     }
@@ -276,7 +273,7 @@ impl Checker<'_> {
     fn check_expr(&self, expr: &NodeExpr) -> Result<&TypeForm, String> {
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
-                let mut lform = self.check_expr(&*lhs)?;
+                let lform = self.check_expr(&*lhs)?;
                 let rform = self.check_expr(&*rhs)?;
                 let op_dbg = format!(
                     "\n{sep}{sep}BinExpr{sep}{sep}\n\
@@ -299,15 +296,15 @@ impl Checker<'_> {
                 // cmp        operator works on everything!! given they're of the same type!
                 let op_flags = op.get_flags();
                 match op_flags {
-                    _ if op_flags.intersects(TokenFlags::CMP) => Ok(&self.ctx.base_bool),
-                    _ if op_flags.intersects(TokenFlags::ARITH) => {
+                    _ if op_flags.contains(TokenFlags::CMP) => Ok(&self.ctx.base_bool),
+                    _ if op_flags.contains(TokenFlags::ARITH) => {
                         if self.form_has_flags(lform, TypeFlags::BOOLEAN) {
                             return err!("Mismatched Op:Operand =>{op_dbg}");
                         }
                         debug!("Bin Expr all good: {lform:#?}");
                         Ok(lform) // TODO(TOM): need flags.intersection() on both forms in future.
                     }
-                    _ if op_flags.intersects(TokenFlags::LOG) => {
+                    _ if op_flags.contains(TokenFlags::LOG) => {
                         if self.form_has_flags(lform, TypeFlags::INTEGRAL) {
                             return err!("Mismatched Op:Operand =>{op_dbg}");
                         }
@@ -324,14 +321,15 @@ impl Checker<'_> {
 
                 // unary sub works on: integral, thats signed or literal
                 // CmpNot works on: boolean
-                // Addr of works on: variables
+                // Addr of works on: mem-allocated
+                // Ptr Deref works on: mem-allocated
                 match op {
                     TokenKind::Sub => {
-                        match self.form_has_flags(operand_form, TypeFlags::INTEGRAL)
-                            && self.form_has_some_flags(
-                                operand_form,
-                                TypeFlags::LITERAL | TypeFlags::SIGNED,
-                            ) {
+                        match self.form_has_some_flags(
+                            operand_form,
+                            TypeFlags::INTEGRAL | TypeFlags::SIGNED,
+                        ) || self.form_has_flags(operand_form, TypeFlags::LITERAL)
+                        {
                             true => Ok(operand_form),
                             false => err!("Mismatched Op:Operand => {op_dbg}"),
                         }
@@ -342,15 +340,20 @@ impl Checker<'_> {
                             false => err!("Mismatched Op:Operand => {op_dbg}"),
                         }
                     }
-                    TokenKind::BitAnd => {
-                        debug!("mem addr of: {operand_form:#?}");
-                        match &**operand { // jesus double de-ref + ref??
-                            NodeExpr::Term(NodeTerm::Ident(_)) => Ok(operand_form), // this works on types ?/
-                            _ => err!(
-                                "Cannot de-reference an expression / literal, no associated memory address\n{op_dbg}"
-                            ),
+                    TokenKind::Ampersand => {
+                        // debug!("mem addr of: {operand_form:#?}");
+                        match &**operand {
+                            NodeExpr::Term(NodeTerm::Ident(_)) => Ok(operand_form), // this works on types ??
+                            _ => err!("Operand has no address, cannot get address of\n{op_dbg}"),
                         }
                     }
+                    TokenKind::Ptr => match &**operand {
+                        NodeExpr::Term(NodeTerm::Ident(_)) => match operand_form {
+                            TypeForm::Pointer { underlying } => Ok(&**underlying),
+                            _ => unreachable!(),
+                        },
+                        _ => err!("Operand has no address, cannot dereference\n{op_dbg}"),
+                    },
                     _ => err!("Unsupported Unary Expression:{op_dbg}"),
                 }
             }
@@ -377,7 +380,7 @@ impl Checker<'_> {
         // check if lhs,rhs are of same form
         // .. if both are arithmetic,
         // .. .. check if either side is a literal,
-        // .. .. check sign is the same.
+        // .. .. sign is the same.
         if lform == rform {
             return true;
         }
@@ -385,8 +388,7 @@ impl Checker<'_> {
             TypeForm::Primitive { flags: lf } => match rform {
                 TypeForm::Primitive { flags: rf } => {
                     if !(self.flags_either_equal(*lf, *rf, TypeFlags::LITERAL)
-                        || !(self.flags_equal(*lf, *rf, TypeFlags::UNSIGNED)
-                            || self.flags_equal(*lf, *rf, TypeFlags::SIGNED)))
+                        || (self.flags_equal(*lf, *rf, TypeFlags::SIGNED)))
                     {
                         return false;
                     }
@@ -437,11 +439,11 @@ impl Checker<'_> {
     }
 
     fn flags_equal(&self, t1: TypeFlags, t2: TypeFlags, flags: TypeFlags) -> bool {
-        t1.intersects(flags) && t2.intersects(flags)
+        t1.contains(flags) && t2.contains(flags)
     }
 
     fn flags_either_equal(&self, t1: TypeFlags, t2: TypeFlags, flags: TypeFlags) -> bool {
-        t1.intersects(flags) || t2.intersects(flags)
+        t1.contains(flags) || t2.contains(flags)
     }
 }
 

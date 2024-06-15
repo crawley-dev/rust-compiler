@@ -18,8 +18,10 @@
 - Open|Close Comment "/*, */" | defines a commented area of code....
 
 ## Operator Registry
+- Pascal-like convention(borrowed from odin) "Type on the left, usage on the right"
+    - e.g "p: ^u32 = var^ + 5;". u32 pointer equal to de-reference of var plus 5s 
 - Precedence determines the order of operations of an expression
-    -  e.g !(5 + 5 * (5 == 5 > 23)). integers are truthy values for context.
+    - e.g "!(5 + 5 * (10 - 3 * 2 / 5) == 10)"
     - operators also have associativity, which determines how precedence is 'climbed' as an expression is parsed.
 <pre>
 - Parens           '()' prec = infinite 

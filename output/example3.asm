@@ -11,6 +11,12 @@ _start:
     mov rax, 5
     neg rax
     mov dword [rbp-8], rax
+    mov rax, [rbp-10] ; Ident('unsigned_int')
+    neg rax
+    mov dword [rbp-8], rax
+    mov rax, [rbp-10] ; Ident('unsigned_int')
+    lea [rbp+10]
+    mov qword [rbp-18], rax
 ; While
     jmp .1_WHILE_CMP
 .2_WHILE_SCOPE:

@@ -29,8 +29,9 @@ fn main() {
     let tokens = Lexer::new(input).tokenize();
     // print_tokens(&tokens);
     let ast = parse(tokens);
+    println!("\n\n{ast:#?}\n\n");
     let gen_data = semantic_check(ast);
-    println!("\n\n{:#?}\n\n", gen_data.ast);
+    // println!("\n\n{:#?}\n\n", gen_data.ast);
     code_gen(gen_data, file_name);
 }
 
@@ -46,7 +47,7 @@ fn parse(tokens: VecDeque<Token>) -> AST {
     }
 }
 
-fn semantic_check(mut ast: AST) -> CodeGenData {
+fn semantic_check(ast: AST) -> CodeGenData {
     match semantic::Checker::check_ast(ast) {
         Ok(info) => info,
         Err(e) => panic!("\n{e}\n"),
