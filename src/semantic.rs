@@ -92,9 +92,8 @@ pub struct CodeGenData {
     pub ast: AST,
 }
 
-// a weak context..
 struct CheckerContext {
-    loop_count: isize, // so the program doesn't immediately crash..
+    loop_count: isize, // isize to get useful error messages in debug mode, not "usize >= 0"
     base_intlit: TypeForm,
     base_bool: TypeForm,
 }
@@ -270,7 +269,7 @@ impl Checker<'_> {
         })
     }
 
-    fn check_expr(&self, expr: &NodeExpr) -> Result<&TypeForm, String> {
+    fn check_expr(&mut self, expr: &NodeExpr) -> Result<&TypeForm, String> {
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let lform = self.check_expr(&*lhs)?;
@@ -289,7 +288,7 @@ impl Checker<'_> {
 
                 if !self.check_type_equality(lform, rform) {
                     return err!("Mismatched Op:Operand =>{op_dbg}");
-                } // recursive so has to be seperate functione
+                }
 
                 // arithmetic operator doesn't work on boolean        operand
                 // logical    operator doesn't work on integral/float operand
@@ -319,10 +318,10 @@ impl Checker<'_> {
                 let op_dbg = format!("{op:?} .. {operand:#?}\n{operand_form:#?}");
                 debug!("{op_dbg}");
 
-                // unary sub works on: integral, thats signed or literal
-                // CmpNot works on: boolean
-                // Addr of works on: mem-allocated
-                // Ptr Deref works on: mem-allocated
+                // 'Unary sub' works on: integral, thats signed or a literal
+                // 'Cmp Not'   works on: boolean
+                // 'Addr of'   works on: allocated memory
+                // 'Ptr Deref' works on: addresses to allocated memory
                 match op {
                     TokenKind::Sub => {
                         match self.form_has_some_flags(
@@ -341,16 +340,27 @@ impl Checker<'_> {
                         }
                     }
                     TokenKind::Ampersand => {
-                        // debug!("mem addr of: {operand_form:#?}");
+                        // TODO(TOM): need to change var form to a pointer. can't because borrowing rules
                         match &**operand {
-                            NodeExpr::Term(NodeTerm::Ident(_)) => Ok(operand_form), // this works on types ??
+                            NodeExpr::Term(NodeTerm::Ident(ident)) => {
+                                let var =
+                                    self.get_var_mut(ident.value.as_ref().unwrap().as_str())?;
+                                var.var_type.form = TypeForm::Pointer {
+                                    underlying: Box::new(var.var_type.form),
+                                };
+                                Ok(&var.var_type.form)
+                                // Ok(operand_form)
+                            }
                             _ => err!("Operand has no address, cannot get address of\n{op_dbg}"),
                         }
                     }
+                    // if operand is a variable identifier,
+                    // which is of type form pointer, all good!
+                    // return the underlying type.
                     TokenKind::Ptr => match &**operand {
                         NodeExpr::Term(NodeTerm::Ident(_)) => match operand_form {
                             TypeForm::Pointer { underlying } => Ok(&**underlying),
-                            _ => unreachable!(),
+                            _ => err!("Operand has no address, cannot dereference\n{op_dbg}"),
                         },
                         _ => err!("Operand has no address, cannot dereference\n{op_dbg}"),
                     },
@@ -364,7 +374,6 @@ impl Checker<'_> {
     fn check_term(&self, term: &NodeTerm) -> Result<&TypeForm, String> {
         match term {
             NodeTerm::Ident(tok) => {
-                // self.validate_term(term)?;
                 let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
                 Ok(&var.var_type.form)
             }
@@ -372,11 +381,7 @@ impl Checker<'_> {
         }
     }
 
-    fn check_type_equality<'a>(
-        &'a self,
-        lform: &TypeForm, // modify lform, as its returned out of check_expr()
-        rform: &TypeForm,
-    ) -> bool {
+    fn check_type_equality(&self, lform: &TypeForm, rform: &TypeForm) -> bool {
         // check if lhs,rhs are of same form
         // .. if both are arithmetic,
         // .. .. check if either side is a literal,
@@ -413,6 +418,13 @@ impl Checker<'_> {
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
             Some(idx) => Ok(self.stack.get(*idx).unwrap()),
+            None => err!("Variable: {ident:?} doesn't exist."),
+        }
+    }
+
+    fn get_var_mut(&mut self, ident: &str) -> Result<&mut SemVariable, String> {
+        match self.var_map.get(ident) {
+            Some(idx) => Ok(self.stack.get_mut(*idx).unwrap()),
             None => err!("Variable: {ident:?} doesn't exist."),
         }
     }

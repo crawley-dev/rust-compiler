@@ -68,7 +68,7 @@
 - break: exits current loop
 
 ## Type Registry:
-- All additional information is kept on the left, all operations are performed on the right, take from odin
+- All type information is kept on the left, all type operations are performed on the right, taken from odin
     - array: []TYPE
         - access arr: VAR[OFFSET]
     - ptr: ^TYPE

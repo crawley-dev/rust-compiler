@@ -67,7 +67,8 @@ i = -5;
 i = -unsigned_int;
 
 let i_ptr: ^i32 = &(unsigned_int);
-let test_test: u8 = -(i_ptr^) - (i_ptr^);
+let test_test: u8 = (&unsigned_int)^;
+//let test_test: u8 = -(i_ptr^) - (i_ptr^);
 /*
 while 1 == 1 {
     ans *= 2;
