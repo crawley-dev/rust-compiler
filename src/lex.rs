@@ -219,8 +219,8 @@ pub struct Token {
 
 pub struct Lexer {
     pos: usize,
-    input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
+    input: Vec<u8>,
     is_linecomment: bool,
     is_multicomment: bool,
 }

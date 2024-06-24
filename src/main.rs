@@ -15,8 +15,8 @@ use parse::*;
 mod semantic;
 use semantic::*;
 
-mod code_gen;
-use code_gen::Generator;
+// mod code_gen;
+// use code_gen::Generator;
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
@@ -32,7 +32,7 @@ fn main() {
     println!("\n\n{ast:#?}\n\n");
     let gen_data = semantic_check(ast);
     // println!("\n\n{:#?}\n\n", gen_data.ast);
-    code_gen(gen_data, file_name);
+    // code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -47,34 +47,34 @@ fn parse(tokens: VecDeque<Token>) -> AST {
     }
 }
 
-fn semantic_check(ast: AST) -> CodeGenData {
+fn semantic_check(ast: AST) -> AST {
     match semantic::Checker::check_ast(ast) {
         Ok(info) => info,
         Err(e) => panic!("\n{e}\n"),
     }
 }
 
-fn code_gen(gen_data: CodeGenData, file_name: String) {
-    let file_path = format!("./output/{}.asm", file_name);
-    let mut generator = Generator::new(gen_data);
-    match generator.gen_asm() {
-        Ok(string) => {
-            println!("[COMPILER] output placed in '{file_path}'");
-            let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
-            file.write_all(
-                b"global _start\n\
-                      _start:\n\
-                     ; setup stack frame\n    \
-                     push rbp\n    \
-                     mov rbp, rsp\n    \
-                     ; Program Start\n",
-            )
-            .unwrap();
-            file.write_all(string.as_bytes()).unwrap();
-        }
-        Err(e) => panic!("\n{e}\n"),
-    };
-}
+// fn code_gen(gen_data: CodeGenData, file_name: String) {
+//     let file_path = format!("./output/{}.asm", file_name);
+//     let mut generator = Generator::new(gen_data);
+//     match generator.gen_asm() {
+//         Ok(string) => {
+//             println!("[COMPILER] output placed in '{file_path}'");
+//             let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
+//             file.write_all(
+//                 b"global _start\n\
+//                       _start:\n\
+//                      ; setup stack frame\n    \
+//                      push rbp\n    \
+//                      mov rbp, rsp\n    \
+//                      ; Program Start\n",
+//             )
+//             .unwrap();
+//             file.write_all(string.as_bytes()).unwrap();
+//         }
+//         Err(e) => panic!("\n{e}\n"),
+//     };
+// }
 
 /*----------------------------------------------------------------------------------------
 ---- Misc --------------------------------------------------------------------------------

@@ -9,7 +9,7 @@ use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{CodeGenData, Type},
+    semantic::Type,
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
@@ -25,6 +25,7 @@ struct GenVariable {
 }
 
 struct CodeGenContext {
+    skt_pos: usize,
     reg_count: usize,
     label_count: usize,
     endif_label: String,
@@ -34,15 +35,14 @@ struct CodeGenContext {
 pub struct Generator {
     ast: AST,
     ctx: CodeGenContext,
-    stk_pos: usize,
     stack: Vec<GenVariable>,         // stack contains variables,
     var_map: HashMap<String, usize>, // var_map contains index to variable
 }
 
 impl Generator {
-    pub fn new(gen_data: CodeGenData) -> Generator {
+    pub fn new(gen_data: AST) -> Generator {
         Generator {
-            ast: gen_data.ast,
+            ast,
             stk_pos: 0,
             stack: Vec::new(),
             var_map: HashMap::new(),
