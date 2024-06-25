@@ -4,19 +4,15 @@ _start:
     push rbp
     mov rbp, rsp
     ; Program Start
-    mov dword [rbp-4], 5
-    mov dword [rbp-8], 0
-    mov byte [rbp-9], 2
-    mov byte [rbp-10], 5
-    mov rax, 5
-    neg rax
-    mov dword [rbp-8], rax
-    mov rax, [rbp-10] ; Ident('unsigned_int')
-    neg rax
-    mov dword [rbp-8], rax
-    mov rax, [rbp-10] ; Ident('unsigned_int')
-    lea [rbp+10]
-    mov qword [rbp-18], rax
-    mov rax, [rbp-10] ; Ident('unsigned_int')
-    lea [rbp+10]
-    mov byte [rbp-19], rax
+    mov byte [rbp-1], 5 ; Ident('unsigned_test')
+    mov rax, [rbp-1] ; Ident('unsigned_test')
+    lea rax, [rbp+1]
+    mov qword [rbp-9], rax ; Ident('i_ptr')
+    mov rax, [rbp-1] ; Ident('unsigned_test')
+    lea rax, [rbp+1]
+    mov rax, qword [rax]
+    mov byte [rbp-10], rax ; Ident('test_test')
+; Exit Program
+    mov rdi, [rbp-10] ; Ident('test_test')
+    mov rax, 60
+    syscall

@@ -24,11 +24,13 @@
 //          - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
 //          - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
 //          - Can't manipulate current AST freely, because it has to be rigid in size, its on the STACK!
-//      Type impl:
+//      ✅ Type impl:
 //          - either a primitive or >>FUTURE:<< struct or union
-//      Var impl:
+//      ✅ Var impl:
 //          - store a "type" + modifications, "form".
 //          - e.g its i16, but a pointer! or.. an array!
+//      Type Width:
+//          - don't currently check if an assignment is of valid size, can't downcast type size, only up.
 
 use crate::{
     debug, err,
@@ -37,7 +39,7 @@ use crate::{
 };
 use std::collections::HashMap;
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
@@ -55,7 +57,7 @@ bitflags::bitflags! {
         const LITERAL = 1 << 5; // can be coerced into any type with equivalent flags.
     }
     #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct FormFlags: u8 {
+    pub struct FormFlags: u8 { // bit weird using bitflags as each (except mutable) is unique
         const PRIMITIVE = 1 << 0;
         const PTR = 1 << 1;
         const ARRAY = 1 << 2;
@@ -82,22 +84,28 @@ pub enum TypeForm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-    ident: String,
-    width: usize,
-    form: TypeForm,
+    pub ident: String,
+    pub width: usize,
+    pub form: TypeForm,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemVariable {
-    ident: String,
-    width: usize,
-    type_id: usize,
-    flags: FormFlags,
-    init_expr: Option<NodeExpr>,
+    pub ident: String,
+    pub width: usize, // depending in whether its form, width != base_type.width
+    pub type_id: usize,
+    pub flags: FormFlags,
+    pub init_expr: Option<NodeExpr>,
 }
 
 struct CheckerContext {
     loop_count: isize, // not usize to get useful error messages in debug mode, not "usize >= 0"
+}
+
+pub struct HandoffData {
+    pub ast: AST,
+    pub types: Vec<Type>,
+    pub type_map: HashMap<String, usize>,
 }
 
 pub struct Checker {
@@ -125,7 +133,7 @@ fn new_struct(ident: &str, width: usize, member_ids: Vec<usize>) -> Type {
 }
 
 impl Checker {
-    pub fn check_ast(mut ast: AST) -> Result<AST, String> {
+    pub fn check_ast(mut ast: AST) -> Result<HandoffData, String> {
         let types = Vec::from([
             new_base("nil", 0, TypeFlags::NONE),
             new_base("bool", 1, TypeFlags::BOOL),
@@ -159,7 +167,11 @@ impl Checker {
             sem_ast.stmts.push(checker.check_stmt(stmt)?);
         }
 
-        Ok(sem_ast)
+        Ok(HandoffData {
+            ast: sem_ast,
+            types: checker.types,
+            type_map: checker.type_map,
+        })
     }
 
     fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
@@ -195,22 +207,26 @@ impl Checker {
 
                 self.var_map.insert(var.ident.clone(), self.stack.len());
                 self.stack.push(var.clone()); // have to clone as am creating a new NodeStmt.
+
                 if let Some(ref expr) = var.init_expr {
                     let (typeflags, formflags) = self.check_expr(expr)?;
                     if !var.flags.contains(formflags) {
                         debug!("Form Inequality! {:?} vs {formflags:?}", var.flags);
                         return err!("Incorrect rhs type form => {var:#?}\n.. {expr:#?}");
                     }
-                    match self.types.get(var.type_id).unwrap().form {
-                        TypeForm::Base { flags } if !flags.contains(typeflags) => {
-                            if !self.check_type_equality(typeflags, flags) {
-                                debug!("Type inequality! {flags:?} vs {typeflags:?}");
-                                return err!("Incorrect rhs type => {var:#?}\n.. {expr:#?}");
-                            }
+
+                    if let TypeForm::Base { flags: varflags } =
+                        self.types.get(var.type_id).unwrap().form
+                    {
+                        if !(varflags.contains(typeflags)
+                            || self.check_type_equality(typeflags, varflags))
+                        {
+                            debug!("Type inequality! {varflags:?} vs {typeflags:?}");
+                            return err!("Incorrect rhs type => {var:#?}\n.. {expr:#?}");
                         }
-                        _ => (),
                     }
                 }
+
                 return Ok(NodeStmt::SemVarDecl(var));
             }
             NodeStmt::If {
@@ -270,14 +286,11 @@ impl Checker {
                     debug!("Form Inequality! {:?} vs {formflags:?}", var.flags);
                     return err!("Invalid Assign: rhs type => {var:#?}\n.. {expr:#?}");
                 }
-                match self.types.get(var.type_id).unwrap().form {
-                    TypeForm::Base { flags } if !flags.contains(typeflags) => {
-                        if !self.check_type_equality(typeflags, flags) {
-                            debug!("Type inequality! {flags:?} vs {typeflags:?}");
-                            return err!("Invalid Assign: rhs type form => {var:#?}\n.. {expr:#?}");
-                        }
+                if let TypeForm::Base { flags } = self.types.get(var.type_id).unwrap().form {
+                    if !(flags.contains(typeflags) || self.check_type_equality(typeflags, flags)) {
+                        debug!("Type inequality! {flags:?} vs {typeflags:?}");
+                        return err!("Invalid Assign: rhs type form => {var:#?}\n.. {expr:#?}");
                     }
-                    _ => (),
                 }
             }
             NodeStmt::Exit(ref expr) => {
@@ -386,13 +399,10 @@ impl Checker {
                         Ok((TypeFlags::BOOL, formflags))
                     }
                     TokenKind::Ampersand => {
-                        if formflags.contains(FormFlags::PTR) {
-                            return err!(
-                                "'&' operator cannot de-reference a memory address =>\n{op_dbg}"
-                            );
-                        }
                         match &**operand {
-                            NodeExpr::Term(NodeTerm::Ident(ident)) => {
+                            NodeExpr::Term(NodeTerm::Ident(ident))
+                                if !formflags.contains(FormFlags::PTR) =>
+                            {
                                 let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
                                 // TODO(TOM): i am extreme dumb, changing the var to a ptr if it EVER gets '&' ????
                                 // unsafe {
@@ -407,28 +417,34 @@ impl Checker {
                                 // debug!("should've added ptr form flag to: {var:#?}");
                                 Ok((typeflags, FormFlags::PTR))
                             }
-                            _ => err!("'&' requires expr to have a memory address =>\n{op_dbg}"),
+                            _ => err!(
+                                "'&' operator requires expr to have a memory address =>\n{op_dbg}"
+                            ),
                         }
                     }
                     TokenKind::Ptr => {
-                        let dwa = 5;
-                        match &**operand {
-                            NodeExpr::Term(NodeTerm::Ident(ident))
-                                if formflags.contains(FormFlags::PTR) =>
-                            // TODO(TOM): this is mega broken!
-                            {
-                                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
-                                // some tech
-                                // unsafe {
-                                //     let var_ptr = var as *const SemVariable;
-                                //     let var_mut_ptr = var_ptr as *mut SemVariable;
-                                //     (*var_mut_ptr).flags.remove(FormFlags::PTR);
-                                // }
-                                let without_ptr = formflags & !FormFlags::PTR;
-                                Ok((typeflags, without_ptr))
-                            }
-                            _ => err!("'*' requires expr to be a pointer\n{op_dbg}"),
+                        if !formflags.contains(FormFlags::PTR) {
+                            return err!(
+                            "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
+                        );
                         }
+                        // TODO(TOM): currently blind yolo deref the mem address, could be nullptr!
+                        // .. could dis-allow ptr arith, only "&VAR_NAME" to get ptr
+                        let without_ptr = formflags & !FormFlags::PTR;
+                        Ok((typeflags, without_ptr))
+                        // match &**operand {
+                        //     NodeExpr::UnaryExpr { ref operand, .. } => {
+                        //         if let NodeExpr::Term(NodeTerm::Ident(ident)) = **operand {}
+                        //     }
+                        //     NodeExpr::Term(NodeTerm::Ident(ident)) => {
+                        //         let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                        //         let without_ptr = formflags & !FormFlags::PTR;
+                        //         Ok((typeflags, without_ptr))
+                        //     }
+                        //     _ => err!(
+                        //         "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
+                        //     ),
+                        // }
                     }
                     _ => err!("Unsupported Unary Expression:{op_dbg}"),
                 }

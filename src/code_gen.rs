@@ -10,6 +10,7 @@ use crate::{
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::Type,
+    HandoffData,
 };
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
@@ -20,12 +21,12 @@ const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
 #[derive(Debug, Clone, PartialEq)]
 struct GenVariable {
     ident: String,
-    var_type: Type,
+    width: usize,
+    type_id: usize,
     stk_index: usize,
 }
 
 struct CodeGenContext {
-    skt_pos: usize,
     reg_count: usize,
     label_count: usize,
     endif_label: String,
@@ -34,15 +35,20 @@ struct CodeGenContext {
 
 pub struct Generator {
     ast: AST,
+    types: Vec<Type>,
+    type_map: HashMap<String, usize>,
+    stk_pos: usize,
     ctx: CodeGenContext,
     stack: Vec<GenVariable>,         // stack contains variables,
     var_map: HashMap<String, usize>, // var_map contains index to variable
 }
 
 impl Generator {
-    pub fn new(gen_data: AST) -> Generator {
+    pub fn new(data: HandoffData) -> Generator {
         Generator {
-            ast,
+            ast: data.ast,
+            types: data.types,
+            type_map: data.type_map,
             stk_pos: 0,
             stack: Vec::new(),
             var_map: HashMap::new(),
@@ -81,25 +87,31 @@ impl Generator {
                 if self.get_var(sem_var.ident.as_str()).is_ok() {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
-                let width = sem_var.var_type.width;
+                let width = sem_var.width;
+                let name = sem_var.ident.clone();
                 let var = GenVariable {
                     ident: sem_var.ident,
                     stk_index: self.stk_pos + width,
-                    var_type: sem_var.var_type,
+                    type_id: sem_var.type_id,
+                    width,
                 };
 
                 self.stk_pos += width;
                 self.var_map.insert(var.ident.clone(), self.stack.len());
                 self.stack.push(var);
 
+                let mut str = String::new();
                 if let Some(expr) = sem_var.init_expr {
-                    return self.gen_expr(expr, Some(&self.gen_stk_access(self.stk_pos, width)));
+                    let stk_pos = self.gen_stk_access(self.stk_pos, width);
+                    str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
-                Ok("\n".to_string()) // just variable VarDecl, no assignment.
+                str.pop(); // remove '\n'
+                str += format!(" ; Ident('{name}')\n").as_str();
+                Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
                 let var = self.get_var(ident.as_str())?;
-                let ans_reg = self.gen_stk_access(var.stk_index, var.var_type.width);
+                let ans_reg = self.gen_stk_access(var.stk_index, var.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
             NodeStmt::If {
@@ -207,7 +219,7 @@ impl Generator {
                 Some(var) => var,
                 None => return err!("uhh.. scope messed up"),
             };
-            self.stk_pos -= popped_var.var_type.width;
+            self.stk_pos -= popped_var.width;
             self.var_map.remove(popped_var.ident.as_str()).unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
@@ -247,7 +259,7 @@ impl Generator {
                 asm += op_asm.as_str();
             }
             NodeExpr::UnaryExpr { op, operand } => {
-                let dwa = *operand.clone();
+                let operand_clone = *operand.clone();
                 asm += self.gen_expr(*operand, None)?.as_str();
 
                 let reg = self.get_reg(self.ctx.reg_count);
@@ -259,24 +271,20 @@ impl Generator {
                          {SPACE}sete al\n\
                          {SPACE}movzx {reg}, al\n"
                     ),
-                    TokenKind::Ampersand => match dwa {
+                    TokenKind::Ampersand => match operand_clone {
                         NodeExpr::Term(NodeTerm::Ident(name)) => {
                             let stk_pos = self
                                 .get_var(name.value.as_ref().unwrap().as_str())?
                                 .stk_index;
-                            format!("{SPACE}lea [rbp+{stk_pos}]\n")
+                            format!("{SPACE}lea {reg}, [rbp+{stk_pos}]\n")
                         }
                         _ => return err!("Attempted 'addr_of' operation, found right hand value"),
                     },
-                    // TokenKind::Ptr => match dwa {
-                    // NodeExpr::Term(NodeTerm::Ident(name)) => {
-                    //     let stk_pos = self
-                    //         .get_var(name.value.as_ref().unwrap().as_str())?
-                    //         .stk_index;
-                    //     format!("")
-                    // }
-                    //     _ => return err!("Attempted 'deref' operation, found right hand value"),
-                    // },
+                    TokenKind::Ptr => {
+                        // TODO(TOM): hardcoded 8 byte ptr size. doesn't work proper..
+                        // format!("{SPACE}mov {reg}, {} [{reg}]\n", self.gen_access_size(8))
+                        format!("{SPACE}mov {reg}, [{reg}]\n")
+                    }
                     _ => return err!("Unable to generate unary expression: '{op:?}'"),
                 };
                 asm += op_asm.as_str();
@@ -303,7 +311,7 @@ impl Generator {
             NodeTerm::Ident(tok) => {
                 let ident = tok.value.clone().unwrap();
                 let var = self.get_var(ident.as_str())?;
-                let stk_pos = self.gen_var_access(var.stk_index, var.var_type.width);
+                let stk_pos = self.gen_var_access(var.stk_index, var.width);
                 let reg = match ans_reg {
                     Some(reg) => reg,
                     None => self.next_reg(),

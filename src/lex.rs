@@ -149,7 +149,6 @@ impl TokenKind {
     // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
     pub fn get_prec_binary(&self) -> i32 {
         match self {
-            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
             TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
             TokenKind::Sub | TokenKind::Add => 11,
             TokenKind::Shl | TokenKind::Shr => 10,
@@ -160,6 +159,7 @@ impl TokenKind {
             TokenKind::Bar => 5,
             TokenKind::CmpAnd => 3,
             TokenKind::CmpOr => 2,
+            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
             TokenKind::Comma => 0,
             _ => -100,
         }
