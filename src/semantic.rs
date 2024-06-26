@@ -29,9 +29,11 @@
 //      ✅ Var impl:
 //          - store a "type" + modifications, "form".
 //          - e.g its i16, but a pointer! or.. an array!
-//      Type Width:
-//          - don't currently check if an assignment is of valid size, can't downcast type size, only up.
-//          - MAYBE: can't add together a u32, u8 as of different type?
+//      Type Narrowing:
+//          - check assignments for type narrowing
+//          - when the assigned expr is wider than the assignee variable
+//          - PROBLEM: type & form flags don't represent any width, some inferences can be made.
+//              - i.e FormFlags::PTR = usize.
 
 use crate::{
     debug, err,
@@ -293,6 +295,9 @@ impl Checker {
                         return err!("Invalid Assign: rhs type form =>\n {:?} vs {formflags:?}\n{var:#?}\n.. {expr:#?}", var.flags);
                     }
                 }
+
+                // Type Narrowing
+                //
             }
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
