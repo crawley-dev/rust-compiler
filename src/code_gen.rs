@@ -3,7 +3,8 @@
 //      - ✅ replace stmt NodeStmt with semantic equivalent (holds different info, types etc.)
 //      - Let stmt --> Semantic Variable created, use that! don't need to consume
 //  Pointers:
-//      - get var stk_offset when getting addr of!
+//      - address of: get var's stk_pos and use "lea" to get the memory address
+//      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
 
 use crate::{
     debug, err,

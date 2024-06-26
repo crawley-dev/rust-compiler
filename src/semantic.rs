@@ -31,15 +31,16 @@
 //          - e.g its i16, but a pointer! or.. an array!
 //      Type Width:
 //          - don't currently check if an assignment is of valid size, can't downcast type size, only up.
+//          - MAYBE: can't add together a u32, u8 as of different type?
 
 use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::format};
 
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
@@ -276,20 +277,20 @@ impl Checker {
                 ref expr,
             } => {
                 let var = self.get_var(ident.as_str())?;
+
+                // var mutability check
                 if !var.flags.contains(FormFlags::MUTABLE) {
                     return err!("Re-Assignment of a Constant:\n{var:#?}");
                 }
 
+                // expr type && form check
                 let (typeflags, formflags) = self.check_expr(expr)?;
                 if !var.flags.contains(formflags) {
-                    // TODO(TOM): error on FormFlags::Mutable, we don't care about that!
-                    debug!("Form Inequality! {:?} vs {formflags:?}", var.flags);
-                    return err!("Invalid Assign: rhs type => {var:#?}\n.. {expr:#?}");
+                    return err!("Invalid Assign: rhs type =>\n {:?} vs {formflags:?}\n{var:#?}\n.. {expr:#?}", var.flags);
                 }
                 if let TypeForm::Base { flags } = self.types.get(var.type_id).unwrap().form {
                     if !(flags.contains(typeflags) || self.check_type_equality(typeflags, flags)) {
-                        debug!("Type inequality! {flags:?} vs {typeflags:?}");
-                        return err!("Invalid Assign: rhs type form => {var:#?}\n.. {expr:#?}");
+                        return err!("Invalid Assign: rhs type form =>\n {:?} vs {formflags:?}\n{var:#?}\n.. {expr:#?}", var.flags);
                     }
                 }
             }
@@ -336,16 +337,17 @@ impl Checker {
                 let (ltype, lform) = self.check_expr(&*lhs)?;
                 let (rtype, rform) = self.check_expr(&*rhs)?;
                 let op_dbg = format!(
-                    "\n{sep}{sep}BinExpr{sep}{sep}\n\
-                        {lhs:#?}\n.. {op:?} ..\n\
-                        {rhs:#?}\n\
-                    {sep}TYPE INFO{sep}\n\
-                        {lform:#?}\n..\
-                        {op:?} ..\n\
-                        {rform:#?}",
+                    "\n\n{sep}BinExpr{sep}\n\
+                     {op:?} =>\
+                    \n LHS({lname}): {ltype:?} .. {lform:?}\
+                    \n RHS({rname}): {ltype:?} .. {lform:?}",
                     sep = "-".repeat(5),
+                    lname = self.get_expr_ident(&*lhs, false),
+                    rname = self.get_expr_ident(&*rhs, true)
                 );
-                debug!("{op_dbg}");
+                if LOG_DEBUG_INFO {
+                    println!("{op_dbg}")
+                }
 
                 if !self.check_type_equality(ltype, rtype) {
                     return err!("Mismatched operand types =>\n{op_dbg}");
@@ -363,14 +365,12 @@ impl Checker {
                         if ltype.contains(TypeFlags::INT) {
                             return err!("Mismatched binary operation =>\n{op_dbg}");
                         }
-                        debug!("BinExpr all good: {op_dbg}");
                         Ok((TypeFlags::BOOL, FormFlags::PRIMITIVE))
                     }
                     _ if op_flags.contains(TokenFlags::ARITH) => {
                         if ltype.contains(TypeFlags::BOOL) {
                             return err!("Mismatched binary operation =>\n{op_dbg}");
                         }
-                        debug!("BinExpr all good: {op_dbg}");
                         Ok((ltype, lform))
                     }
                     _ => err!("Unsupported binary expression =>\n{op_dbg}"),
@@ -378,8 +378,16 @@ impl Checker {
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let (typeflags, formflags) = self.check_expr(&*operand)?;
-                let op_dbg = format!("{op:?} .. {operand:#?}\n{typeflags:#?}\n{formflags:#?}");
-                debug!("{op_dbg}");
+                let op_dbg = format!(
+                    "\n\n{sep}UnaryExpr{sep}\n\
+                     {op:?} =>\
+                     \n OPERAND({name}): {typeflags:?} .. {formflags:?}",
+                    sep = "-".repeat(5),
+                    name = self.get_expr_ident(&*operand, false)
+                );
+                if LOG_DEBUG_INFO {
+                    println!("{op_dbg}")
+                }
 
                 // 'Unary sub' int(lit) => int | signed
                 // 'Cmp Not'   bool => bool
@@ -398,53 +406,27 @@ impl Checker {
                         }
                         Ok((TypeFlags::BOOL, formflags))
                     }
-                    TokenKind::Ampersand => {
-                        match &**operand {
-                            NodeExpr::Term(NodeTerm::Ident(ident))
-                                if !formflags.contains(FormFlags::PTR) =>
-                            {
-                                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
-                                // TODO(TOM): i am extreme dumb, changing the var to a ptr if it EVER gets '&' ????
-                                // unsafe {
-                                //     let var_ptr = var as *const SemVariable;
-                                //     let var_mut_ptr = var_ptr as *mut SemVariable;
-                                //     if (*var_mut_ptr).flags.contains(FormFlags::MUTABLE) {
-                                //         (*var_mut_ptr).flags = FormFlags::PTR | FormFlags::MUTABLE;
-                                //     } else {
-                                //         (*var_mut_ptr).flags = FormFlags::PTR;
-                                //     }
-                                // }
-                                // debug!("should've added ptr form flag to: {var:#?}");
-                                Ok((typeflags, FormFlags::PTR))
-                            }
-                            _ => err!(
-                                "'&' operator requires expr to have a memory address =>\n{op_dbg}"
-                            ),
+                    TokenKind::Ampersand => match &**operand {
+                        NodeExpr::Term(NodeTerm::Ident(ident))
+                            if !formflags.contains(FormFlags::PTR) =>
+                        {
+                            let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                            Ok((typeflags, FormFlags::PTR))
                         }
-                    }
+                        _ => {
+                            err!("'&' operator requires expr to have a memory address =>\n{op_dbg}")
+                        }
+                    },
                     TokenKind::Ptr => {
                         if !formflags.contains(FormFlags::PTR) {
                             return err!(
-                            "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
-                        );
+                                "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
+                            );
                         }
                         // TODO(TOM): currently blind yolo deref the mem address, could be nullptr!
                         // .. could dis-allow ptr arith, only "&VAR_NAME" to get ptr
                         let without_ptr = formflags & !FormFlags::PTR;
                         Ok((typeflags, without_ptr))
-                        // match &**operand {
-                        //     NodeExpr::UnaryExpr { ref operand, .. } => {
-                        //         if let NodeExpr::Term(NodeTerm::Ident(ident)) = **operand {}
-                        //     }
-                        //     NodeExpr::Term(NodeTerm::Ident(ident)) => {
-                        //         let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
-                        //         let without_ptr = formflags & !FormFlags::PTR;
-                        //         Ok((typeflags, without_ptr))
-                        //     }
-                        //     _ => err!(
-                        //         "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
-                        //     ),
-                        // }
                     }
                     _ => err!("Unsupported Unary Expression:{op_dbg}"),
                 }
@@ -464,6 +446,22 @@ impl Checker {
                 Ok((baseflags, var.flags))
             }
             NodeTerm::IntLit(_) => Ok((TypeFlags::INT | TypeFlags::LITERAL, FormFlags::PRIMITIVE)),
+        }
+    }
+
+    fn get_expr_ident(&self, expr: &NodeExpr, right_side: bool) -> String {
+        match expr {
+            NodeExpr::BinaryExpr { op, lhs, rhs } => {
+                if right_side {
+                    self.get_expr_ident(&*rhs, false)
+                } else {
+                    self.get_expr_ident(&*lhs, false)
+                }
+            }
+            NodeExpr::UnaryExpr { op, operand } => self.get_expr_ident(&*operand, false),
+            NodeExpr::Term(term) => match term {
+                NodeTerm::IntLit(tok) | NodeTerm::Ident(tok) => tok.value.as_ref().unwrap().clone(),
+            },
         }
     }
 
