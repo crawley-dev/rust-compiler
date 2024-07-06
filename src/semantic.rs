@@ -49,66 +49,66 @@ const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 // Bool    | Int | Float
 // Signed  | Unsigned
 // Literal | Variable
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct TypeFlags: u8 {
-        const NONE = 1 << 0;
-        const INT = 1 << 1;
-        const BOOL = 1 << 2;
-        const FLOAT = 1 << 3;
-        const SIGNED = 1 << 4;
-        const LITERAL = 1 << 5; // can be coerced into any type with equivalent flags.
-    }
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct FormFlags: u8 { // bit weird using bitflags as each (except mutable) is unique
-        const PRIMITIVE = 1 << 0;
-        const PTR = 1 << 1;
-        const ARRAY = 1 << 2;
-        const MUTABLE = 1 << 3;
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TypeMode {
+    Bool,
+    Int { signed: bool },
+    Float { signed: bool },
 }
 
-// >>Form: Different forms a type can be>>
-// Base: just a type, has some flags, chill.
-// Struct: a group of types, stores type id, not type.
-// Union: a group of types that share the same storage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AddressingMode {
+    Primitive,
+    Pointer,
+    Array,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExprFlags {
+    pub mutable: bool,
+    pub literal: bool,
+    pub mode: AddressingMode,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeForm {
     Base {
-        flags: TypeFlags,
-    },
+        mode: TypeMode,
+    }, // Base: just a type, has some flags, chill.
     Struct {
         member_ids: Vec<usize>,
-    },
+    }, // Struct: a group of types, stores type id, not type.
     Union {
         // TODO(TOM): define later
-    },
+    }, // Union: a group of types that share the same storage.
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-    pub ident: String,
     pub width: usize,
+    pub ident: String,
     pub form: TypeForm,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemVariable {
-    pub ident: String,
     pub width: usize, // depending in whether its form, width != base_type.width
+    pub ident: String,
     pub type_id: usize,
-    pub flags: FormFlags,
+    pub flags: ExprFlags,
     pub init_expr: Option<NodeExpr>,
 }
 
-struct CheckerContext {
-    loop_count: isize, // not usize to get useful error messages in debug mode, not "usize >= 0"
-}
+//////////////////////////////////////////////////////
 
 pub struct HandoffData {
     pub ast: AST,
     pub types: Vec<Type>,
     pub type_map: HashMap<String, usize>,
+}
+
+struct CheckerContext {
+    loop_count: isize, // not usize to get useful error messages in debug mode, not "usize >= 0"
 }
 
 pub struct Checker {
@@ -439,6 +439,15 @@ impl Checker {
             NodeExpr::Term(term) => self.check_term(term),
         }
     }
+
+    // what info do functions have?
+    // - TypeFlags:
+    //      - TypeMode: what operations can be performed?
+    //      - Signed: can the variable be negative?
+    // - FormFlags:
+    //      - Mutable: can the expression be changed?
+    //      - Literal: does it have state/a place in memory
+    //      - FormMode:
 
     fn check_term(&self, term: &NodeTerm) -> Result<(TypeFlags, FormFlags), String> {
         match term {
