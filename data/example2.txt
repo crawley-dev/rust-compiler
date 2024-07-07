@@ -1,5 +1,6 @@
 let num = 5 + 20 - 5;
 {
     let num2 = 5;
+    let x = (10 - 2) * 3 + 5 / (3 + 2);
 }
 exit(num);
