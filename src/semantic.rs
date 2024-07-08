@@ -43,6 +43,8 @@
 //      Type Coersion:
 //          - currently any literal can be coerced!
 //          - new ExprForm, 'expression' a combination of literal's and variables.
+//      CRAZY IDEA!!:
+//          - every combination of typemode, addressing mode, exprform shoved in a table for direct comparison and lookup!
 
 use crate::{
     debug, err,
@@ -84,7 +86,7 @@ pub enum AddressingMode {
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
     Literal { inherited_width: usize },
-    Expr { inherited_width: usize },
+    // Expr { inherited_width: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
