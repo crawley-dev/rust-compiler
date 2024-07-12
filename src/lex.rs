@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{debug, err};
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const ERR_MSG: &'static str = "[ERROR_LEX]";
 const DBG_MSG: &'static str = "[DEBUG_LEX]";
 
@@ -209,24 +209,29 @@ enum BufKind {
     IntLit,
     Symbol,
     Illegal,
+    NewLine,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
     pub value: Option<String>,
+    pub pos: (usize, usize),
+    // pub raw_str: String,
 }
 
 pub struct Lexer {
-    pos: usize,
-    reg: HashMap<&'static str, TokenKind>,
+    idx: usize,
+    col_pos: usize,
+    row_pos: usize,
     input: Vec<u8>,
+    reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
     is_multicomment: bool,
 }
 
 impl Lexer {
-    pub fn new(input: String) -> Lexer {
+    pub fn new(input: Vec<String>) -> Lexer {
         let reg: HashMap<&'static str, TokenKind> = HashMap::from([
             // Generic Symbols
             (",", TokenKind::Comma),
@@ -286,8 +291,15 @@ impl Lexer {
             ("break", TokenKind::Break),
         ]);
         Lexer {
-            pos: 0,
-            input: input.into_bytes(),
+            idx: 0,
+            col_pos: 0,
+            row_pos: 0,
+            input: input
+                .iter()
+                .map(|x| x.chars())
+                .flatten()
+                .map(|x| x as u8)
+                .collect(),
             reg,
             is_linecomment: false,
             is_multicomment: false,
@@ -296,7 +308,7 @@ impl Lexer {
 
     pub fn tokenize(&mut self) -> VecDeque<Token> {
         let mut tokens = VecDeque::new();
-        while self.pos < self.input.len() {
+        while self.idx < self.input.len() {
             match self.next_token() {
                 Some(tok) => match tok.kind {
                     TokenKind::LineComment => self.is_linecomment = true,
@@ -305,7 +317,7 @@ impl Lexer {
                     _ if self.is_multicomment => (),
                     _ => {
                         tokens.push_back(tok);
-                        debug!("new tok: {:?} | pos {}\n", tokens.back(), self.pos);
+                        debug!("new tok: {:?} | pos {}\n", tokens.back(), self.idx);
                     }
                 },
                 None => continue,
@@ -315,8 +327,8 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Option<Token> {
-        let mut buffer = Vec::new();
-        let mut buf_type = BufKind::Illegal;
+        let mut buf = Vec::new();
+        let mut buf_kind = BufKind::Illegal;
 
         loop {
             let next_char = match self.peek(0) {
@@ -324,53 +336,59 @@ impl Lexer {
                 None => break,
             };
 
-            // TODO: (done.. i think?)
-            // requires (line + " \n"), e.g "//"
-            // hits "//", consumes next.. " ", break
-            // next iter: hits '\n', stop linecomment. CORRECT!
-            // .. otherwise, it would consume "//" && \n, then: linecomment = true. BAD!
-            if next_char == b'\n' {
-                if buffer.is_empty() {
-                    self.pos += 1;
-                }
-                self.is_linecomment = false;
-                break;
-            } else if self.is_linecomment || next_char.is_ascii_whitespace() {
-                if buffer.is_empty() {
-                    self.pos += 1;
-                }
-                break;
-            }
-
             let char_type = match next_char {
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' => BufKind::Word,
-                b'0'..=b'9' if buf_type == BufKind::Word => BufKind::Word,
+                b'\n' => BufKind::NewLine,
+                _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
+                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
+                b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
                 b'0'..=b'9' => BufKind::IntLit,
-                33..=47 | 58..=64 | 91..=96 | 123..=126 => BufKind::Symbol,
-                _ => break,
+                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
+                _ => {
+                    debug!("uhhh not good! unknown char found {next_char}");
+                    break;
+                }
             };
 
-            if buffer.is_empty() {
-                buf_type = char_type.clone();
-            }
-            if char_type != buf_type {
+            // buf_kind not set, set it.
+            if buf.is_empty() {
+                buf_kind = char_type.clone();
+            } else if char_type != buf_kind {
                 break;
             }
 
             let ch = self.consume();
-            buffer.push(ch);
+            buf.push(ch);
+        }
+        self.create_tok(buf_kind, &buf)
+    }
+
+    // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
+    //  - trying to modify state in next_token causes bugs.
+    //    .. becasue after creating a token, the next char may not be "next_char" due to a reduce
+    fn create_tok(&mut self, buf_kind: BufKind, buf: &Vec<u8>) -> Option<Token> {
+        if buf.is_empty() {
+            self.idx += 1;
+            self.row_pos += 1;
+            return None;
         }
 
-        let buf_str: String = buffer.into_iter().map(|x| x as char).collect();
-        debug!("buf: '{buf_str}' | pos: {}", self.pos);
+        let buf_str: String = buf.into_iter().map(|x| *x as char).collect();
+        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx);
 
-        match buf_type {
+        match buf_kind {
             BufKind::Illegal => None,
+            BufKind::NewLine => {
+                self.is_linecomment = false;
+                self.col_pos += 1;
+                self.row_pos = 0;
+                None
+            }
             BufKind::Word => self.match_word(buf_str),
             BufKind::Symbol => self.match_symbol(buf_str),
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
                 value: Some(buf_str),
+                pos: (self.row_pos, self.col_pos),
             }),
         }
     }
@@ -380,10 +398,12 @@ impl Lexer {
             Some(kind) => Some(Token {
                 kind: kind.clone(),
                 value: None,
+                pos: (self.row_pos, self.col_pos),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
                 value: Some(buf_str),
+                pos: (self.row_pos, self.col_pos),
             }),
         }
     }
@@ -395,43 +415,47 @@ impl Lexer {
                     return Some(Token {
                         kind: kind.clone(),
                         value: None,
+                        pos: (self.row_pos, self.col_pos),
                     });
                 }
                 None => {
                     buf_str.pop();
-                    self.pos -= 1;
-                    debug!("reduce {} | new pos: {}", buf_str, self.pos);
+                    self.idx -= 1;
+                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
                 }
             }
         }
-        self.pos += 1;
+        self.idx += 1;
+        self.row_pos += 1;
         None
     }
 
     fn peek(&self, offset: usize) -> Option<&u8> {
-        self.input.get(self.pos + offset)
+        self.input.get(self.idx + offset)
     }
 
     fn consume(&mut self) -> u8 {
-        let i = self.pos;
-        self.pos += 1;
-        debug!(
-            "consuming '{}' | new pos {}",
-            self.input.get(i).copied().unwrap() as char,
-            self.pos
-        );
+        let i = self.idx;
+        self.idx += 1;
+        self.row_pos += 1;
+        let char = self.input.get(i).copied().unwrap();
+        if char == b'\n' {
+            debug!("consuming '{}' | new pos {}", r"\n", self.idx);
+        } else {
+            debug!("consuming '{}' | new pos {}", char as char, self.idx);
+        }
         self.input.get(i).copied().unwrap()
     }
 }
 
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.value {
-            Some(val) => match &self.kind {
-                TokenKind::Ident => write!(f, "{:?}('{val}')", self.kind),
-                _ => write!(f, "{:?}({val})", self.kind),
-            },
-            None => write!(f, "{:?}", self.kind),
-        }
-    }
-}
+// impl fmt::Debug for Token {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match &self.value {
+//             Some(val) => match &self.kind {
+//                 TokenKind::Ident => write!(f, "{:?}('{val}')", self.kind),
+//                 _ => write!(f, "{:?}({val})", self.kind),
+//             },
+//             None => write!(f, "{:?}", self.kind),
+//         }
+//     }
+// }

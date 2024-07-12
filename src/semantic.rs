@@ -43,7 +43,7 @@
 //      Type Coersion:
 //          - currently any literal can be coerced!
 //          - new ExprForm, 'expression' a combination of literal's and variables.
-//      CRAZY IDEA!!:
+//      CRAZY IDEA!!: (bad idea)
 //          - every combination of typemode, addressing mode, exprform shoved in a table for direct comparison and lookup!
 
 use crate::{
@@ -53,14 +53,11 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    fmt::format,
-    num::IntErrorKind,
-    ops::Add,
     ptr::{self, NonNull},
 };
 
-const LOG_DEBUG_INFO: bool = false;
 const PTR_WIDTH: usize = 8;
+const LOG_DEBUG_INFO: bool = false;
 const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
 const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
 
@@ -72,6 +69,7 @@ pub enum TypeMode {
     Bool,
     Int { signed: bool },
     Float { signed: bool },
+    IntLit,
 }
 
 // TODO(TOM): this isn't correct im sure.
@@ -85,8 +83,7 @@ pub enum AddressingMode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
-    Literal { inherited_width: usize },
-    // Expr { inherited_width: usize },
+    Expr { inherited_width: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,15 +116,16 @@ pub struct Type {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemVariable {
     pub width: usize, // depending in whether its form, width != base_type.width
+    pub mutable: bool,
     pub ident: String,
     pub type_id: usize,
-    pub mutable: bool,
     pub addr_mode: AddressingMode,
     pub init_expr: Option<NodeExpr>,
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct HandoffData {
     pub ast: AST,
     pub types: Vec<Type>,
@@ -324,72 +322,23 @@ impl Checker {
         })
     }
 
-    // fn check_expr(&self, expr: &NodeExpr) -> Result<(TypeFlags, FormFlags), String> {
-    //     match expr {
-    //         NodeExpr::UnaryExpr { op, operand } => {
-    //             let (typeflags, formflags) = self.check_expr(&*operand)?;
-    //             let op_dbg = format!(
-    //                 "\n\n{sep}UnaryExpr{sep}\n\
-    //                  {op:?} =>\
-    //                  \n OPERAND({name}): {typeflags:?} .. {formflags:?}",
-    //                 sep = "-".repeat(5),
-    //                 name = self.get_expr_ident(&*operand, false)
-    //             );
-    //             if LOG_DEBUG_INFO {
-    //                 println!("{op_dbg}")
-    //             }
-    //             // 'Unary sub' int(lit) => int | signed
-    //             // 'Cmp Not'   bool => bool
-    //             // 'Addr of'   var => ptr
-    //             // 'Ptr Deref' ptr => var
-    //             match op {
-    //                 TokenKind::Sub => {
-    //                     if !typeflags.contains(TypeFlags::INT) {
-    //                         return err!("'-' unary operator only works on integers =>\n{op_dbg}");
-    //                     }
-    //                     Ok((TypeFlags::INT | TypeFlags::SIGNED, formflags))
-    //                 }
-    //                 TokenKind::CmpNot => {
-    //                     if !typeflags.contains(TypeFlags::BOOL) {
-    //                         return err!("'!' operator only works on booleans =>\n{op_dbg}");
-    //                     }
-    //                     Ok((TypeFlags::BOOL, formflags))
-    //                 }
-    //                 TokenKind::Ampersand => match &**operand {
-    //                     NodeExpr::Term(NodeTerm::Ident(ident))
-    //                         if !formflags.contains(FormFlags::PTR) =>
-    //                     {
-    //                         let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
-    //                         Ok((typeflags, FormFlags::PTR))
-    //                     }
-    //                     _ => {
-    //                         err!("'&' operator requires expr to have a memory address =>\n{op_dbg}")
-    //                     }
-    //                 },
-    //                 TokenKind::Ptr => {
-    //                     if !formflags.contains(FormFlags::PTR) {
-    //                         return err!(
-    //                             "{operand:#?}\n'^' operator requires expr to be a pointer\n{op_dbg}"
-    //                         );
-    //                     }
-    //                     // TODO(TOM): currently blind yolo deref the mem address, could be nullptr!
-    //                     // .. could dis-allow ptr arith, only "&VAR_NAME" to get ptr
-    //                     let without_ptr = formflags & !FormFlags::PTR;
-    //                     Ok((typeflags, without_ptr))
-    //                 }
-    //                 _ => err!("Unsupported Unary Expression:{op_dbg}"),
-    //             }
-    //         }
-    //         NodeExpr::Term(term) => self.check_term(term),
-    //     }
-    // }
-
     fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let ldata = self.check_expr(lhs)?;
                 let rdata = self.check_expr(rhs)?;
                 debug!("lhs: {ldata:#?}\nrhs: {rdata:#?}");
+
+                // Binary expressions disallowed for arrays!
+                match ldata.addr_mode {
+                    AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
+                        AddressingMode::Primitive | AddressingMode::Pointer => (),
+                        AddressingMode::Array => {
+                            return err!("Binary Expressions invalid for Arrays")
+                        }
+                    },
+                    AddressingMode::Array => return err!("Binary Expressions invalid for Arrays"),
+                }
 
                 let err_msg = format!("Expr of different Type! => {ldata:#?}\n.. {rdata:#?}");
                 self.check_type_mode(&ldata, &rdata, &err_msg)?;
@@ -402,33 +351,35 @@ impl Checker {
                     _ if op_flags.contains(TokenFlags::CMP) => Ok(ExprData {
                         type_mode: TypeMode::Bool,
                         addr_mode: AddressingMode::Primitive,
-                        form: ExprForm::Literal {
+                        form: ExprForm::Expr {
                             inherited_width: PTR_WIDTH,
                         },
                     }),
                     _ if op_flags.contains(TokenFlags::LOG) => match ldata.type_mode {
+                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
+                            err!("'{op:?}' requires expr to be a boolean")
+                        }
                         TypeMode::Bool => Ok(ExprData {
                             type_mode: TypeMode::Bool,
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Literal {
+                            form: ExprForm::Expr {
                                 inherited_width: PTR_WIDTH,
                             },
                         }),
-                        TypeMode::Int { signed } | TypeMode::Float { signed } => {
-                            err!("Cannot perform logical operation on numerical types")
-                        }
                     },
                     _ if op_flags.contains(TokenFlags::ARITH) => match ldata.type_mode {
                         TypeMode::Bool => {
-                            err!("Cannot perform arithmetic operation on boolean types.")
+                            err!("'{op:?}' requires expr to be an integer or float")
                         }
-                        TypeMode::Int { signed } | TypeMode::Float { signed } => Ok(ExprData {
-                            type_mode: ldata.type_mode,
-                            addr_mode: ldata.addr_mode,
-                            form: ExprForm::Literal {
-                                inherited_width: PTR_WIDTH,
-                            },
-                        }),
+                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
+                            Ok(ExprData {
+                                type_mode: ldata.type_mode,
+                                addr_mode: ldata.addr_mode,
+                                form: ExprForm::Expr {
+                                    inherited_width: PTR_WIDTH,
+                                },
+                            })
+                        }
                     },
                     _ => err!("Unsupported binary expression =>\n{lhs:#?}\n..\n{rhs:#?}"),
                 }
@@ -437,50 +388,63 @@ impl Checker {
                 let checked = self.check_expr(&*operand)?;
                 debug!("{checked:#?}");
 
-                // 'Unary sub' int(lit) => int | signed
+                // 'Unary sub' signed int or lit => int | signed
                 // 'Cmp Not'   bool => bool
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
                 let inherited_width = match checked.form {
                     ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
-                    ExprForm::Literal { inherited_width } => inherited_width,
+                    ExprForm::Expr { inherited_width } => inherited_width,
                 };
                 match op {
                     TokenKind::Sub => match checked.type_mode {
-                        TypeMode::Int { signed } => Ok(ExprData {
+                        TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
+                            Ok(ExprData {
+                                type_mode: TypeMode::Int { signed },
+                                addr_mode: AddressingMode::Primitive,
+                                form: ExprForm::Expr { inherited_width },
+                            })
+                        }
+                        TypeMode::IntLit => Ok(ExprData {
                             type_mode: TypeMode::Int { signed: true },
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Literal { inherited_width },
+                            form: ExprForm::Expr { inherited_width },
                         }),
-                        _ => err!("'-' unary operator only works on integers =>\n{checked:#?}"),
+                        _ => {
+                            err!("'-' unary operator requires expr to be a signed integers =>\n{checked:#?}")
+                        }
                     },
                     TokenKind::CmpNot => match checked.type_mode {
                         TypeMode::Bool => Ok(ExprData {
                             type_mode: TypeMode::Bool,
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Literal { inherited_width },
+                            form: ExprForm::Expr { inherited_width },
                         }),
-                        _ => err!("'!' operator only works on booleans =>\n{checked:#?}"),
+                        _ => err!("'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
                     },
                     TokenKind::Ampersand => match checked.addr_mode {
                         AddressingMode::Pointer => err!(
-                            "'&' operator requires expr to have a memory address =>\n{checked:#?}"
+                            "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"
                         ),
-                        _ => Ok(ExprData {
-                            type_mode: checked.type_mode,
-                            addr_mode: AddressingMode::Pointer,
-                            form: ExprForm::Literal {
-                                inherited_width: PTR_WIDTH,
-                            },
-                        }),
+                        AddressingMode::Primitive => match checked.form {
+                            ExprForm::Variable { ptr } => Ok(ExprData {
+                                type_mode: checked.type_mode,
+                                addr_mode: AddressingMode::Pointer,
+                                form: ExprForm::Expr {
+                                    inherited_width: PTR_WIDTH,
+                                },
+                            }),
+                            _ => err!("'&' unary operator requires expr to be a memory address."),
+                        },
+                        _ => err!("'&' unary operator not supported for Arrays"),
                     },
                     TokenKind::Ptr => match checked.addr_mode {
                         AddressingMode::Pointer => Ok(ExprData {
                             type_mode: checked.type_mode,
                             addr_mode: AddressingMode::Primitive,
-                            form: checked.form, // TODO(TOM): not sure about this?
+                            form: ExprForm::Expr { inherited_width }, // TODO(TOM): not sure about this?
                         }),
-                        _ => err!("'^' operator requires expr to be a pointer\n{checked:#?}"),
+                        _ => err!("'^' unary operator requires expr to be a pointer\n{checked:#?}"),
                     },
                     _ => err!("Unsupported Unary Expression:{checked:#?}"),
                 }
@@ -506,9 +470,9 @@ impl Checker {
                 }
             }
             NodeTerm::IntLit(_) => Ok(ExprData {
-                type_mode: TypeMode::Int { signed: false },
+                type_mode: TypeMode::IntLit,
                 addr_mode: AddressingMode::Primitive,
-                form: ExprForm::Literal {
+                form: ExprForm::Expr {
                     inherited_width: PTR_WIDTH,
                 },
             }),
@@ -529,21 +493,17 @@ impl Checker {
             return Ok(());
         }
 
-        // Check if either is a literal
-        if let ExprForm::Literal { inherited_width } = data1.form {
-            return Ok(());
-        } else if let ExprForm::Literal { inherited_width } = data2.form {
-            return Ok(());
-        }
-
         // Check sign equality
         let sign_match = match data1.type_mode {
+            TypeMode::IntLit => return Ok(()),
             TypeMode::Int { signed: sign1 } | TypeMode::Float { signed: sign1 } => {
-                let sign2 = match data2.type_mode {
-                    TypeMode::Int { signed } | TypeMode::Float { signed } => signed,
+                match data2.type_mode {
+                    TypeMode::IntLit => return Ok(()),
+                    TypeMode::Int { signed: sign2 } | TypeMode::Float { signed: sign2 } => {
+                        sign1 == sign2
+                    }
                     TypeMode::Bool => false,
-                };
-                sign1 == sign2
+                }
             }
             TypeMode::Bool => false,
         };

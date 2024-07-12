@@ -1,5 +1,6 @@
 #![allow(unused)]
 use std::{
+    cmp::max,
     collections::VecDeque,
     env, fs,
     io::{BufRead, BufReader, Write},
@@ -24,15 +25,14 @@ fn main() {
     let (file_path, file_name) = get_file_name();
     let contents = get_file_contents(file_path);
     // println!("\n\n{:#?}\n\n", contents);
-    let input: String = contents.into_iter().collect();
 
-    let tokens = Lexer::new(input).tokenize();
-    // print_tokens(&tokens);
-    let ast = parse(tokens);
-    println!("\n\n{ast:#?}\n\n");
-    let gen_data = semantic_check(ast);
+    let tokens = Lexer::new(contents).tokenize();
+    print_tokens(&tokens);
+    // let ast = parse(tokens);
+    // println!("\n\n{ast:#?}\n\n");
+    // let gen_data = semantic_check(ast);
     // println!("\n\n{:#?}\n\n", gen_data.ast);
-    code_gen(gen_data, file_name);
+    // code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -81,17 +81,30 @@ fn code_gen(data: HandoffData, file_name: String) {
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn print_tokens(tokens: &Vec<Token>) {
-    let max_len = tokens
-        .iter()
-        .map(|tok| format!("{}", format!("{tok:?}")).len())
-        .max()
-        .unwrap_or(0);
-    for tok in tokens {
-        let str = format!("{tok:?}");
-        let whitespace = " ".repeat(max_len - str.len());
-        println!("Token {{ {str}{whitespace} }}")
-    }
+fn print_tokens(tokens: &VecDeque<Token>) {
+    // let val_max_len = tokens
+    //     .iter()
+    //     .map(|tok| format!("{}", format!("{tok:?}")).len())
+    //     .max()
+    //     .unwrap_or(0);
+    // let mut val_max_len = 0;
+    // let mut x_max_len = 0;
+    // let mut y_max_len = 0;
+    // for tok in tokens {
+    //     let cur_val_len = format!(
+    //         "{:?}({})",
+    //         tok.kind,
+    //         tok.value.as_ref().unwrap_or(&"".to_string())
+    //     )
+    //     .len();
+    //     val_max_len = max(val_max_len, cur_val_len);
+    // }
+
+    // for tok in tokens {
+    //     let str = format!("{tok:?}");
+    //     let val_whitespace = " ".repeat(val_max_len - str.len());
+    //     println!("Token {{ {str}{val_whitespace} }}")
+    // }
 }
 
 fn get_file_name() -> (String, String) {

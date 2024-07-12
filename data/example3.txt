@@ -61,20 +61,15 @@ let n = 0 || 5 + 1 > 6;
 
 //let dwa: i32 = 5;
 //let mut i: i32 = 0;
-//let mut ans: i8 = 2;
-//let mut unsigned_test: u8 = 5 + 5;
-//unsigned_test = 10 * 2 + 3 - 5 + 10 / 5;
-//i = -5;
-//i = -unsigned_test;
-//unsigned_test = -10; // this should fail
 
+let mut unsigned_test: u8 = 5 + 5;
+let i_ptr: ^u8 = &(unsigned_test);
+let mut test_test: u8 = (&unsigned_test)^;
+test_test = (i_ptr^) + (i_ptr^);
 
-let i_ptr: ^i32 = &(unsigned_test);
-let test_test: u8 = (&unsigned_test)^;
-exit(test_test);
-
-//let test_test: u8 = -(i_ptr^) - (i_ptr^);
 /*
+let mut i = 0;
+let mut ans: i8 = 2;
 while 1 == 1 {
     ans *= 2;
     i += 1;
@@ -93,8 +88,4 @@ if 5 == 5 {
     if 10 == 10 {
         ans += 5;
     }
-} 
-//else if 5 + 5{
-//    // this shouldn't be hit.
-//    exit(69);
-//}
+}
