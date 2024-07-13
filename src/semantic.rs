@@ -58,8 +58,7 @@ use std::{
 
 const PTR_WIDTH: usize = 8;
 const LOG_DEBUG_INFO: bool = false;
-const ERR_MSG: &'static str = "[ERROR_SEMANTIC]";
-const DBG_MSG: &'static str = "[DEBUG_SEMANTIC]";
+const MSG: &'static str = "SEMANTIC";
 
 // Bool    | Int | Float
 // Signed  | Unsigned

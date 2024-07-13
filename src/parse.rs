@@ -7,8 +7,7 @@ use crate::{
     semantic::SemVariable,
 };
 const LOG_DEBUG_INFO: bool = false;
-const ERR_MSG: &'static str = "[ERROR_PARSE]";
-const DBG_MSG: &'static str = "[DEBUG_PARSE]";
+const MSG: &'static str = "PARSE";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AST {
@@ -77,14 +76,16 @@ pub enum NodeTerm {
 
 pub struct Parser {
     pub tokens: VecDeque<Token>,
-    pub position: usize,
+    pub idx: usize,
+    pub pos: (usize, usize),
 }
 
 impl Parser {
     pub fn new(input: VecDeque<Token>) -> Parser {
         Parser {
             tokens: input,
-            position: 0,
+            idx: 0,
+            pos: (0, 0),
         }
     }
 
@@ -105,7 +106,7 @@ impl Parser {
 
         let stmt = match tok.kind {
             TokenKind::Let => {
-                self.consume();
+                self.expect(TokenKind::Let)?;
                 let mutable = self.expect(TokenKind::Mut).is_ok();
                 let ident = self.expect(TokenKind::Ident)?.value.unwrap();
 
@@ -126,7 +127,7 @@ impl Parser {
                 }
             }
             TokenKind::If => {
-                self.consume();
+                self.expect(TokenKind::If)?;
                 let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope()?;
 
@@ -180,13 +181,13 @@ impl Parser {
                 }
             }
             TokenKind::Exit => {
-                self.consume();
+                self.expect(TokenKind::Exit)?;
                 self.token_equals(TokenKind::OpenParen, 0)?;
                 let expr = self.parse_expr(0)?;
                 NodeStmt::Exit(expr)
             }
             TokenKind::Break => {
-                self.consume();
+                self.expect(TokenKind::Break);
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
@@ -226,7 +227,7 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!("No token to parse near => \n{lhs:#?}"),
+                None => return err!("No token to parse near =>\n{lhs:#?}"), // TODO(TOM): add token idx
             };
             // unary expressions don't recurse as no rhs, only iterate so
             let bin_prec = op.get_prec_binary();
@@ -242,7 +243,7 @@ impl Parser {
             if un_prec >= 0 {
                 let tok = match self.peek(1) {
                     Some(tok) => tok,
-                    None => return err!("No token to parse near => \n{lhs:#?}"),
+                    None => return err!("No token to parse near =>\n{lhs:#?}"),
                 };
                 match tok.kind {
                     // tok is an expression, must be binary
@@ -313,17 +314,20 @@ impl Parser {
     }
 
     fn peek(&self, offset: usize) -> Option<&Token> {
-        self.tokens.get(self.position + offset)
+        self.tokens.get(self.idx + offset)
     }
 
     fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
-        self.tokens.get_mut(self.position + offset)
+        self.tokens.get_mut(self.idx + offset)
     }
 
     fn consume(&mut self) -> Token {
         debug!("consuming: {:?}", self.peek(0).unwrap());
         match self.tokens.pop_front() {
-            Some(tok) => tok,
+            Some(tok) => {
+                self.pos = tok.pos;
+                tok
+            }
             None => panic!("{ERR_MSG} expected token, found nothing"),
         }
     }
@@ -332,16 +336,4 @@ impl Parser {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
     }
-
-    // just wanted to test out "impl Fn()" args!
-    // fn token_matches(
-    //     &self,
-    //     pattern: impl Fn(&TokenKind) -> bool,
-    //     offset: usize,
-    // ) -> Result<bool, String> {
-    //     match self.peek(offset) {
-    //         Some(tok) => Ok(pattern(&tok.kind)),
-    //         None => err!("No token to evalutate"),
-    //     }
-    // }
 }

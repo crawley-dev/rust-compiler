@@ -27,12 +27,12 @@ fn main() {
     // println!("\n\n{:#?}\n\n", contents);
 
     let tokens = Lexer::new(contents).tokenize();
-    print_tokens(&tokens);
-    // let ast = parse(tokens);
+    // print_tokens(&tokens);
+    let ast = parse(tokens);
     // println!("\n\n{ast:#?}\n\n");
-    // let gen_data = semantic_check(ast);
-    // println!("\n\n{:#?}\n\n", gen_data.ast);
-    // code_gen(gen_data, file_name);
+    let gen_data = semantic_check(ast);
+    println!("\n\n{:#?}\n\n", gen_data.ast);
+    code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
@@ -82,29 +82,39 @@ fn code_gen(data: HandoffData, file_name: String) {
 ----------------------------------------------------------------------------------------*/
 
 fn print_tokens(tokens: &VecDeque<Token>) {
-    // let val_max_len = tokens
-    //     .iter()
-    //     .map(|tok| format!("{}", format!("{tok:?}")).len())
-    //     .max()
-    //     .unwrap_or(0);
-    // let mut val_max_len = 0;
-    // let mut x_max_len = 0;
-    // let mut y_max_len = 0;
-    // for tok in tokens {
-    //     let cur_val_len = format!(
-    //         "{:?}({})",
-    //         tok.kind,
-    //         tok.value.as_ref().unwrap_or(&"".to_string())
-    //     )
-    //     .len();
-    //     val_max_len = max(val_max_len, cur_val_len);
-    // }
+    fn fmt_123(tok: &Token) -> String {
+        match &tok.value {
+            Some(val) => match tok.kind {
+                TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
+                _ => format!("{:?}({val})", tok.kind),
+            },
+            None => format!("{:?}", tok.kind),
+        }
+    }
 
-    // for tok in tokens {
-    //     let str = format!("{tok:?}");
-    //     let val_whitespace = " ".repeat(val_max_len - str.len());
-    //     println!("Token {{ {str}{val_whitespace} }}")
-    // }
+    let mut val_max_len = 0;
+    let mut x_max_len = 0;
+    let mut y_max_len = 0;
+    for tok in tokens {
+        let val_cur_len = fmt_123(tok).len();
+        val_max_len = max(val_max_len, val_cur_len);
+
+        let (x, y) = tok.pos;
+        x_max_len = max(x_max_len, format!("{x}").len());
+        y_max_len = max(y_max_len, format!("{y}").len());
+    }
+
+    for tok in tokens {
+        let val_str = fmt_123(tok);
+        let val_whitespace = " ".repeat(val_max_len - val_str.len());
+        let x_str = format!("{x:?}", x = tok.pos.0);
+        let x_whitespace = " ".repeat(x_max_len - x_str.len());
+        let y_str = format!("{y:?}", y = tok.pos.1);
+        let y_whitespace = " ".repeat(y_max_len - y_str.len());
+        println!(
+            "Token {{ {val_str}{val_whitespace} | {x_whitespace}{x_str}, {y_str}{y_whitespace} }}"
+        )
+    }
 }
 
 fn get_file_name() -> (String, String) {

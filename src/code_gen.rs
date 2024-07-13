@@ -16,8 +16,7 @@ use crate::{
 use std::collections::HashMap;
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
-const ERR_MSG: &'static str = "[ERROR_CODEGEN]";
-const DBG_MSG: &'static str = "[DEBUG_CODEGEN]";
+const MSG: &'static str = "CODEGEN";
 
 #[derive(Debug, Clone, PartialEq)]
 struct GenVariable {

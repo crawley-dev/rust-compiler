@@ -5,9 +5,8 @@ use std::{
 };
 
 use crate::{debug, err};
-const LOG_DEBUG_INFO: bool = true;
-const ERR_MSG: &'static str = "[ERROR_LEX]";
-const DBG_MSG: &'static str = "[DEBUG_LEX]";
+const LOG_DEBUG_INFO: bool = false;
+const MSG: &'static str = "LEX";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
@@ -447,15 +446,3 @@ impl Lexer {
         self.input.get(i).copied().unwrap()
     }
 }
-
-// impl fmt::Debug for Token {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match &self.value {
-//             Some(val) => match &self.kind {
-//                 TokenKind::Ident => write!(f, "{:?}('{val}')", self.kind),
-//                 _ => write!(f, "{:?}({val})", self.kind),
-//             },
-//             None => write!(f, "{:?}", self.kind),
-//         }
-//     }
-// }
