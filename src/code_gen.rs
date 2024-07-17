@@ -34,10 +34,11 @@ struct CodeGenContext {
 }
 
 pub struct Generator {
+    stk_pos: usize,
+    pos: (usize, usize),
     ast: AST,
     types: Vec<Type>,
     type_map: HashMap<String, usize>,
-    stk_pos: usize,
     ctx: CodeGenContext,
     stack: Vec<GenVariable>,         // stack contains variables,
     var_map: HashMap<String, usize>, // var_map contains index to variable
@@ -46,10 +47,11 @@ pub struct Generator {
 impl Generator {
     pub fn new(data: HandoffData) -> Generator {
         Generator {
+            pos: (0, 0),
+            stk_pos: 0,
             ast: data.ast,
             types: data.types,
             type_map: data.type_map,
-            stk_pos: 0,
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: CodeGenContext {
@@ -228,6 +230,7 @@ impl Generator {
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
         debug!(
+            self,
             "{}\ngen expr, reg: {ans_reg:?} \n{expr:#?}\n",
             "-".repeat(20)
         );
@@ -302,6 +305,7 @@ impl Generator {
     fn gen_term(&mut self, term: NodeTerm, ans_reg: Option<&str>) -> Result<String, String> {
         match term {
             NodeTerm::IntLit(tok) => {
+                self.pos = tok.pos;
                 let reg = match ans_reg {
                     Some(reg) => reg,
                     None => self.next_reg(),
@@ -309,6 +313,7 @@ impl Generator {
                 Ok(format!("{SPACE}mov {reg}, {}\n", tok.value.unwrap()))
             }
             NodeTerm::Ident(tok) => {
+                self.pos = tok.pos;
                 let ident = tok.value.clone().unwrap();
                 let var = self.get_var(ident.as_str())?;
                 let stk_pos = self.gen_var_access(var.stk_index, var.width);

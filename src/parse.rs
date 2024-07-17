@@ -102,7 +102,7 @@ impl Parser {
             Some(tok) => tok,
             None => return err!(self, "No statement to parse"),
         };
-        debug!("{:?} parsing statement: {tok:?}", self.pos);
+        debug!(self, "parsing statement: {tok:?}");
         // debug_pos!(self, "parsing statement: {tok:?}");
 
         let stmt = match tok.kind {
@@ -238,8 +238,8 @@ impl Parser {
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             if bin_prec < min_prec && un_prec < min_prec {
                 debug!(
-                    " {:?} precedence climb ended: {op:?}({bin_prec}) < {min_prec}",
-                    self.pos
+                    self,
+                    "precedence climb ended: {op:?}({bin_prec}) < {min_prec}"
                 );
                 break;
             }
@@ -252,7 +252,10 @@ impl Parser {
                 match tok.kind {
                     // tok is an expression, must be binary
                     TokenKind::IntLit | TokenKind::Ident | TokenKind::OpenParen => {
-                        debug!("{:?} found rhs of an expression '{tok:?}', operator must not be unary!", self.pos)
+                        debug!(
+                            self,
+                            "found rhs of an expression '{tok:?}', operator must not be unary!"
+                        )
                     }
                     // not a 'NodeTerm', must be unary.
                     _ => {
@@ -289,7 +292,7 @@ impl Parser {
 
         match tok.kind {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {
-                debug!("{:?} found unary expression: '{op:?}'", self.pos);
+                debug!(self, "found unary expression: '{op:?}'");
                 let operand = self.parse_expr(op.get_prec_unary() + 1)?;
                 Ok(NodeExpr::UnaryExpr {
                     op,
@@ -299,7 +302,7 @@ impl Parser {
             TokenKind::OpenParen => {
                 // greedily consume everything in parenthesis.
                 let expr = self.parse_expr(0)?;
-                debug!("{:?} parsed parens {expr:#?}", self.pos);
+                debug!(self, "parsed parens {expr:#?}");
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
             }
@@ -327,7 +330,7 @@ impl Parser {
     }
 
     fn consume(&mut self) -> Token {
-        debug!("{:?} consuming: {:?}", self.pos, self.peek(0).unwrap());
+        debug!(self, "consuming: {:?}", self.peek(0).unwrap());
         match self.tokens.pop_front() {
             Some(tok) => {
                 self.pos = tok.pos;

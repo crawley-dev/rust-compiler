@@ -222,8 +222,9 @@ pub struct Token {
 
 pub struct Lexer {
     idx: usize,
-    col_pos: usize,
-    row_pos: usize,
+    // pos.1: usize,
+    // pos.0: usize,
+    pos: (usize, usize),
     input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
@@ -292,8 +293,7 @@ impl Lexer {
         ]);
         Lexer {
             idx: 0,
-            col_pos: 0,
-            row_pos: 0,
+            pos: (0, 0),
             input: input
                 .iter()
                 .map(|x| x.chars())
@@ -317,7 +317,7 @@ impl Lexer {
                     _ if self.is_multicomment => (),
                     _ => {
                         tokens.push_back(tok);
-                        debug!("new tok: {:?} | pos {}\n", tokens.back(), self.idx);
+                        debug!(self, "new tok: {:?} | pos {}\n", tokens.back(), self.idx);
                     }
                 },
                 None => continue,
@@ -368,19 +368,23 @@ impl Lexer {
     fn create_tok(&mut self, buf_kind: BufKind, buf: &Vec<u8>) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;
-            self.row_pos += 1;
+            self.pos.0 += 1;
+
             return None;
         }
 
         let buf_str: String = buf.into_iter().map(|x| *x as char).collect();
-        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx);
+        debug!(
+            self,
+            "buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx
+        );
 
         match buf_kind {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                self.col_pos += 1;
-                self.row_pos = 0;
+                self.pos.1 += 1;
+                self.pos.0 = 0;
                 None
             }
             BufKind::Word => self.match_word(buf_str),
@@ -388,7 +392,7 @@ impl Lexer {
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
                 value: Some(buf_str),
-                pos: (self.row_pos, self.col_pos),
+                pos: (self.pos.0, self.pos.1),
             }),
         }
     }
@@ -398,12 +402,12 @@ impl Lexer {
             Some(kind) => Some(Token {
                 kind: kind.clone(),
                 value: None,
-                pos: (self.row_pos, self.col_pos),
+                pos: (self.pos.0, self.pos.1),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
                 value: Some(buf_str),
-                pos: (self.row_pos, self.col_pos),
+                pos: (self.pos.0, self.pos.1),
             }),
         }
     }
@@ -415,18 +419,18 @@ impl Lexer {
                     return Some(Token {
                         kind: kind.clone(),
                         value: None,
-                        pos: (self.row_pos, self.col_pos),
+                        pos: (self.pos.0, self.pos.1),
                     });
                 }
                 None => {
                     buf_str.pop();
                     self.idx -= 1;
-                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
+                    debug!(self, "reduce {} | new pos: {}", buf_str, self.idx);
                 }
             }
         }
         self.idx += 1;
-        self.row_pos += 1;
+        self.pos.0 += 1;
         None
     }
 
@@ -437,12 +441,12 @@ impl Lexer {
     fn consume(&mut self) -> u8 {
         let i = self.idx;
         self.idx += 1;
-        self.row_pos += 1;
+        self.pos.0 += 1;
         let char = self.input.get(i).copied().unwrap();
         if char == b'\n' {
-            debug!("consuming '{}' | new pos {}", r"\n", self.idx);
+            debug!(self, "consuming '{}' | new pos {}", r"\n", self.idx);
         } else {
-            debug!("consuming '{}' | new pos {}", char as char, self.idx);
+            debug!(self, "consuming '{}' | new pos {}", char as char, self.idx);
         }
         self.input.get(i).copied().unwrap()
     }
