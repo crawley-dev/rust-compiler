@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
-
 // >>PARSER<< Constructs statements out of tokens from the lexer.
 use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::SemVariable,
 };
+use std::collections::VecDeque;
+
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 

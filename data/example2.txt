@@ -1,4 +1,4 @@
-let num: u8 = 5 + 20 - 5;
+let num: u16 = 5 + 20 - 5;
 {
     let num2: u8 = 8;
     //let num3: i8 = -5;

@@ -218,8 +218,6 @@ pub struct Token {
 
 pub struct Lexer {
     idx: usize,
-    // pos.1: usize,
-    // pos.0: usize,
     pos: (usize, usize),
     input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
@@ -360,7 +358,7 @@ impl Lexer {
 
     // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
     //  - trying to modify state in next_token causes bugs.
-    //    .. becasue after creating a token, the next char may not be "next_char" due to a reduce
+    //    .. because after creating a token, the next char may not be "next_char" due to a reduce
     fn create_tok(&mut self, buf_kind: BufKind, buf: &Vec<u8>) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;

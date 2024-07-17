@@ -10,10 +10,10 @@ use crate::{
     debug, err,
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::Type,
-    HandoffData,
+    semantic::{HandoffData, Type},
 };
 use std::collections::HashMap;
+
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
 const MSG: &'static str = "CODEGEN";
