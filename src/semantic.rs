@@ -51,11 +51,7 @@ use crate::{
     lex::{TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
 };
-use std::{
-    cell::UnsafeCell,
-    collections::HashMap,
-    ptr::{self, NonNull},
-};
+use std::{collections::HashMap, ptr::NonNull};
 
 const PTR_WIDTH: usize = 8;
 const LOG_DEBUG_INFO: bool = false;
@@ -142,7 +138,7 @@ pub struct Checker {
 }
 
 impl Checker {
-    pub fn check_ast(mut ast: AST) -> Result<HandoffData, String> {
+    pub fn check_ast(ast: AST) -> Result<HandoffData, String> {
         let types = Vec::from([
             new_base("bool", 1, TypeMode::Bool),
             new_base("u8", 1, TypeMode::Int { signed: false }),
@@ -204,7 +200,7 @@ impl Checker {
                     AddressingMode::Primitive
                 };
 
-                let mut var = SemVariable {
+                let var = SemVariable {
                     width,
                     ident,
                     type_id,
@@ -220,7 +216,11 @@ impl Checker {
                     let checked = self.check_expr(expr)?;
                     match self.check_assign(&var, &checked) {
                         Ok(_) => (),
-                        Err(e) => return err!(self, "INIT EXPR:\n{e}"),
+                        Err(e) => {
+                            let er = err!(self, "INIT EXPR:\n{e}");
+                            debug!(self, "{:?}", er);
+                            return er;
+                        }
                     }
                 }
 
@@ -288,7 +288,7 @@ impl Checker {
 
                 // Mutability Check
                 if !var.mutable {
-                    return err!(self, " Re-assignment of a Constant:\n{var:#?}");
+                    return err!(self, "Re-assignment of a Constant:\n{var:#?}");
                 }
                 let checked = self.check_expr(expr)?;
                 self.check_assign(var, &checked)?;
@@ -301,10 +301,10 @@ impl Checker {
             }
             NodeStmt::Break => {
                 if self.loop_count <= 0 {
-                    return err!(self, " Not inside a loop! cannot break");
+                    return err!(self, "Not inside a loop! cannot break");
                 }
             }
-            NodeStmt::SemVarDecl { .. } => return err!(self, " Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::SemVarDecl { .. } => return err!(self, "Found {stmt:#?}.. shouldn't have."),
         };
         Ok(stmt)
     }
@@ -316,13 +316,13 @@ impl Checker {
             stmts.push(self.check_stmt(stmt)?);
         }
         let pop_amt = self.stack.len() - var_count;
-        debug!(self, " Ending scope, pop({pop_amt})");
+        debug!(self, "Ending scope, pop({pop_amt})");
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => self.var_map.remove(var.ident.as_str()),
-                None => return err!(self, " uhh.. scope messed up"),
+                None => return err!(self, "uhh.. scope messed up"),
             };
-            debug!(self, " Scope ended, removing {popped_var:#?}");
+            debug!(self, "Scope ended, removing {popped_var:#?}");
         }
         Ok(NodeScope {
             stmts,
@@ -335,18 +335,18 @@ impl Checker {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let ldata = self.check_expr(lhs)?;
                 let rdata = self.check_expr(rhs)?;
-                debug!(self, " lhs: {ldata:#?}\nrhs: {rdata:#?}");
+                debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
 
                 // Binary expressions disallowed for arrays!
                 match ldata.addr_mode {
                     AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
                         AddressingMode::Primitive | AddressingMode::Pointer => (),
                         AddressingMode::Array => {
-                            return err!(self, " Binary Expressions invalid for Arrays")
+                            return err!(self, "Binary Expressions invalid for Arrays")
                         }
                     },
                     AddressingMode::Array => {
-                        return err!(self, " Binary Expressions invalid for Arrays")
+                        return err!(self, "Binary Expressions invalid for Arrays")
                     }
                 }
 
@@ -367,7 +367,7 @@ impl Checker {
                     }),
                     _ if op_flags.contains(TokenFlags::LOG) => match ldata.type_mode {
                         TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            err!(self, " '{op:?}' requires expr to be a boolean")
+                            err!(self, "'{op:?}' requires expr to be a boolean")
                         }
                         TypeMode::Bool => Ok(ExprData {
                             type_mode: TypeMode::Bool,
@@ -399,7 +399,7 @@ impl Checker {
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let checked = self.check_expr(&*operand)?;
-                debug!(self, " {checked:#?}");
+                debug!(self, "{checked:#?}");
 
                 // 'Unary sub' signed int or lit => int | signed
                 // 'Cmp Not'   bool => bool
@@ -424,7 +424,7 @@ impl Checker {
                             form: ExprForm::Expr { inherited_width },
                         }),
                         _ => {
-                            err!(self, " '-' unary operator requires expr to be a signed integers =>\n{checked:#?}")
+                            err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}")
                         }
                     },
                     TokenKind::CmpNot => match checked.type_mode {
@@ -433,23 +433,23 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width },
                         }),
-                        _ => err!(self, " '!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
+                        _ => err!(self, "'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
                     },
                     TokenKind::Ampersand => match checked.addr_mode {
                         AddressingMode::Pointer => err!(
                             self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"
                         ),
                         AddressingMode::Primitive => match checked.form {
-                            ExprForm::Variable { ptr } => Ok(ExprData {
+                            ExprForm::Variable { .. } => Ok(ExprData { // TODO(TOM): use variable's ptr?
                                 type_mode: checked.type_mode,
                                 addr_mode: AddressingMode::Pointer,
                                 form: ExprForm::Expr {
                                     inherited_width: PTR_WIDTH,
                                 },
                             }),
-                            _ => err!(self, " '&' unary operator requires expr to be a memory address."),
+                            _ => err!(self, "'&' unary operator requires expr to be a memory address."),
                         },
-                        _ => err!(self, " '&' unary operator not supported for Arrays"),
+                        _ => err!(self, "'&' unary operator not supported for Arrays"),
                     },
                     TokenKind::Ptr => match checked.addr_mode {
                         AddressingMode::Pointer => Ok(ExprData {
@@ -457,9 +457,9 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width }, // TODO(TOM): not sure about this?
                         }),
-                        _ => err!(self, " '^' unary operator requires expr to be a pointer\n{checked:#?}"),
+                        _ => err!(self, "'^' unary operator requires expr to be a pointer\n{checked:#?}"),
                     },
-                    _ => err!(self, " Unsupported Unary Expression:{checked:#?}"),
+                    _ => err!(self, "Unsupported Unary Expression:{checked:#?}"),
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),
@@ -482,10 +482,10 @@ impl Checker {
                             ptr: self.new_nonnull(var)?,
                         },
                     }),
-                    TypeForm::Struct { ref member_ids } => {
-                        err!(self, " Struct Semantics un-implemented")
+                    TypeForm::Struct { .. } => {
+                        err!(self, "Struct Semantics un-implemented")
                     }
-                    TypeForm::Union {} => err!(self, " Union semantics un-implemented"),
+                    TypeForm::Union {} => err!(self, "Union semantics un-implemented"),
                 }
             }
             NodeTerm::IntLit(_) => Ok(ExprData {
@@ -533,7 +533,7 @@ impl Checker {
                     self,
                     "Expr sign mismatch! {:?} vs {:?}", data1.type_mode, data2.type_mode
                 );
-                err!(self, " {msg}")
+                err!(self, "{msg}")
             }
         }
     }
@@ -566,7 +566,7 @@ impl Checker {
                 };
                 self.check_type_mode(&temp, &checked, msg.as_str())
             }
-            TypeForm::Struct { member_ids } => {
+            TypeForm::Struct { .. } => {
                 todo!("Struct semantics un-implemented")
             }
             TypeForm::Union {} => todo!("Union semantics un-implemented"),
@@ -579,14 +579,14 @@ impl Checker {
 
     fn get_expr_ident(&self, expr: &NodeExpr, right_side: bool) -> String {
         match expr {
-            NodeExpr::BinaryExpr { op, lhs, rhs } => {
+            NodeExpr::BinaryExpr { lhs, rhs, .. } => {
                 if right_side {
                     self.get_expr_ident(&*rhs, false)
                 } else {
                     self.get_expr_ident(&*lhs, false)
                 }
             }
-            NodeExpr::UnaryExpr { op, operand } => self.get_expr_ident(&*operand, false),
+            NodeExpr::UnaryExpr { operand, .. } => self.get_expr_ident(&*operand, false),
             NodeExpr::Term(term) => match term {
                 NodeTerm::IntLit(tok) | NodeTerm::Ident(tok) => tok.value.as_ref().unwrap().clone(),
             },
@@ -596,14 +596,14 @@ impl Checker {
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
             Some(idx) => Ok(self.stack.get(*idx).unwrap()),
-            None => err!(self, " Variable: {ident:?} doesn't exist."),
+            None => err!(self, "Variable: {ident:?} doesn't exist."),
         }
     }
 
     fn get_type_id(&self, ident: &str) -> Result<usize, String> {
         match self.type_map.get(ident) {
             Some(id) => Ok(*id),
-            None => err!(self, " Type '{ident}' not found"),
+            None => err!(self, "Type '{ident}' not found"),
         }
     }
 

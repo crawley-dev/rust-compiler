@@ -452,6 +452,7 @@ impl Generator {
         format!(".{:X}_{name}", self.ctx.label_count) // '.' denotes a local scoped label in asm
     }
 
+    // TODO(TOM): need to use word_size??
     fn gen_var_access(&self, stk_index: usize, word_size: usize) -> String {
         format!("[rbp-{stk_index}]")
     }

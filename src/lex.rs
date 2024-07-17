@@ -1,10 +1,6 @@
-use bitflags::bitflags;
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt,
-};
-
 use crate::{debug, err};
+use bitflags::bitflags;
+use std::collections::{HashMap, VecDeque};
 
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "LEX";
@@ -194,10 +190,10 @@ impl TokenKind {
         }
     }
 
-    pub fn get_associativity(&self) -> Associativity {
+    pub fn get_associativity(&self, is_unary: bool) -> Associativity {
         match self {
             _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::Right,
-            _ if self.has_flags(TokenFlags::UNARY) => Associativity::Right,
+            _ if is_unary => Associativity::Right,
             _ => Associativity::Left,
         }
     }

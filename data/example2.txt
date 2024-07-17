@@ -1,6 +1,6 @@
 let num: u8 = 5 + 20 - 5;
 {
-    let num2:  = 8;
+    let num2: u8 = 8;
     //let num3: i8 = -5;
     //let x: u8 = (10 - 2) * 3 + 5 / (3 + 2);
 }

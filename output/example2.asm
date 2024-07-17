@@ -12,6 +12,9 @@ _start:
     mov byte [rbp-1], rax ; Ident('num')
     mov byte [rbp-2], 8 ; Ident('num2')
 ; Exit Program
-    mov rdi, [rbp-1] ; Token { kind: Ident, value: Some("num"), pos: (8, 6) }
+    mov rax, [rbp-1] ; Token { kind: Ident, value: Some("num"), pos: (8, 6) }
+    mov rcx, 1
+    add rax, rcx
+    mov rdi, rax
     mov rax, 60
     syscall

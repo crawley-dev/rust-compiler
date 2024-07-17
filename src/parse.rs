@@ -103,7 +103,6 @@ impl Parser {
             None => return err!(self, "No statement to parse"),
         };
         debug!(self, "parsing statement: {tok:?}");
-        // debug_pos!(self, "parsing statement: {tok:?}");
 
         let stmt = match tok.kind {
             TokenKind::Let => {
@@ -188,11 +187,11 @@ impl Parser {
                 NodeStmt::Exit(expr)
             }
             TokenKind::Break => {
-                self.expect(TokenKind::Break);
+                self.expect(TokenKind::Break)?;
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return err!(self, "Invalid Statement: '{tok:?}'"),
+            _ => return err!(self, "Invalid Statement =>\n'{tok:#?}'"),
         };
 
         // statments that do/don't require a ';' to end.
@@ -202,7 +201,7 @@ impl Parser {
             | NodeStmt::VarDecl { .. }
             | NodeStmt::Break => match self.expect(TokenKind::SemiColon) {
                 Ok(_) => Ok(stmt),
-                Err(e) => Err(format!("{e}.\n {stmt:#?}")),
+                Err(e) => err!("{e}.\n{stmt:#?}"),
             },
             _ => Ok(stmt),
         }
@@ -244,7 +243,8 @@ impl Parser {
                 break;
             }
 
-            if un_prec >= 0 {
+            let is_unary = un_prec >= 0;
+            if is_unary {
                 let tok = match self.peek(1) {
                     Some(tok) => tok,
                     None => return err!(self, "No token to parse near =>\n{lhs:#?}"),
@@ -268,10 +268,10 @@ impl Parser {
                 }
             }
 
-            let next_prec = match op.get_associativity() {
+            let next_prec = match op.get_associativity(is_unary) {
                 Associativity::Right => bin_prec,
                 Associativity::Left => bin_prec + 1,
-                Associativity::None => return err!(self, "non-associative operator: '{op:?}'"),
+                Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
             };
 
             lhs = NodeExpr::BinaryExpr {
@@ -287,7 +287,7 @@ impl Parser {
     fn parse_term(&mut self) -> Result<NodeExpr, String> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return err!(self, "Expected term self.pos"),
+            None => return err!(self, "Expected term, found nothing."),
         };
 
         match tok.kind {
@@ -308,15 +308,14 @@ impl Parser {
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            _ => err!(self, "Invalid Term: '{tok:?}'"),
+            _ => err!(self, "Invalid Term =>\n{tok:#?}"),
         }
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
-            // Some(tok) => err!("{:?} expected '{kind:?}', found {:?}", self.pos, tok.kind),
-            Some(tok) => err!(self, "expected '{kind:?}', found {:?}", tok.kind),
+            Some(tok) => err!(self, "expected '{kind:?}', found => {:?}", tok.kind),
             None => err!(self, "No token to evaluate"),
         }
     }

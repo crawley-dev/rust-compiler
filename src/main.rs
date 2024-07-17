@@ -5,9 +5,9 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, Write},
 };
+mod macros;
 
 mod lex;
-mod macros;
 use lex::*;
 
 mod parse;
