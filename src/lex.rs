@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{debug, err};
+
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "LEX";
 

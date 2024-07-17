@@ -461,7 +461,7 @@ impl Generator {
             2 => "word",
             4 => "dword",
             8 => "qword",
-            _ => unreachable!("{ERR_MSG} Invalid word_size found: '{word_size}'"),
+            _ => err!("Invalid word_size found: '{word_size}' .. should be unreachable?").unwrap(),
         }
     }
 
@@ -473,7 +473,7 @@ impl Generator {
                 self.ctx.reg_count += 1;
                 reg
             }
-            None => todo!("{ERR_MSG} out of registers!"),
+            None => err!("out of registers! uhh probably should fix this").unwrap(),
         }
     }
 
@@ -482,7 +482,7 @@ impl Generator {
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         match scratch_registers.get(index - 1) {
             Some(reg) => reg,
-            None => todo!("{ERR_MSG} out of registers!"),
+            None => err!("out of registers! uhh probably should fix this").unwrap(),
             // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
         }
     }

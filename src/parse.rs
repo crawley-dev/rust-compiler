@@ -100,9 +100,10 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
         let tok = match self.peek(0) {
             Some(tok) => tok,
-            None => return err!("No statement to parse"),
+            None => return err!(self, "No statement to parse"),
         };
-        debug!("parsing statement: {tok:?}");
+        debug!("{:?} parsing statement: {tok:?}", self.pos);
+        // debug_pos!(self, "parsing statement: {tok:?}");
 
         let stmt = match tok.kind {
             TokenKind::Let => {
@@ -173,7 +174,7 @@ impl Parser {
                         let comp_assign = self.peek_mut(1).unwrap();
                         comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
                     }
-                    _ => return err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
+                    _ => return err!(self, "Naked Expression => '{:?}', Not Valid", self.peek(0)),
                 };
                 NodeStmt::Assign {
                     ident,
@@ -191,7 +192,7 @@ impl Parser {
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return err!("Invalid Statement: '{tok:?}'"),
+            _ => return err!(self, "Invalid Statement: '{tok:?}'"),
         };
 
         // statments that do/don't require a ';' to end.
@@ -227,7 +228,7 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!("No token to parse near =>\n{lhs:#?}"), // TODO(TOM): add token idx
+                None => return err!(self, "No token to parse near =>\n{lhs:#?}"), // TODO(TOM): add token idx
             };
             // unary expressions don't recurse as no rhs, only iterate so
             let bin_prec = op.get_prec_binary();
@@ -236,19 +237,22 @@ impl Parser {
             // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             if bin_prec < min_prec && un_prec < min_prec {
-                debug!("precedence climb ended: {op:?}({bin_prec}) < {min_prec}");
+                debug!(
+                    " {:?} precedence climb ended: {op:?}({bin_prec}) < {min_prec}",
+                    self.pos
+                );
                 break;
             }
 
             if un_prec >= 0 {
                 let tok = match self.peek(1) {
                     Some(tok) => tok,
-                    None => return err!("No token to parse near =>\n{lhs:#?}"),
+                    None => return err!(self, "No token to parse near =>\n{lhs:#?}"),
                 };
                 match tok.kind {
                     // tok is an expression, must be binary
                     TokenKind::IntLit | TokenKind::Ident | TokenKind::OpenParen => {
-                        debug!("found rhs of an expression '{tok:?}', operator must not be unary!")
+                        debug!("{:?} found rhs of an expression '{tok:?}', operator must not be unary!", self.pos)
                     }
                     // not a 'NodeTerm', must be unary.
                     _ => {
@@ -264,7 +268,7 @@ impl Parser {
             let next_prec = match op.get_associativity() {
                 Associativity::Right => bin_prec,
                 Associativity::Left => bin_prec + 1,
-                Associativity::None => return err!("non-associative operator: '{op:?}'"),
+                Associativity::None => return err!(self, "non-associative operator: '{op:?}'"),
             };
 
             lhs = NodeExpr::BinaryExpr {
@@ -280,12 +284,12 @@ impl Parser {
     fn parse_term(&mut self) -> Result<NodeExpr, String> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return err!("Expected term"),
+            None => return err!(self, "Expected term self.pos"),
         };
 
         match tok.kind {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {
-                debug!("found unary expression: '{op:?}'");
+                debug!("{:?} found unary expression: '{op:?}'", self.pos);
                 let operand = self.parse_expr(op.get_prec_unary() + 1)?;
                 Ok(NodeExpr::UnaryExpr {
                     op,
@@ -295,21 +299,22 @@ impl Parser {
             TokenKind::OpenParen => {
                 // greedily consume everything in parenthesis.
                 let expr = self.parse_expr(0)?;
-                debug!("parsed parens {expr:#?}");
+                debug!("{:?} parsed parens {expr:#?}", self.pos);
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            _ => err!("Invalid Term: '{tok:?}'"),
+            _ => err!(self, "Invalid Term: '{tok:?}'"),
         }
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
-            Some(tok) => err!("expected '{kind:?}', found {:?}", tok.kind,),
-            None => err!("No token to evaluate"),
+            // Some(tok) => err!("{:?} expected '{kind:?}', found {:?}", self.pos, tok.kind),
+            Some(tok) => err!(self, "expected '{kind:?}', found {:?}", tok.kind),
+            None => err!(self, "No token to evaluate"),
         }
     }
 
@@ -322,13 +327,13 @@ impl Parser {
     }
 
     fn consume(&mut self) -> Token {
-        debug!("consuming: {:?}", self.peek(0).unwrap());
+        debug!("{:?} consuming: {:?}", self.pos, self.peek(0).unwrap());
         match self.tokens.pop_front() {
             Some(tok) => {
                 self.pos = tok.pos;
                 tok
             }
-            None => panic!("{ERR_MSG} expected token, found nothing"),
+            None => err!(self, "expected token to consume, found nothing.").unwrap(),
         }
     }
 
