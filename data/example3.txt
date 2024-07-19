@@ -63,6 +63,9 @@ let i_ptr: ^u8 = &(unsigned_test);
 let mut test_test: u8 = (&unsigned_test)^;
 test_test = (i_ptr^) + (i_ptr^);
 
+let ans: u8 = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
+
+*/
 
 let mut i = 0;
 let mut ans: i8 = 2;
@@ -85,6 +88,4 @@ if 5 == 5 {
         ans += 5;
     }
 }
-*/
 
-let ans = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);

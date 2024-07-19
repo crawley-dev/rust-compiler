@@ -337,13 +337,15 @@ impl Checker {
                 match ldata.addr_mode {
                     AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
                         AddressingMode::Primitive | AddressingMode::Pointer => (),
-                        AddressingMode::Array => {
-                            return err!(self, "Binary Expressions invalid for Arrays")
+                        _ => {
+                            return err!(
+                                self,
+                                "Binary Expressions invalid for {:?}",
+                                ldata.addr_mode
+                            )
                         }
                     },
-                    AddressingMode::Array => {
-                        return err!(self, "Binary Expressions invalid for Arrays")
-                    }
+                    _ => return err!(self, "Binary Expressions invalid for {:?}", ldata.addr_mode),
                 }
 
                 let err_msg = format!("Expr of different Type! => {ldata:#?}\n.. {rdata:#?}");
@@ -370,24 +372,29 @@ impl Checker {
                                 inherited_width: width,
                             },
                         }),
-                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            err!(self, "'{op:?}' requires expr to be a boolean")
+                        _ => {
+                            err!(
+                                self,
+                                "'{op:?}' requires expr to be a boolean =>\n{ldata:#?}"
+                            )
                         }
                     },
-                    _ if op_flags.contains(TokenFlags::ARITH) => match ldata.type_mode {
-                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            Ok(ExprData {
-                                type_mode: ldata.type_mode,
-                                addr_mode: ldata.addr_mode,
-                                form: ExprForm::Expr {
-                                    inherited_width: width,
-                                },
-                            })
+                    _ if op_flags.contains(TokenFlags::ARITH) => {
+                        match ldata.type_mode {
+                            TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
+                                Ok(ExprData {
+                                    type_mode: ldata.type_mode,
+                                    addr_mode: ldata.addr_mode,
+                                    form: ExprForm::Expr {
+                                        inherited_width: width,
+                                    },
+                                })
+                            }
+                            _ => {
+                                err!(self, "'{op:?}' requires expr to be an integer or float =>\n{ldata:#?}")
+                            }
                         }
-                        TypeMode::Bool => {
-                            err!(self, "'{op:?}' requires expr to be an integer or float")
-                        }
-                    },
+                    }
                     _ => err!(
                         self,
                         "Unsupported binary expression =>\n{lhs:#?}\n..\n{rhs:#?}"
@@ -400,6 +407,7 @@ impl Checker {
 
                 // 'Unary sub' signed int or lit => int | signed
                 // 'Cmp Not'   bool => bool
+                // 'Bit Not'   primitive => primitive
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
                 let inherited_width = match checked.form {
@@ -407,6 +415,10 @@ impl Checker {
                     ExprForm::Expr { inherited_width } => inherited_width,
                 };
                 match op {
+                    TokenKind::Tilde => match checked.addr_mode  {
+                        AddressingMode::Primitive => Ok(checked),
+                        _ => err!("'~' unary operator requires 'primitive' addressing =>\n{checked:#?}")
+                    }
                     TokenKind::Sub => match checked.type_mode {
                         TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
                             Ok(ExprData {
@@ -420,9 +432,7 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width },
                         }),
-                        _ => {
-                            err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}")
-                        }
+                        _ => err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}"),
                     },
                     TokenKind::CmpNot => match checked.type_mode {
                         TypeMode::Bool => Ok(ExprData {
@@ -433,9 +443,6 @@ impl Checker {
                         _ => err!(self, "'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
                     },
                     TokenKind::Ampersand => match checked.addr_mode {
-                        AddressingMode::Pointer => err!(
-                            self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"
-                        ),
                         AddressingMode::Primitive => match checked.form {
                             ExprForm::Variable { .. } => Ok(ExprData { // TODO(TOM): use variable's ptr?
                                 type_mode: checked.type_mode,
@@ -446,7 +453,7 @@ impl Checker {
                             }),
                             _ => err!(self, "'&' unary operator requires expr to be a memory address."),
                         },
-                        _ => err!(self, "'&' unary operator not supported for Arrays"),
+                        _ => err!(self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"),
                     },
                     TokenKind::Ptr => match checked.addr_mode {
                         AddressingMode::Pointer => Ok(ExprData {
@@ -454,9 +461,9 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width }, // TODO(TOM): not sure about this?
                         }),
-                        _ => err!(self, "'^' unary operator requires expr to be a pointer\n{checked:#?}"),
+                        _ => err!(self, "'^' unary operator requires expr to be a pointer =>\n{checked:#?}"),
                     },
-                    _ => err!(self, "Unsupported Unary Expression:{checked:#?}"),
+                    _ => err!(self, "Unsupported Unary Expression '{op:?}' =>\n{checked:#?}"),
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),
@@ -498,7 +505,7 @@ impl Checker {
         if var.addr_mode != checked.addr_mode {
             return err!(
                 self,
-                "Expr of different AddrMode! {:?} vs {:?} => {var:#?}\n.. {checked:#?}",
+                "Expr of different AddrMode! {:?} vs {:?} =>\n{var:#?}\n.. {checked:#?}",
                 var.addr_mode,
                 checked.addr_mode
             );
@@ -509,7 +516,7 @@ impl Checker {
             TypeForm::Base {
                 type_mode: var_type_mode,
             } => {
-                let msg = format!("Expr of different Type! => {var:#?}\n.. {checked:#?}");
+                let msg = format!("Expr of different Type! =>\n{var:#?}\n.. {checked:#?}");
                 let temp = ExprData {
                     type_mode: *var_type_mode,
                     addr_mode: var.addr_mode,
@@ -598,7 +605,7 @@ impl Checker {
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
             Some(idx) => Ok(self.stack.get(*idx).unwrap()),
-            None => err!(self, "Variable: {ident:?} doesn't exist."),
+            None => err!(self, "Variable '{ident:?}' not found"),
         }
     }
 

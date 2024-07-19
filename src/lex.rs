@@ -2,7 +2,7 @@ use crate::{debug, err};
 use bitflags::bitflags;
 use std::collections::{HashMap, VecDeque};
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "LEX";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,7 +220,6 @@ pub struct Lexer {
     idx: usize,
     pos: (usize, usize),
     input: Vec<u8>,
-    // input: Vec<Vec<u8>>,
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
     is_multicomment: bool,
@@ -295,10 +294,6 @@ impl Lexer {
                 .flatten()
                 .map(|x| x as u8)
                 .collect(),
-            // input: input
-            //     .iter()
-            //     .map(|x| x.chars().into_iter().map(|c| c as u8).collect())
-            //     .collect(),
             reg,
             is_linecomment: false,
             is_multicomment: false,
@@ -373,10 +368,10 @@ impl Lexer {
         }
 
         let buf_str: String = buf.into_iter().map(|x| *x as char).collect();
-        // debug!(
-        //     self,
-        //     "buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx
-        // );
+        debug!(
+            self,
+            "buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx
+        );
 
         match buf_kind {
             BufKind::Illegal => None,
@@ -384,7 +379,6 @@ impl Lexer {
                 self.is_linecomment = false;
                 self.pos.1 += buf.len();
                 self.pos.0 = 0;
-                debug!("newline found!");
                 None
             }
             BufKind::Word => self.match_word(buf_str),
@@ -425,7 +419,7 @@ impl Lexer {
                 None => {
                     buf_str.pop();
                     self.idx -= 1;
-                    // debug!(self, "reduce {} | new pos: {}", buf_str, self.idx);
+                    debug!(self, "reduce {} | new pos: {}", buf_str, self.idx);
                 }
             }
         }
@@ -444,12 +438,11 @@ impl Lexer {
         self.pos.0 += 1;
 
         let char = self.input.get(i).copied().unwrap();
-        // if char == b'\n' {
-        //     debug!(self, "consuming '{}'", r"\n");
-        // }
-        //  else {
-        //     debug!(self, "consuming '{}', char as char);
-        // }
+        if char == b'\n' {
+            debug!(self, "consuming '{}'", r"\n");
+        } else {
+            debug!(self, "consuming '{}'", char as char);
+        }
         char
     }
 }
