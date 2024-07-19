@@ -1,40 +1,24 @@
-BITS 64
 global _start
 _start:
-    mov rax, 2
-    push rax
-    mov rax, 3
-    push rax
-    pop rax
-    pop rbx
-    add rax, rbx
-    push rax
-    mov rax, 5
-    push rax
-    pop rax
-    pop rbx
-    div rbx
-    push rax
-    mov rax, 3
-    push rax
-    mov rax, 2
-    push rax
+; setup stack frame
+    push rbp
+    mov rbp, rsp
+    ; Program Start
+ ; Ident('y')
     mov rax, 10
-    push rax
-    pop rax
-    pop rbx
-    sub rax, rbx
-    push rax
-    pop rax
-    pop rbx
-    mul rbx
-    push rax
-    pop rax
-    pop rbx
-    add rax, rbx
-    push rax
-    push QWORD [rsp + 0]
-
+    mov rcx, 2
+    sub rax, rcx
+    mov rcx, 3
+    imul rax, rcx
+    mov rcx, 5
+    mov rsi, 3
+    mov rdi, 2
+    add rsi, rdi
+    cqo
+    idiv rsi
+    add rax, rcx
+    mov dword [rbp-12], rax ; Ident('x')
+; Exit Program
+    mov rdi, [rbp-12] ; Token { kind: Ident, value: Some("x"), pos: (6, 2) }
     mov rax, 60
-    pop rdi
     syscall

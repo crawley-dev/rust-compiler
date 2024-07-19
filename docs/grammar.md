@@ -75,7 +75,7 @@
         - de ref: var^
 - u8 .. u64: unsigned integers specified by bit length
 - i8 .. i64: signed integers specified by bit length
+- usize, isize: unsigned and signed integers of maximum length (64 bit)
 - f32, f64: floats specified by bit length
 - bool: boolean true or false (0, 1)
-- pointer: denoted by ^  
-- (TODO) char: a utf-8 character (!= u8, pain vs ASCII impl)
+- (TODO) char: a utf-8 character (!= u8, not needed currently.)

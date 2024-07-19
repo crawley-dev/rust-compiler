@@ -40,7 +40,7 @@
 //              - (OPTIONAL): mutability, if represented in memory
 //      ✅ Type Narrowing:
 //          - check if the assigned expr is wider than the assignee variable
-//      Type Coersion:
+//      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
 //          - Literals can be coerced into a type of same mode and addressing mode
 //          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
 
