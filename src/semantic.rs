@@ -38,13 +38,11 @@
 //          - AddressingMode:
 //              - how is it represented in memory, if at all
 //              - (OPTIONAL): mutability, if represented in memory
-//      Type Narrowing:
+//      ✅ Type Narrowing:
 //          - check if the assigned expr is wider than the assignee variable
-//      Type Coersion:
-//          - currently any literal can be coerced!
-//          - new ExprForm, 'expression' a combination of literal's and variables.
-//      CRAZY IDEA!!: (bad idea)
-//          - every combination of typemode, addressing mode, exprform shoved in a table for direct comparison and lookup!
+//      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
+//          - Literals can be coerced into a type of same mode and addressing mode
+//          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
 
 use crate::{
     debug, err,
@@ -63,9 +61,9 @@ const MSG: &'static str = "SEMANTIC";
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TypeMode {
     Bool,
+    IntLit,
     Int { signed: bool },
     Float { signed: bool },
-    IntLit,
 }
 
 // TODO(TOM): this isn't correct im sure.
@@ -119,8 +117,6 @@ pub struct SemVariable {
     pub init_expr: Option<NodeExpr>,
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct HandoffData {
     pub ast: AST,
@@ -129,7 +125,7 @@ pub struct HandoffData {
 }
 
 pub struct Checker {
-    loop_count: isize, // not usize to get useful error messages in debug mode, not "usize >= 0"
+    loop_count: isize, // isize not usize for getting useful error messages in debug build, instead of oob error
     pos: (usize, usize),
     stack: Vec<SemVariable>,
     var_map: HashMap<String, usize>,
@@ -218,7 +214,7 @@ impl Checker {
                         Ok(_) => (),
                         Err(e) => {
                             let er = err!(self, "INIT EXPR:\n{e}");
-                            debug!(self, "{:?}", er);
+                            debug!(self, "{}", er.as_ref().unwrap_err());
                             return er;
                         }
                     }
@@ -341,13 +337,15 @@ impl Checker {
                 match ldata.addr_mode {
                     AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
                         AddressingMode::Primitive | AddressingMode::Pointer => (),
-                        AddressingMode::Array => {
-                            return err!(self, "Binary Expressions invalid for Arrays")
+                        _ => {
+                            return err!(
+                                self,
+                                "Binary Expressions invalid for {:?}",
+                                ldata.addr_mode
+                            )
                         }
                     },
-                    AddressingMode::Array => {
-                        return err!(self, "Binary Expressions invalid for Arrays")
-                    }
+                    _ => return err!(self, "Binary Expressions invalid for {:?}", ldata.addr_mode),
                 }
 
                 let err_msg = format!("Expr of different Type! => {ldata:#?}\n.. {rdata:#?}");
@@ -357,40 +355,46 @@ impl Checker {
                 // logical    bool, bool => bool
                 // arithmetic int,  int  => int
                 let op_flags = op.get_flags();
+                let width = self.get_width(&ldata.form);
                 match op_flags {
                     _ if op_flags.contains(TokenFlags::CMP) => Ok(ExprData {
                         type_mode: TypeMode::Bool,
                         addr_mode: AddressingMode::Primitive,
                         form: ExprForm::Expr {
-                            inherited_width: PTR_WIDTH,
+                            inherited_width: width,
                         },
                     }),
                     _ if op_flags.contains(TokenFlags::LOG) => match ldata.type_mode {
-                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            err!(self, "'{op:?}' requires expr to be a boolean")
-                        }
                         TypeMode::Bool => Ok(ExprData {
                             type_mode: TypeMode::Bool,
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr {
-                                inherited_width: PTR_WIDTH,
+                                inherited_width: width,
                             },
                         }),
-                    },
-                    _ if op_flags.contains(TokenFlags::ARITH) => match ldata.type_mode {
-                        TypeMode::Bool => {
-                            err!(self, "'{op:?}' requires expr to be an integer or float")
-                        }
-                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            Ok(ExprData {
-                                type_mode: ldata.type_mode,
-                                addr_mode: ldata.addr_mode,
-                                form: ExprForm::Expr {
-                                    inherited_width: PTR_WIDTH,
-                                },
-                            })
+                        _ => {
+                            err!(
+                                self,
+                                "'{op:?}' requires expr to be a boolean =>\n{ldata:#?}"
+                            )
                         }
                     },
+                    _ if op_flags.contains(TokenFlags::ARITH) => {
+                        match ldata.type_mode {
+                            TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
+                                Ok(ExprData {
+                                    type_mode: ldata.type_mode,
+                                    addr_mode: ldata.addr_mode,
+                                    form: ExprForm::Expr {
+                                        inherited_width: width,
+                                    },
+                                })
+                            }
+                            _ => {
+                                err!(self, "'{op:?}' requires expr to be an integer or float =>\n{ldata:#?}")
+                            }
+                        }
+                    }
                     _ => err!(
                         self,
                         "Unsupported binary expression =>\n{lhs:#?}\n..\n{rhs:#?}"
@@ -403,6 +407,7 @@ impl Checker {
 
                 // 'Unary sub' signed int or lit => int | signed
                 // 'Cmp Not'   bool => bool
+                // 'Bit Not'   primitive => primitive
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
                 let inherited_width = match checked.form {
@@ -410,6 +415,10 @@ impl Checker {
                     ExprForm::Expr { inherited_width } => inherited_width,
                 };
                 match op {
+                    TokenKind::Tilde => match checked.addr_mode  {
+                        AddressingMode::Primitive => Ok(checked),
+                        _ => err!("'~' unary operator requires 'primitive' addressing =>\n{checked:#?}")
+                    }
                     TokenKind::Sub => match checked.type_mode {
                         TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
                             Ok(ExprData {
@@ -423,9 +432,7 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width },
                         }),
-                        _ => {
-                            err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}")
-                        }
+                        _ => err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}"),
                     },
                     TokenKind::CmpNot => match checked.type_mode {
                         TypeMode::Bool => Ok(ExprData {
@@ -436,9 +443,6 @@ impl Checker {
                         _ => err!(self, "'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
                     },
                     TokenKind::Ampersand => match checked.addr_mode {
-                        AddressingMode::Pointer => err!(
-                            self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"
-                        ),
                         AddressingMode::Primitive => match checked.form {
                             ExprForm::Variable { .. } => Ok(ExprData { // TODO(TOM): use variable's ptr?
                                 type_mode: checked.type_mode,
@@ -449,7 +453,7 @@ impl Checker {
                             }),
                             _ => err!(self, "'&' unary operator requires expr to be a memory address."),
                         },
-                        _ => err!(self, "'&' unary operator not supported for Arrays"),
+                        _ => err!(self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"),
                     },
                     TokenKind::Ptr => match checked.addr_mode {
                         AddressingMode::Pointer => Ok(ExprData {
@@ -457,9 +461,9 @@ impl Checker {
                             addr_mode: AddressingMode::Primitive,
                             form: ExprForm::Expr { inherited_width }, // TODO(TOM): not sure about this?
                         }),
-                        _ => err!(self, "'^' unary operator requires expr to be a pointer\n{checked:#?}"),
+                        _ => err!(self, "'^' unary operator requires expr to be a pointer =>\n{checked:#?}"),
                     },
-                    _ => err!(self, "Unsupported Unary Expression:{checked:#?}"),
+                    _ => err!(self, "Unsupported Unary Expression '{op:?}' =>\n{checked:#?}"),
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),
@@ -491,18 +495,51 @@ impl Checker {
             NodeTerm::IntLit(_) => Ok(ExprData {
                 type_mode: TypeMode::IntLit,
                 addr_mode: AddressingMode::Primitive,
-                form: ExprForm::Expr {
-                    inherited_width: PTR_WIDTH,
-                },
+                form: ExprForm::Expr { inherited_width: 0 },
             }),
         }
     }
 
-    fn check_var_ident(&self, ident: &str) -> Result<(), String> {
-        if self.var_map.contains_key(ident) {
-            return err!(self, "Attempted re-initialisation of a Variable: '{ident}'");
-        } else if self.type_map.contains_key(ident) {
-            return err!(self, "Illegal Variable name, Types are keywords: '{ident}'");
+    fn check_assign(&self, var: &SemVariable, checked: &ExprData) -> Result<(), String> {
+        // Check Addressing Mode
+        if var.addr_mode != checked.addr_mode {
+            return err!(
+                self,
+                "Expr of different AddrMode! {:?} vs {:?} =>\n{var:#?}\n.. {checked:#?}",
+                var.addr_mode,
+                checked.addr_mode
+            );
+        }
+
+        // Check Type
+        match &self.types.get(var.type_id).unwrap().form {
+            TypeForm::Base {
+                type_mode: var_type_mode,
+            } => {
+                let msg = format!("Expr of different Type! =>\n{var:#?}\n.. {checked:#?}");
+                let temp = ExprData {
+                    type_mode: *var_type_mode,
+                    addr_mode: var.addr_mode,
+                    form: ExprForm::Variable {
+                        ptr: self.new_nonnull(var)?,
+                    },
+                };
+                self.check_type_mode(&temp, &checked, msg.as_str())?;
+            }
+            TypeForm::Struct { .. } => {
+                todo!("Struct semantics un-implemented")
+            }
+            TypeForm::Union {} => todo!("Union semantics un-implemented"),
+        }
+
+        // Check for Type Narrowing
+        let expr_width = self.get_width(&checked.form);
+        if expr_width > var.width {
+            return err!(
+                self,
+                "Expr of different width {expr_width} > {} =>\n{var:#?}\n.. {checked:#?}",
+                var.width
+            );
         }
         Ok(())
     }
@@ -526,53 +563,25 @@ impl Checker {
             }
             TypeMode::Bool => false,
         };
-        match sign_match {
-            true => Ok(()),
-            false => {
-                debug!(
-                    self,
-                    "Expr sign mismatch! {:?} vs {:?}", data1.type_mode, data2.type_mode
-                );
-                err!(self, "{msg}")
-            }
-        }
-    }
 
-    fn check_assign(&self, var: &SemVariable, checked: &ExprData) -> Result<(), String> {
-        // Check Addressing Mode
-        if var.addr_mode != checked.addr_mode {
-            debug!(
-                self,
-                "Expr of different AddrMode! {:?} vs {:?}", var.addr_mode, checked.addr_mode
-            );
+        if !sign_match {
             return err!(
                 self,
-                "Expr of different AddrMode! => {var:#?}\n.. {checked:#?}"
+                "Expr sign mismatch! {:?} vs {:?} => {msg}",
+                data1.type_mode,
+                data2.type_mode
             );
         }
+        Ok(())
+    }
 
-        // Check Type Mode
-        match &self.types.get(var.type_id).unwrap().form {
-            TypeForm::Base {
-                type_mode: var_type_mode,
-            } => {
-                let msg = format!("Expr of different Type! => {var:#?}\n.. {checked:#?}");
-                let temp = ExprData {
-                    type_mode: *var_type_mode,
-                    addr_mode: var.addr_mode,
-                    form: ExprForm::Variable {
-                        ptr: self.new_nonnull(var)?,
-                    },
-                };
-                self.check_type_mode(&temp, &checked, msg.as_str())
-            }
-            TypeForm::Struct { .. } => {
-                todo!("Struct semantics un-implemented")
-            }
-            TypeForm::Union {} => todo!("Union semantics un-implemented"),
+    fn check_var_ident(&self, ident: &str) -> Result<(), String> {
+        if self.var_map.contains_key(ident) {
+            return err!(self, "Attempted re-initialisation of a Variable: '{ident}'");
+        } else if self.type_map.contains_key(ident) {
+            return err!(self, "Illegal Variable name, Types are keywords: '{ident}'");
         }
-
-        // TODO(TOM): Check Type Narrowing
+        Ok(())
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////
@@ -596,7 +605,7 @@ impl Checker {
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
             Some(idx) => Ok(self.stack.get(*idx).unwrap()),
-            None => err!(self, "Variable: {ident:?} doesn't exist."),
+            None => err!(self, "Variable '{ident:?}' not found"),
         }
     }
 
@@ -604,6 +613,13 @@ impl Checker {
         match self.type_map.get(ident) {
             Some(id) => Ok(*id),
             None => err!(self, "Type '{ident}' not found"),
+        }
+    }
+
+    fn get_width(&self, form: &ExprForm) -> usize {
+        match form {
+            ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
+            ExprForm::Expr { inherited_width } => *inherited_width,
         }
     }
 

@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
-
 // >>PARSER<< Constructs statements out of tokens from the lexer.
 use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::SemVariable,
 };
+use std::collections::VecDeque;
+
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 
@@ -315,7 +315,7 @@ impl Parser {
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
-            Some(tok) => err!(self, "expected '{kind:?}', found => {:?}", tok.kind),
+            Some(tok) => err!(self, "expected '{kind:?}', found => '{:?}'", tok.kind),
             None => err!(self, "No token to evaluate"),
         }
     }

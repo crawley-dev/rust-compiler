@@ -1,6 +1,6 @@
+/*
 // https://www.mycompiler.io/new/asm-x86_64
 
-/*
 let x = 20;
 let a = x + 30; // Addition
 let b = x - 10; // Subtraction
@@ -16,58 +16,57 @@ let j = x >> 3; // Right Shift
 
 let l = 4 > 2 && 2 == 2; // LogicalAnd expr
 let n = 0 || 5 + 1 > 6;
-//let ans = 10 == 10 && 5 == 5; // LogicalOr expr
+let ans = 10 == 10 && 5 == 5; // LogicalOr expr
 
-*/
-
-//let a = 15;
-//let b = 7;
-//let c = 20;
-//let d = 3;
-//let e = 5;
-//let f = 8;
-//let g = 6;
-//let h = 9;
-//let i = 4;
+let a = 15;
+let b = 7;
+let c = 20;
+let d = 3;
+let e = 5;
+let f = 8;
+let g = 6;
+let h = 9;
+let i = 4;
     
 // Longer complex arithmetic expression
-//let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
-//let ans = (((a + b * c) - (d * e + f)) / g) * (h - i) + ((e % d) * (f + g));
-//let ans = 100 + (200 / 10) - 3 * 10 + 10; // == 80, won't work, overflow..
-//let ans = 100 - 3 * 10 + (200 / 10);
-//let ans = 100 + 20 - 5 * 30 / 2 + (100 - 50);
-//let ans = 100 / 50 - 50 + 2; //  - 51 + 52 - 53 / 2
-//let ans = 100 + 50;
-//let ans = 100 / 50 - (10 + 2) - 2;
-//let ans = (10 + 2) - 100 / 50;
-//let ans = (100 / (50 + 50)) + 5;
+let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
+let ans = (((a + b * c) - (d * e + f)) / g) * (h - i) + ((e % d) * (f + g));
+let ans = 100 + (200 / 10) - 3 * 10 + 10; // == 80, won't work, overflow..
+let ans = 100 - 3 * 10 + (200 / 10);
+let ans = 100 + 20 - 5 * 30 / 2 + (100 - 50);
+let ans = 100 / 50 - 50 + 2; //  - 51 + 52 - 53 / 2
+let ans = 100 + 50;
+let ans = 100 / 50 - (10 + 2) - 2;
+let ans = (10 + 2) - 100 / 50;
+let ans = (100 / (50 + 50)) + 5;
 
-//let ans = ((15 + 7 * 20) - (3 * 5 + 8)) / 6;
-//let ans = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
-//let ans = (~5 + 5) -5;
-
-
-//if 0 || 5 + 1 > 6 {
-//    exit(69);
-//} 
-//else if !(0 == 0) {
-//    exit(25);
-//}
+let ans = ((15 + 7 * 20) - (3 * 5 + 8)) / 6;
+let ans = (~5 + 5) -5;
 
 
-//{
-//    let mut dwa: i8 = 20;
-//}
+if 0 || 5 + 1 > 6 {
+    exit(69);
+} 
+else if !(0 == 0) {
+    exit(25);
+}
 
-//let dwa: i32 = 5;
-//let mut i: i32 = 0;
+{
+    let mut dwa: i8 = 20;
+}
+
+let dwa: i32 = 5;
+let mut i: i32 = 0;
 
 let mut unsigned_test: u8 = 5 + 5;
 let i_ptr: ^u8 = &(unsigned_test);
 let mut test_test: u8 = (&unsigned_test)^;
 test_test = (i_ptr^) + (i_ptr^);
 
-/*
+let ans: u8 = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
+
+*/
+
 let mut i = 0;
 let mut ans: i8 = 2;
 while 1 == 1 {
@@ -89,3 +88,4 @@ if 5 == 5 {
         ans += 5;
     }
 }
+

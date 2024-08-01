@@ -218,8 +218,6 @@ pub struct Token {
 
 pub struct Lexer {
     idx: usize,
-    // pos.1: usize,
-    // pos.0: usize,
     pos: (usize, usize),
     input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
@@ -313,7 +311,7 @@ impl Lexer {
                     _ if self.is_multicomment => (),
                     _ => {
                         tokens.push_back(tok);
-                        debug!(self, "new tok: {:?} | pos {}\n", tokens.back(), self.idx);
+                        debug!(self, "new tok: {:?}", tokens.back().as_ref().unwrap());
                     }
                 },
                 None => continue,
@@ -328,20 +326,20 @@ impl Lexer {
 
         loop {
             let next_char = match self.peek(0) {
-                Some(char) => *char,
+                Some(char) => char,
                 None => break,
             };
 
             let char_type = match next_char {
                 b'\n' => BufKind::NewLine,
                 _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
+                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
                 b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
                 b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
                 b'0'..=b'9' => BufKind::IntLit,
-                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
                 _ => {
-                    debug!("uhhh not good! unknown char found {next_char}");
-                    break;
+                    let err_msg: Result<bool, String> = err!("unknown char found {next_char}");
+                    panic!("{err_msg:?}");
                 }
             };
 
@@ -360,12 +358,12 @@ impl Lexer {
 
     // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
     //  - trying to modify state in next_token causes bugs.
-    //    .. becasue after creating a token, the next char may not be "next_char" due to a reduce
+    //      .. because after creating a token, the next char may not be "next_char" due to a reduce
+    //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
     fn create_tok(&mut self, buf_kind: BufKind, buf: &Vec<u8>) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;
             self.pos.0 += 1;
-
             return None;
         }
 
@@ -379,7 +377,7 @@ impl Lexer {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                self.pos.1 += 1;
+                self.pos.1 += buf.len();
                 self.pos.0 = 0;
                 None
             }
@@ -430,20 +428,21 @@ impl Lexer {
         None
     }
 
-    fn peek(&self, offset: usize) -> Option<&u8> {
-        self.input.get(self.idx + offset)
+    fn peek(&self, offset: usize) -> Option<u8> {
+        self.input.get(self.idx + offset).copied()
     }
 
     fn consume(&mut self) -> u8 {
         let i = self.idx;
         self.idx += 1;
         self.pos.0 += 1;
+
         let char = self.input.get(i).copied().unwrap();
         if char == b'\n' {
-            debug!(self, "consuming '{}' | new pos {}", r"\n", self.idx);
+            debug!(self, "consuming '{}'", r"\n");
         } else {
-            debug!(self, "consuming '{}' | new pos {}", char as char, self.idx);
+            debug!(self, "consuming '{}'", char as char);
         }
-        self.input.get(i).copied().unwrap()
+        char
     }
 }
