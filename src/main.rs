@@ -22,7 +22,7 @@ use code_gen::Generator;
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let file_name = get_file_name();
-    let contents = get_file_contents();
+    let contents = get_file_contents(&file_name);
     // println!("\n\n{:#?}\n\n", contents);
 
     let tokens = Lexer::new(contents).tokenize();
@@ -117,24 +117,19 @@ fn print_tokens(tokens: &VecDeque<Token>) {
 }
 
 fn get_file_name() -> String {
-    let file_name: String = env::args().skip(1).take(1).collect();
-    if file_name.is_empty() {
-        panic!("[COMPILER] Invalid File Path!\n");
+    let args: String = env::args().skip(1).take(1).collect();
+    let extension = args.split('.').skip(1).take(1).collect::<String>();
+    if args.is_empty() {
+        panic!("[COMPILER] No file path given!\n");
+    } else if extension != "txt" {
+        panic!("[COMPILER] Invalid file extension, '.txt' only\n")
     }
-    // let file_name = file_path
-    //     .split('/')
-    //     .nth(2)
-    //     .unwrap_or("default.txt")
-    //     .split('.')
-    //     .next()
-    //     .unwrap()
-    //     .to_string();
-    file_name
+    args
 }
 
-fn get_file_contents() -> Vec<String> {
-    let file =
-        fs::File::open("./examples/").unwrap_or_else(|_| panic!("[COMPILER] Error opening file\n"));
+fn get_file_contents(file_name: &str) -> Vec<String> {
+    let file = fs::File::open(format!("./examples/{file_name}"))
+        .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
     BufReader::new(file)
         .lines()
         .map(|line| line.unwrap() + "\n")
