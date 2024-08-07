@@ -1,0 +1,7 @@
+let mut dwa: u32 = 5;
+dwa += 5;
+// dwa += 5;
+
+//let y: ^usize;
+//let x: u32 = (10 - 2) * 3 + 5 / (3 + 2);
+//exit(x);

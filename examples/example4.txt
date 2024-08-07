@@ -1,0 +1,3 @@
+fn test(arg1: i32, arg2: usize, arg3: u8) -> i32 {
+    //exit(5); 
+}

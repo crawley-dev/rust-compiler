@@ -65,9 +65,10 @@ pub enum TokenKind {
     Else,
     While,
     Break,
-    Fn,
     Mut,
-
+    Fn,
+    Arrow,
+    Return,
     // Primitive Constructs
     Ident,
     IntLit,
@@ -213,7 +214,6 @@ pub struct Token {
     pub kind: TokenKind,
     pub value: Option<String>,
     pub pos: (usize, usize),
-    // pub raw_str: String,
 }
 
 pub struct Lexer {
@@ -279,11 +279,13 @@ impl Lexer {
             ("exit", TokenKind::Exit),
             ("let", TokenKind::Let),
             ("fn", TokenKind::Fn),
+            ("return", TokenKind::Return),
             ("if", TokenKind::If),
             ("else", TokenKind::Else),
             ("mut", TokenKind::Mut),
             ("while", TokenKind::While),
             ("break", TokenKind::Break),
+            ("->", TokenKind::Arrow),
         ]);
         Lexer {
             idx: 0,

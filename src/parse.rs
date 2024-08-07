@@ -1,4 +1,6 @@
 // >>PARSER<< Constructs statements out of tokens from the lexer.
+//  PARSE_TYPE:
+//      - to handle generic types, e.g Vec<u16>
 use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
@@ -6,7 +8,7 @@ use crate::{
 };
 use std::collections::VecDeque;
 
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "PARSE";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,11 +23,25 @@ pub struct NodeScope {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Arg {
+    pub ident: Token,
+    pub type_ident: Token,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeStmt {
+    FnDecl {
+        ident: Token,
+        args: Vec<Arg>,
+        scope: NodeScope,
+        ret_ident: Option<Token>,
+    },
+    // FnSemantics
     VarDecl {
         init_expr: Option<NodeExpr>,
-        ident: String,
-        type_ident: String,
+        ident: Token,
+        type_ident: Token,
+        // arg: Arg,
         mutable: bool,
         ptr: bool, // TODO(TOM): turn this into enum for different forms, e.g array
     },
@@ -44,14 +60,14 @@ pub enum NodeStmt {
         scope: NodeScope,
     },
     Assign {
-        ident: String,
+        ident: Token,
         expr: NodeExpr,
     },
     Exit(NodeExpr),
     NakedScope(NodeScope),
     Break,
     // SEMANTIC STMT "CONVERSIONS"
-    SemVarDecl(SemVariable),
+    VarSemantics(SemVariable),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,11 +124,11 @@ impl Parser {
             TokenKind::Let => {
                 self.expect(TokenKind::Let)?;
                 let mutable = self.expect(TokenKind::Mut).is_ok();
-                let ident = self.expect(TokenKind::Ident)?.value.unwrap();
+                let ident = self.expect(TokenKind::Ident)?;
 
                 self.expect(TokenKind::Colon)?;
                 let ptr = self.expect(TokenKind::Ptr).is_ok();
-                let type_ident = self.expect(TokenKind::Ident)?.value.unwrap();
+                let type_ident = self.expect(TokenKind::Ident)?;
 
                 let init_expr = match self.expect(TokenKind::Eq) {
                     Ok(_) => Some(self.parse_expr(0)?),
@@ -151,6 +167,37 @@ impl Parser {
                     branches,
                 }
             }
+            TokenKind::Fn => {
+                self.expect(TokenKind::Fn)?;
+                let ident = self.expect(TokenKind::Ident)?;
+                self.expect(TokenKind::OpenParen)?;
+
+                let mut args = Vec::new();
+                while self.token_equals(TokenKind::CloseParen, 0).is_err() {
+                    if args.len() > 0 {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                    let ident = self.expect(TokenKind::Ident)?;
+                    self.expect(TokenKind::Colon)?;
+                    let type_ident = self.expect(TokenKind::Ident)?;
+                    args.push(Arg { ident, type_ident });
+                }
+                self.expect(TokenKind::CloseParen)?;
+
+                let mut ret_ident = None;
+                if self.expect(TokenKind::Arrow).is_ok() {
+                    ret_ident = Some(self.expect(TokenKind::Ident)?);
+                }
+                let scope = self.parse_scope()?;
+                let dwa = NodeStmt::FnDecl {
+                    ident,
+                    args,
+                    scope,
+                    ret_ident,
+                };
+                debug!(self, "Function:\n{dwa:#?}");
+                dwa
+            }
             TokenKind::While => {
                 self.expect(TokenKind::While)?;
                 let condition = self.parse_expr(0)?;
@@ -158,18 +205,18 @@ impl Parser {
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
-                // Assignment: consume assign. parse expr. "ident = expr"
-                // Compound Assign: switch compound assign to its arith counterpart
-                //      - reuse stmt, parse it as an expr, "ident += expr" => "ident + expr"
-                //      - "expr" = "ident + expr"
-                let ident;
+                let mut ident: Token;
                 match self.peek(1) {
+                    // Assignment: consume ident & assign. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => {
-                        ident = self.consume().value.unwrap();
+                        ident = self.expect(TokenKind::Ident)?;
                         self.expect(TokenKind::Eq)?;
                     }
+                    // Compound Assign: switch compound assign to its arith counterpart
+                    //      - reuse stmt, parse it as an expr, "ident += expr" => "ident + expr"
+                    //      - "expr" = "ident + expr"
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
-                        ident = self.peek(0).as_ref().unwrap().value.clone().unwrap();
+                        ident = self.peek(0).unwrap().clone();
                         let comp_assign = self.peek_mut(1).unwrap();
                         comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
                     }
@@ -191,7 +238,7 @@ impl Parser {
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return err!(self, "Invalid Statement =>\n'{tok:#?}'"),
+            _ => return err!(self, "Invalid Statement =Arg>\n'{tok:#?}'"),
         };
 
         // statments that do/don't require a ';' to end.

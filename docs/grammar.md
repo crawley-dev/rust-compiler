@@ -55,7 +55,7 @@
 - Scope: a block of code, with optional variable inheritance
     - OPEN_CURLY STATEMENT(s) CLOSE_CURLY
 - let: defining a variable, with optional mutability
-    - LET (MUTABLE) IDENT COLON TYPE ASSIGN EXPR STATEMENT_END 
+    - LET (opt MUTABLE) IDENT COLON TYPE ASSIGN EXPR STATEMENT_END 
 - If:
     - IF EXPR SCOPE (ELSE_IF) (ELSE)
     - Else If:
@@ -63,9 +63,12 @@
     - Else:
         - ELSE EXPR SCOPE 
     - 'EXPR' must evaluate to type: Boolean
-- While:
+- while:
     - WHILE EXPR SCOPE
 - break: exits current loop
+- fn: a function declaration
+    - FN IDENT OPEN_PAREN (IDENT COLON TYPE) (COMMA IDENT COLON TYPE)* CLOSE_PAREN (opt RETURN_ARROW TYPE) SCOPE
+    - every path must return at the end of the function.
 
 ## Type Registry:
 - All type information is kept on the left, all type operations are performed on the right, taken from odin

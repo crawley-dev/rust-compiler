@@ -46,7 +46,7 @@
 
 use crate::{
     debug, err,
-    lex::{TokenFlags, TokenKind},
+    lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
 };
 use std::{collections::HashMap, ptr::NonNull};
@@ -111,7 +111,7 @@ pub struct Type {
 pub struct SemVariable {
     pub width: usize, // depending in whether its form, width != base_type.width
     pub mutable: bool,
-    pub ident: String,
+    pub ident: Token,
     pub type_id: usize,
     pub addr_mode: AddressingMode,
     pub init_expr: Option<NodeExpr>,
@@ -175,6 +175,7 @@ impl Checker {
         })
     }
 
+    // Either early return a new statement if something changes, or return the original statement
     fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
             NodeStmt::VarDecl {
@@ -184,8 +185,8 @@ impl Checker {
                 mutable,
                 ptr,
             } => {
-                self.check_var_ident(ident.as_str())?;
-                let type_id = self.get_type_id(type_ident.as_str())?;
+                self.check_var_ident(ident.value.as_ref().unwrap().as_str())?;
+                let type_id = self.get_type_id(type_ident.value.unwrap().as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
                 let mut width = var_type.width;
@@ -205,7 +206,8 @@ impl Checker {
                     init_expr,
                 };
 
-                self.var_map.insert(var.ident.clone(), self.stack.len());
+                self.var_map
+                    .insert(var.ident.value.as_ref().unwrap().clone(), self.stack.len());
                 self.stack.push(var.clone()); // have to clone as am creating a new NodeStmt.
 
                 if let Some(ref expr) = var.init_expr {
@@ -219,8 +221,7 @@ impl Checker {
                         }
                     }
                 }
-
-                return Ok(NodeStmt::SemVarDecl(var));
+                return Ok(NodeStmt::VarSemantics(var));
             }
             NodeStmt::If {
                 condition,
@@ -237,7 +238,6 @@ impl Checker {
                         )
                     }
                 }
-
                 let mut new_branches = Vec::new();
                 for branch in branches {
                     new_branches.push(self.check_stmt(branch)?);
@@ -247,6 +247,14 @@ impl Checker {
                     scope: self.check_scope(scope)?,
                     branches: new_branches,
                 });
+            }
+            NodeStmt::FnDecl {
+                ident,
+                args,
+                scope,
+                ret_ident,
+            } => {
+                panic!("");
             }
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
@@ -259,7 +267,6 @@ impl Checker {
                         )
                     }
                 }
-
                 return Ok(NodeStmt::ElseIf {
                     condition,
                     scope: self.check_scope(scope)?,
@@ -280,9 +287,7 @@ impl Checker {
                 ref ident,
                 ref expr,
             } => {
-                let var = self.get_var(ident.as_str())?;
-
-                // Mutability Check
+                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
                 if !var.mutable {
                     return err!(self, "Re-assignment of a Constant:\n{var:#?}");
                 }
@@ -300,7 +305,9 @@ impl Checker {
                     return err!(self, "Not inside a loop! cannot break");
                 }
             }
-            NodeStmt::SemVarDecl { .. } => return err!(self, "Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::VarSemantics { .. } => {
+                return err!(self, "Found {stmt:#?}.. shouldn't have.")
+            }
         };
         Ok(stmt)
     }
@@ -315,7 +322,7 @@ impl Checker {
         debug!(self, "Ending scope, pop({pop_amt})");
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
-                Some(var) => self.var_map.remove(var.ident.as_str()),
+                Some(var) => self.var_map.remove(var.ident.value.unwrap().as_str()),
                 None => return err!(self, "uhh.. scope messed up"),
             };
             debug!(self, "Scope ended, removing {popped_var:#?}");
@@ -333,7 +340,7 @@ impl Checker {
                 let rdata = self.check_expr(rhs)?;
                 debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
 
-                // Binary expressions disallowed for arrays!
+                // Binary ops allowed for primitives && pointers.
                 match ldata.addr_mode {
                     AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
                         AddressingMode::Primitive | AddressingMode::Pointer => (),

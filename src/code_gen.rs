@@ -8,7 +8,7 @@
 
 use crate::{
     debug, err,
-    lex::{TokenFlags, TokenKind},
+    lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::{HandoffData, Type},
 };
@@ -20,7 +20,7 @@ const MSG: &'static str = "CODEGEN";
 
 #[derive(Debug, Clone, PartialEq)]
 struct GenVariable {
-    ident: String,
+    ident: Token,
     width: usize,
     type_id: usize,
     stk_index: usize,
@@ -85,8 +85,11 @@ impl Generator {
                      {SPACE}syscall\n"
                 ))
             }
-            NodeStmt::SemVarDecl(sem_var) => {
-                if self.get_var(sem_var.ident.as_str()).is_ok() {
+            NodeStmt::VarSemantics(sem_var) => {
+                if self
+                    .get_var(sem_var.ident.value.as_ref().unwrap().as_str())
+                    .is_ok()
+                {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let width = sem_var.width;
@@ -99,7 +102,8 @@ impl Generator {
                 };
 
                 self.stk_pos += width;
-                self.var_map.insert(var.ident.clone(), self.stack.len());
+                self.var_map
+                    .insert(var.ident.value.as_ref().unwrap().clone(), self.stack.len());
                 self.stack.push(var);
 
                 let mut str = String::new();
@@ -108,11 +112,11 @@ impl Generator {
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
                 str.pop(); // remove '\n'
-                str += format!(" ; Ident('{name}')\n").as_str();
+                str += format!(" ; Ident('{}')\n", name.value.as_ref().unwrap()).as_str();
                 Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
-                let var = self.get_var(ident.as_str())?;
+                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
                 let ans_reg = self.gen_stk_access(var.stk_index, var.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
@@ -153,6 +157,14 @@ impl Generator {
                      {branches_asm}\
                      {endif_goto}"
                 ))
+            }
+            NodeStmt::FnDecl {
+                ident,
+                args,
+                scope,
+                ret_ident,
+            } => {
+                panic!("")
             }
             NodeStmt::ElseIf { condition, scope } => {
                 let false_label = self.gen_label("ELIF_FALSE");
@@ -222,7 +234,9 @@ impl Generator {
                 None => return err!("uhh.. scope messed up"),
             };
             self.stk_pos -= popped_var.width;
-            self.var_map.remove(popped_var.ident.as_str()).unwrap();
+            self.var_map
+                .remove(popped_var.ident.value.as_ref().unwrap().as_str())
+                .unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
         Ok(asm)
@@ -310,7 +324,10 @@ impl Generator {
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
-                Ok(format!("{SPACE}mov {reg}, {}\n", tok.value.unwrap()))
+                Ok(format!(
+                    "{SPACE}mov {reg}, {}\n",
+                    tok.value.as_ref().unwrap()
+                ))
             }
             NodeTerm::Ident(tok) => {
                 self.pos = tok.pos;
