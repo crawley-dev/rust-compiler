@@ -2,9 +2,9 @@
 //  PARSE_TYPE:
 //      - to handle generic types, e.g Vec<u16>
 use crate::{
-    debug, err,
+    debug, debugln, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::SemVariable,
+    semantic::{SemFn, SemVariable},
 };
 use std::collections::VecDeque;
 
@@ -22,7 +22,7 @@ pub struct NodeScope {
     pub inherits_stmts: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arg {
     pub ident: Token,
     pub type_ident: Token,
@@ -34,9 +34,8 @@ pub enum NodeStmt {
         ident: Token,
         args: Vec<Arg>,
         scope: NodeScope,
-        ret_ident: Option<Token>,
+        ret_type_tok: Option<Token>,
     },
-    // FnSemantics
     VarDecl {
         init_expr: Option<NodeExpr>,
         ident: Token,
@@ -66,8 +65,10 @@ pub enum NodeStmt {
     Exit(NodeExpr),
     NakedScope(NodeScope),
     Break,
+    Return(Option<NodeExpr>),
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(SemVariable),
+    FnSemantics(SemFn),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,7 +94,7 @@ pub enum NodeTerm {
 pub struct Parser {
     pub tokens: VecDeque<Token>,
     pub idx: usize,
-    pub pos: (usize, usize),
+    pub pos: (u32, u32),
 }
 
 impl Parser {
@@ -118,7 +119,7 @@ impl Parser {
             Some(tok) => tok,
             None => return err!(self, "No statement to parse"),
         };
-        debug!(self, "parsing statement: {tok:?}");
+        debugln!(self, "parsing statement: {tok:?}");
 
         let stmt = match tok.kind {
             TokenKind::Let => {
@@ -184,19 +185,25 @@ impl Parser {
                 }
                 self.expect(TokenKind::CloseParen)?;
 
-                let mut ret_ident = None;
+                let mut ret_type_tok = None;
                 if self.expect(TokenKind::Arrow).is_ok() {
-                    ret_ident = Some(self.expect(TokenKind::Ident)?);
+                    ret_type_tok = Some(self.expect(TokenKind::Ident)?);
                 }
                 let scope = self.parse_scope()?;
-                let dwa = NodeStmt::FnDecl {
+                NodeStmt::FnDecl {
                     ident,
                     args,
                     scope,
-                    ret_ident,
-                };
-                debug!(self, "Function:\n{dwa:#?}");
-                dwa
+                    ret_type_tok,
+                }
+            }
+            TokenKind::Return => {
+                self.expect(TokenKind::Return)?;
+                if self.token_equals(TokenKind::SemiColon, 0).is_ok() {
+                    NodeStmt::Return(None)
+                } else {
+                    NodeStmt::Return(Some(self.parse_expr(0)?))
+                }
             }
             TokenKind::While => {
                 self.expect(TokenKind::While)?;
@@ -238,7 +245,7 @@ impl Parser {
                 NodeStmt::Break
             }
             TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
-            _ => return err!(self, "Invalid Statement =Arg>\n'{tok:#?}'"),
+            _ => return err!(self, "Invalid Statement =>\n{tok:#?}"),
         };
 
         // statments that do/don't require a ';' to end.
@@ -246,7 +253,8 @@ impl Parser {
             NodeStmt::Exit(_)
             | NodeStmt::Assign { .. }
             | NodeStmt::VarDecl { .. }
-            | NodeStmt::Break => match self.expect(TokenKind::SemiColon) {
+            | NodeStmt::Break
+            | NodeStmt::Return(_) => match self.expect(TokenKind::SemiColon) {
                 Ok(_) => Ok(stmt),
                 Err(e) => err!("{e}.\n{stmt:#?}"),
             },

@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "LEX";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
     // Generic Symbols
     Comma,             // ","
@@ -209,16 +209,16 @@ enum BufKind {
     NewLine,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
     pub value: Option<String>,
-    pub pos: (usize, usize),
+    pub pos: (u32, u32),
 }
 
 pub struct Lexer {
     idx: usize,
-    pos: (usize, usize),
+    pos: (u32, u32),
     input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
@@ -332,13 +332,15 @@ impl Lexer {
                 None => break,
             };
 
+            // the order of these match statements matter!
             let char_type = match next_char {
                 b'\n' => BufKind::NewLine,
                 _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
-                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
-                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
                 b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
+                b'_' if buf_kind == BufKind::IntLit => continue, // skip number spacing, e.g 1_000_000 => 1000000
                 b'0'..=b'9' => BufKind::IntLit,
+                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
+                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
                 _ => {
                     let err_msg: Result<bool, String> = err!("unknown char found {next_char}");
                     panic!("{err_msg:?}");
@@ -379,7 +381,7 @@ impl Lexer {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                self.pos.1 += buf.len();
+                self.pos.1 += buf.len() as u32;
                 self.pos.0 = 0;
                 None
             }

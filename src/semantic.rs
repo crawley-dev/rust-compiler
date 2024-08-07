@@ -2,7 +2,7 @@
 //  CLONING:
 //      - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
 //      - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
-//      - Can't manipulate current AST freely, because it has to be rigid in size, its on the STACK!
+//      - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
 //  Assignment:
 //      - ✅ arith-assign on new var or literal
 //      - ✅ re-assign on immutable vars
@@ -49,7 +49,11 @@ use crate::{
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
 };
-use std::{collections::HashMap, ptr::NonNull};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    ptr::NonNull,
+};
 
 const PTR_WIDTH: usize = 8;
 const LOG_DEBUG_INFO: bool = false;
@@ -60,6 +64,7 @@ const MSG: &'static str = "SEMANTIC";
 // Literal | Variable
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TypeMode {
+    Void,
     Bool,
     IntLit,
     Int { signed: bool },
@@ -118,6 +123,9 @@ pub struct SemVariable {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SemFn {}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct HandoffData {
     pub ast: AST,
     pub types: Vec<Type>,
@@ -126,16 +134,18 @@ pub struct HandoffData {
 
 pub struct Checker {
     loop_count: isize, // isize not usize for getting useful error messages in debug build, instead of oob error
-    pos: (usize, usize),
-    stack: Vec<SemVariable>,
-    var_map: HashMap<String, usize>,
+    pos: (u32, u32),
     types: Vec<Type>,
+    vars: Vec<SemVariable>,
+    fn_set: HashSet<String>,
+    var_map: HashMap<String, usize>,
     type_map: HashMap<String, usize>,
 }
 
 impl Checker {
     pub fn check_ast(ast: AST) -> Result<HandoffData, String> {
         let types = Vec::from([
+            new_base("void", 0, TypeMode::Void),
             new_base("bool", 1, TypeMode::Bool),
             new_base("u8", 1, TypeMode::Int { signed: false }),
             new_base("u16", 2, TypeMode::Int { signed: false }),
@@ -153,8 +163,9 @@ impl Checker {
         let mut checker = Checker {
             loop_count: 0,
             pos: (0, 0),
-            stack: Vec::new(),
+            vars: Vec::new(),
             var_map: HashMap::new(),
+            fn_set: HashSet::new(),
             types,
             type_map: HashMap::new(),
         };
@@ -185,10 +196,18 @@ impl Checker {
                 mutable,
                 ptr,
             } => {
-                self.check_var_ident(ident.value.as_ref().unwrap().as_str())?;
+                // check for name collisions
+                let str = ident.value.as_ref().unwrap().as_str();
+                if self.var_map.contains_key(str) {
+                    return err!(self, "Duplicate definition of a Variable: '{str}'");
+                } else if self.type_map.contains_key(str) {
+                    return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
+                }
+
                 let type_id = self.get_type_id(type_ident.value.unwrap().as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
+                // change byte width if pointer
                 let mut width = var_type.width;
                 let addr_mode = if ptr {
                     width = PTR_WIDTH;
@@ -206,10 +225,12 @@ impl Checker {
                     init_expr,
                 };
 
+                // insert into registry
                 self.var_map
-                    .insert(var.ident.value.as_ref().unwrap().clone(), self.stack.len());
-                self.stack.push(var.clone()); // have to clone as am creating a new NodeStmt.
+                    .insert(var.ident.value.as_ref().unwrap().clone(), self.vars.len());
+                self.vars.push(var.clone());
 
+                // check intial expression
                 if let Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
                     match self.check_assign(&var, &checked) {
@@ -252,10 +273,79 @@ impl Checker {
                 ident,
                 args,
                 scope,
-                ret_ident,
+                ret_type_tok,
             } => {
-                panic!("");
+                // check all return's are valid
+
+                // check for name collisions
+                let ident_str = ident.value.as_ref().unwrap().as_str();
+                if self.fn_set.contains(ident_str) {
+                    return err!(self, "Duplicate definition of a Function: '{ident_str}'");
+                } else if self.type_map.contains_key(ident_str) {
+                    return err!(
+                        self,
+                        "Illegal Function name, Types are reserved: '{ident_str}'"
+                    );
+                }
+
+                // check unique arg names, vec faster
+                let mut temp_vec = Vec::new();
+                for arg in &args {
+                    let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
+                    if temp_vec.contains(&arg_ident) {
+                        return err!(
+                            self,
+                            "Duplicate argument: {arg_ident} in function: {}",
+                            ident.value.as_ref().unwrap().as_str()
+                        );
+                    }
+
+                    // check valid arg types
+                    self.get_type_id(arg.type_ident.value.as_ref().unwrap().as_str())?;
+
+                    temp_vec.push(arg_ident);
+                }
+
+                let ret_ident_str = match ret_type_tok {
+                    Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
+                    None => "void",
+                };
+                let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
+
+                // check all paths have a return
+                match scope.stmts.last() {
+                    Some(stmt) => match stmt {
+                        NodeStmt::If {
+                            scope, branches, ..
+                        } => {
+                            // check all branches have a 'return'
+                        }
+                        NodeStmt::Return(ref expr) => match expr {
+                            Some(expr) => {
+                                let return_type = self.check_expr(expr)?;
+                                self.
+                            }
+                            None if ret_type_tok.is_none() => (),
+                            None => {
+                                return err!(
+                                "Mismatched function and return type, '{ret_ident_str}' .. 'void'"
+                            )
+                            }
+                        },
+                        _ => return err!("Not all paths return in '{ident_str}'"),
+                    },
+                    None if ret_type_tok.is_none() => (), // no return needed for a void function
+                    None => return err!("Non-void function requires a return"),
+                };
+
+                return Ok(NodeStmt::FnSemantics(SemFn {}));
             }
+            NodeStmt::Return(ref expr) => match expr {
+                Some(expr) => {
+                    self.check_expr(&expr)?;
+                }
+                None => (),
+            },
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
                 match checked.type_mode {
@@ -305,23 +395,23 @@ impl Checker {
                     return err!(self, "Not inside a loop! cannot break");
                 }
             }
-            NodeStmt::VarSemantics { .. } => {
-                return err!(self, "Found {stmt:#?}.. shouldn't have.")
+            NodeStmt::VarSemantics { .. } | NodeStmt::FnSemantics(_) => {
+                return err!(self, "Found {stmt:#?}.. shouldn't have.");
             }
         };
         Ok(stmt)
     }
 
     fn check_scope(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
-        let var_count = self.stack.len();
+        let var_count = self.vars.len();
         let mut stmts = Vec::new();
         for stmt in scope.stmts {
             stmts.push(self.check_stmt(stmt)?);
         }
-        let pop_amt = self.stack.len() - var_count;
+        let pop_amt = self.vars.len() - var_count;
         debug!(self, "Ending scope, pop({pop_amt})");
         for _ in 0..pop_amt {
-            let popped_var = match self.stack.pop() {
+            let popped_var = match self.vars.pop() {
                 Some(var) => self.var_map.remove(var.ident.value.unwrap().as_str()),
                 None => return err!(self, "uhh.. scope messed up"),
             };
@@ -565,10 +655,10 @@ impl Checker {
                     TypeMode::Int { signed: sign2 } | TypeMode::Float { signed: sign2 } => {
                         sign1 == sign2
                     }
-                    TypeMode::Bool => false,
+                    TypeMode::Bool | TypeMode::Void => false,
                 }
             }
-            TypeMode::Bool => false,
+            TypeMode::Bool | TypeMode::Void => false,
         };
 
         if !sign_match {
@@ -582,16 +672,7 @@ impl Checker {
         Ok(())
     }
 
-    fn check_var_ident(&self, ident: &str) -> Result<(), String> {
-        if self.var_map.contains_key(ident) {
-            return err!(self, "Attempted re-initialisation of a Variable: '{ident}'");
-        } else if self.type_map.contains_key(ident) {
-            return err!(self, "Illegal Variable name, Types are keywords: '{ident}'");
-        }
-        Ok(())
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////
 
     fn get_expr_ident(&self, expr: &NodeExpr, right_side: bool) -> String {
         match expr {
@@ -611,7 +692,7 @@ impl Checker {
 
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
-            Some(idx) => Ok(self.stack.get(*idx).unwrap()),
+            Some(idx) => Ok(self.vars.get(*idx).unwrap()),
             None => err!(self, "Variable '{ident}' not found"),
         }
     }

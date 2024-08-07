@@ -43,7 +43,8 @@ fn parse(tokens: VecDeque<Token>) -> AST {
     let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
         Ok(t) => t,
-        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
+        Err(e) => panic!("\n{e}\n"),
+        // Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
 

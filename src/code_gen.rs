@@ -11,6 +11,7 @@ use crate::{
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
     semantic::{HandoffData, Type},
+    SemFn,
 };
 use std::collections::HashMap;
 
@@ -35,7 +36,7 @@ struct CodeGenContext {
 
 pub struct Generator {
     stk_pos: usize,
-    pos: (usize, usize),
+    pos: (u32, u32),
     ast: AST,
     types: Vec<Type>,
     type_map: HashMap<String, usize>,
@@ -148,23 +149,21 @@ impl Generator {
 
                 Ok(format!(
                     "; If\n\
-                     {condition_asm}\
-                     {SPACE}cmp rax, 0 \n\
-                     {SPACE}je {false_label}\n\
-                     {scope_asm}\
-                     {endif_jmp}\
-                     {false_label}:\n\
-                     {branches_asm}\
-                     {endif_goto}"
+                    {condition_asm}\
+                    {SPACE}cmp rax, 0 \n\
+                    {SPACE}je {false_label}\n\
+                    {scope_asm}\
+                    {endif_jmp}\
+                    {false_label}:\n\
+                    {branches_asm}\
+                    {endif_goto}"
                 ))
             }
-            NodeStmt::FnDecl {
-                ident,
-                args,
-                scope,
-                ret_ident,
-            } => {
-                panic!("")
+            NodeStmt::FnSemantics(sem_fn) => {
+                todo!("fn codegen")
+            }
+            NodeStmt::Return(expr) => {
+                todo!("return codegen")
             }
             NodeStmt::ElseIf { condition, scope } => {
                 let false_label = self.gen_label("ELIF_FALSE");
@@ -213,7 +212,9 @@ impl Generator {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
-            NodeStmt::VarDecl { .. } => err!("Found {stmt:#?}.. shouldn't have."),
+            NodeStmt::VarDecl { .. } | NodeStmt::FnDecl { .. } => {
+                err!("Found {stmt:#?}.. shouldn't have.")
+            }
         }
     }
 
