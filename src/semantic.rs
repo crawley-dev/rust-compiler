@@ -404,7 +404,7 @@ impl Checker {
                     }
                     _ => err!(
                         self,
-                        "Unsupported binary expression =>\n{lhs:#?}\n..\n{rhs:#?}"
+                        "Illegal binary expression =>\n{lhs:#?}\n.. '{op:?}' ..\n{rhs:#?}"
                     ),
                 }
             }
@@ -470,7 +470,7 @@ impl Checker {
                         }),
                         _ => err!(self, "'^' unary operator requires expr to be a pointer =>\n{checked:#?}"),
                     },
-                    _ => err!(self, "Unsupported Unary Expression '{op:?}' =>\n{checked:#?}"),
+                    _ => err!(self, "Illegal unary Expression '{op:?}' =>\n{checked:#?}"),
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),
@@ -612,7 +612,7 @@ impl Checker {
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
             Some(idx) => Ok(self.stack.get(*idx).unwrap()),
-            None => err!(self, "Variable '{ident:?}' not found"),
+            None => err!(self, "Variable '{ident}' not found"),
         }
     }
 

@@ -39,17 +39,21 @@ fn main() {
 ----------------------------------------------------------------------------------------*/
 
 fn parse(tokens: VecDeque<Token>) -> AST {
-    let mut parser = Parser::new(tokens);
+    // TODO(TOM): REMOVE CLONE AFTER DEBUG
+    let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
         Ok(t) => t,
-        Err(e) => panic!("\n{e}\n"),
+        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
 
 fn semantic_check(ast: AST) -> HandoffData {
-    match semantic::Checker::check_ast(ast) {
+    // TODO(TOM): REMOVE CLONE AFTER DEBUG
+    match semantic::Checker::check_ast(ast.clone()) {
         Ok(info) => info,
-        Err(e) => panic!("\n{e}\n"),
+        Err(e) => {
+            panic!("{ast:#?}\n\n{e}\n")
+        }
     }
 }
 
