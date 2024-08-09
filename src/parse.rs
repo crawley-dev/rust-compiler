@@ -5,10 +5,11 @@ use crate::{
     debug, debugln, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{SemFn, SemVariable},
+    AddressingMode, ExprData, ExprForm, Type, TypeMode,
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Add};
 
-const LOG_DEBUG_INFO: bool = true;
+const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,15 +35,15 @@ pub enum NodeStmt {
         ident: Token,
         args: Vec<Arg>,
         scope: NodeScope,
-        ret_type_tok: Option<Token>,
+        return_tok: Option<Token>,
+        return_addr_mode: Option<AddressingMode>,
     },
     VarDecl {
         init_expr: Option<NodeExpr>,
         ident: Token,
-        type_ident: Token,
-        // arg: Arg,
+        type_tok: Token,
+        type_addr_mode: AddressingMode,
         mutable: bool,
-        ptr: bool, // TODO(TOM): turn this into enum for different forms, e.g array
     },
     If {
         condition: NodeExpr,
@@ -128,8 +129,7 @@ impl Parser {
                 let ident = self.expect(TokenKind::Ident)?;
 
                 self.expect(TokenKind::Colon)?;
-                let ptr = self.expect(TokenKind::Ptr).is_ok();
-                let type_ident = self.expect(TokenKind::Ident)?;
+                let (type_tok, type_addr_mode) = self.parse_type()?;
 
                 let init_expr = match self.expect(TokenKind::Eq) {
                     Ok(_) => Some(self.parse_expr(0)?),
@@ -138,9 +138,9 @@ impl Parser {
                 NodeStmt::VarDecl {
                     init_expr,
                     ident,
-                    type_ident,
+                    type_tok,
+                    type_addr_mode,
                     mutable,
-                    ptr,
                 }
             }
             TokenKind::If => {
@@ -185,16 +185,20 @@ impl Parser {
                 }
                 self.expect(TokenKind::CloseParen)?;
 
-                let mut ret_type_tok = None;
+                let mut return_tok = None;
+                let mut return_addr_mode = None;
                 if self.expect(TokenKind::Arrow).is_ok() {
-                    ret_type_tok = Some(self.expect(TokenKind::Ident)?);
+                    let (tok, addr_mode) = self.parse_type()?;
+                    return_tok = Some(tok);
+                    return_addr_mode = Some(addr_mode);
                 }
                 let scope = self.parse_scope()?;
                 NodeStmt::FnDecl {
                     ident,
                     args,
                     scope,
-                    ret_type_tok,
+                    return_tok,
+                    return_addr_mode,
                 }
             }
             TokenKind::Return => {
@@ -365,6 +369,17 @@ impl Parser {
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
             _ => err!(self, "Invalid Term =>\n{tok:#?}"),
         }
+    }
+
+    fn parse_type(&mut self) -> Result<(Token, AddressingMode), String> {
+        let mut addr_mode = AddressingMode::Primitive;
+        if self.expect(TokenKind::Ptr).is_ok() {
+            addr_mode = AddressingMode::Pointer;
+        } else if self.expect(TokenKind::Array).is_ok() {
+            addr_mode = AddressingMode::Array;
+        }
+        let type_ident = self.expect(TokenKind::Ident)?;
+        Ok((type_ident, addr_mode))
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {

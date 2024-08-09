@@ -43,6 +43,12 @@
 //      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
 //          - Literals can be coerced into a type of same mode and addressing mode
 //          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
+//  ExprData Rethink (removal):
+//      - Consolidate TypeMode & AddresingMode to ExprForm::Expr
+//          - because ExprForm::Var holds a Variable,
+//          - Variable has a type (which has a typemode) & addressingmode
+//      - Con: lots of indirection faff
+//      - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
 
 use crate::{
     debug, err,
@@ -51,18 +57,21 @@ use crate::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    hash::Hash,
     ptr::NonNull,
 };
 
 const PTR_WIDTH: usize = 8;
-const LOG_DEBUG_INFO: bool = false;
+const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "SEMANTIC";
 
-// Bool    | Int | Float
-// Signed  | Unsigned
-// Literal | Variable
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AddressingMode {
+    Primitive,
+    Pointer,
+    Array,
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub enum TypeMode {
     Void,
     Bool,
@@ -71,38 +80,37 @@ pub enum TypeMode {
     Float { signed: bool },
 }
 
-// TODO(TOM): this isn't correct im sure.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AddressingMode {
-    Primitive,
-    Pointer, // not need an underlying addressing mode?
-    Array,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExprForm {
-    Variable { ptr: NonNull<SemVariable> },
-    Expr { inherited_width: usize },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExprData {
-    type_mode: TypeMode,
-    addr_mode: AddressingMode,
-    form: ExprForm,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeForm {
     Base {
         type_mode: TypeMode,
     }, // Base: just a type, has some flags, chill.
     Struct {
-        member_ids: Vec<usize>,
+        member_ids: Vec<ExprData>,
     }, // Struct: a group of types, stores type id, not type.
     Union {
         // TODO(TOM): define later
     }, // Union: a group of types that share the same storage.
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprForm {
+    Variable { ptr: NonNull<SemVariable> },
+    Expr { inherited_width: usize },
+    // Expr {
+    //     inherited_width: usize,
+    //     type_mode: TypeMode,
+    //     addr_mode: AddressingMode,
+    // },
+}
+
+// TODO(TOM): re-work to use TypeForm..
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprData {
+    // pub type_form: TypeForm,
+    pub type_mode: TypeMode,
+    pub addr_mode: AddressingMode,
+    pub form: ExprForm,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,10 +122,10 @@ pub struct Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemVariable {
-    pub width: usize, // depending in whether its form, width != base_type.width
-    pub mutable: bool,
     pub ident: Token,
-    pub type_id: usize,
+    pub mutable: bool,
+    pub width: usize,
+    pub type_id: usize, // has TypeMode
     pub addr_mode: AddressingMode,
     pub init_expr: Option<NodeExpr>,
 }
@@ -192,9 +200,9 @@ impl Checker {
             NodeStmt::VarDecl {
                 init_expr,
                 ident,
-                type_ident,
+                type_tok,
+                type_addr_mode,
                 mutable,
-                ptr,
             } => {
                 // check for name collisions
                 let str = ident.value.as_ref().unwrap().as_str();
@@ -204,27 +212,25 @@ impl Checker {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = self.get_type_id(type_ident.value.unwrap().as_str())?;
+                let type_id = self.get_type_id(type_tok.value.as_ref().unwrap().as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
-                // change byte width if pointer
+                // change byte width if its a pointer
                 let mut width = var_type.width;
-                let addr_mode = if ptr {
-                    width = PTR_WIDTH;
-                    AddressingMode::Pointer
-                } else {
-                    AddressingMode::Primitive
-                };
+                match type_addr_mode {
+                    AddressingMode::Primitive => (),
+                    AddressingMode::Pointer => width = PTR_WIDTH,
+                    AddressingMode::Array => todo!("array byte width modifications"),
+                }
 
                 let var = SemVariable {
-                    width,
                     ident,
-                    type_id,
                     mutable,
-                    addr_mode,
+                    width,
+                    type_id,
+                    addr_mode: type_addr_mode,
                     init_expr,
                 };
-
                 // insert into registry
                 self.var_map
                     .insert(var.ident.value.as_ref().unwrap().clone(), self.vars.len());
@@ -233,7 +239,20 @@ impl Checker {
                 // check intial expression
                 if let Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
-                    match self.check_assign(&var, &checked) {
+                    let var_data = ExprData {
+                        type_mode: {
+                            match &self.types.get(var.type_id).unwrap().form {
+                                TypeForm::Base { type_mode } => *type_mode,
+                                TypeForm::Struct { member_ids } => todo!(),
+                                TypeForm::Union {} => todo!(),
+                            }
+                        },
+                        addr_mode: var.addr_mode,
+                        form: ExprForm::Variable {
+                            ptr: self.new_nonnull(&var)?,
+                        },
+                    };
+                    match self.check_type_equivalence(&var_data, &checked) {
                         Ok(_) => (),
                         Err(e) => {
                             let er = err!(self, "INIT EXPR:\n{e}");
@@ -273,18 +292,17 @@ impl Checker {
                 ident,
                 args,
                 scope,
-                ret_type_tok,
+                return_tok,
+                return_addr_mode,
             } => {
-                // check all return's are valid
-
                 // check for name collisions
-                let ident_str = ident.value.as_ref().unwrap().as_str();
-                if self.fn_set.contains(ident_str) {
-                    return err!(self, "Duplicate definition of a Function: '{ident_str}'");
-                } else if self.type_map.contains_key(ident_str) {
+                let fn_ident = ident.value.as_ref().unwrap().as_str();
+                if self.fn_set.contains(fn_ident) {
+                    return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
+                } else if self.type_map.contains_key(fn_ident) {
                     return err!(
                         self,
-                        "Illegal Function name, Types are reserved: '{ident_str}'"
+                        "Illegal Function name, Types are reserved: '{fn_ident}'"
                     );
                 }
 
@@ -302,41 +320,84 @@ impl Checker {
 
                     // check valid arg types
                     self.get_type_id(arg.type_ident.value.as_ref().unwrap().as_str())?;
-
                     temp_vec.push(arg_ident);
                 }
 
-                let ret_ident_str = match ret_type_tok {
+                let ret_ident_str = match return_tok {
                     Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
                     None => "void",
                 };
-                let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
 
                 // check all paths have a return
-                match scope.stmts.last() {
-                    Some(stmt) => match stmt {
+                // .. iterate backwards up all stmts until a return is found.
+                // ... on an unconditional 'if' stmt e.g "if .. {} .. else {}", if one returns, both must
+                let var_count = self.vars.len();
+                let mut valid_return = false;
+                let mut stmts: Vec<NodeStmt> = Vec::new();
+
+                for stmt in scope.stmts.into_iter().rev() {
+                    let checked = self.check_stmt(stmt)?;
+                    let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
+
+                    match checked {
                         NodeStmt::If {
                             scope, branches, ..
                         } => {
-                            // check all branches have a 'return'
+                            // check scope & branches for return
+                            // error if 'else' (always last) doesn't contain return, when other branches do!
                         }
-                        NodeStmt::Return(ref expr) => match expr {
-                            Some(expr) => {
-                                let return_type = self.check_expr(expr)?;
-                                self.
+                        // For non-void return statements.
+                        NodeStmt::Return(expr) if expr.is_some() => {
+                            // check for void return mismatch
+                            if return_tok.is_none() {
+                                return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'void'");
+                            } else if return_addr_mode.is_none() {
+                                return err!(self, "Mismatched function and return types, '{return_type:#?}'\n .. \n'void'");
                             }
-                            None if ret_type_tok.is_none() => (),
-                            None => {
+
+                            let expr = expr.unwrap();
+                            let expr_type_data = self.check_expr(&expr)?;
+
+                            if expr_type_data.addr_mode != return_addr_mode.unwrap() {
+                                return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
+                            }
+
+                            // Check Type Mode
+                            let return_type_mode = match &return_type.form {
+                                TypeForm::Base { type_mode } => *type_mode,
+                                TypeForm::Struct { member_ids } => todo!("fn return struct"),
+                                TypeForm::Union {} => todo!("fn return union"),
+                            };
+
+                            let return_type_data = ExprData {
+                                type_mode: return_type_mode,
+                                addr_mode: return_addr_mode.unwrap(),
+                                form: ExprForm::Expr {
+                                    inherited_width: return_type.width,
+                                },
+                            };
+                            self.check_type_equivalence(&return_type_data, &expr_type_data)?;
+                            valid_return = true;
+                        }
+                        NodeStmt::Return(expr) => {
+                            if let Some(tok) = return_tok {
                                 return err!(
-                                "Mismatched function and return type, '{ret_ident_str}' .. 'void'"
-                            )
+                                    self,
+                                    "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
+                                );
                             }
-                        },
-                        _ => return err!("Not all paths return in '{ident_str}'"),
-                    },
-                    None if ret_type_tok.is_none() => (), // no return needed for a void function
-                    None => return err!("Non-void function requires a return"),
-                };
+                            valid_return = true;
+                        }
+                        _ => todo!(),
+                    }
+
+                    // stmts.push(checked_stmt);
+                }
+
+                if !valid_return {
+                    return err!("Not all code paths return in '{fn_ident}'");
+                }
+                stmts.reverse(); // iterated in reverse, so must flip order back
 
                 return Ok(NodeStmt::FnSemantics(SemFn {}));
             }
@@ -382,7 +443,7 @@ impl Checker {
                     return err!(self, "Re-assignment of a Constant:\n{var:#?}");
                 }
                 let checked = self.check_expr(expr)?;
-                self.check_assign(var, &checked)?;
+                self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
             }
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
@@ -446,7 +507,7 @@ impl Checker {
                 }
 
                 let err_msg = format!("Expr of different Type! => {ldata:#?}\n.. {rdata:#?}");
-                self.check_type_mode(&ldata, &rdata, &err_msg)?;
+                self.check_type_mode(ldata.type_mode, rdata.type_mode, &err_msg)?;
 
                 // cmp        type, type => bool
                 // logical    bool, bool => bool
@@ -597,76 +658,128 @@ impl Checker {
         }
     }
 
-    fn check_assign(&self, var: &SemVariable, checked: &ExprData) -> Result<(), String> {
+    // AddrMode, TypeMode, Width
+    fn check_type_equivalence(
+        &self,
+        assigner: &ExprData,
+        assignee: &ExprData,
+    ) -> Result<(), String> {
         // Check Addressing Mode
-        if var.addr_mode != checked.addr_mode {
+        if assigner.addr_mode != assignee.addr_mode {
             return err!(
                 self,
-                "Expr of different AddrMode! {:?} vs {:?} =>\n{var:#?}\n.. {checked:#?}",
-                var.addr_mode,
-                checked.addr_mode
+                "Expr of different AddrMode! {:?} vs {:?} =>\n{assigner:#?}\n.. {assignee:#?}",
+                assigner.addr_mode,
+                assignee.addr_mode
             );
         }
 
-        // Check Type
-        match &self.types.get(var.type_id).unwrap().form {
-            TypeForm::Base {
-                type_mode: var_type_mode,
-            } => {
-                let msg = format!("Expr of different Type! =>\n{var:#?}\n.. {checked:#?}");
-                let temp = ExprData {
-                    type_mode: *var_type_mode,
-                    addr_mode: var.addr_mode,
-                    form: ExprForm::Variable {
-                        ptr: self.new_nonnull(var)?,
-                    },
-                };
-                self.check_type_mode(&temp, &checked, msg.as_str())?;
-            }
-            TypeForm::Struct { .. } => {
-                todo!("Struct semantics un-implemented")
-            }
-            TypeForm::Union {} => todo!("Union semantics un-implemented"),
-        }
+        // Check Type Mode
+        let msg = format!("Expr of different Type! =>\n{assigner:#?}\n.. {assignee:#?}");
+        self.check_type_mode(assigner.type_mode, assignee.type_mode, &msg)?;
 
         // Check for Type Narrowing
-        let expr_width = self.get_width(&checked.form);
-        if expr_width > var.width {
+        let assigner_width = self.get_width(&assigner.form);
+        let assignee_width = self.get_width(&assignee.form);
+        if assigner_width < assignee_width {
             return err!(
                 self,
-                "Expr of different width {expr_width} > {} =>\n{var:#?}\n.. {checked:#?}",
-                var.width
+                "Illegal Type Narrowing, Assigner is wider than Assignee, '{assigner_width}' < '{assignee_width}' =>\n{assigner:#?}\n.. {assignee:#?}"
             );
         }
         Ok(())
     }
 
-    fn check_type_mode(&self, data1: &ExprData, data2: &ExprData, msg: &str) -> Result<(), String> {
-        if data1 == data2 {
+    /*
+       fn check_assign(&self, var: &SemVariable, checked: &ExprData) -> Result<(), String> {
+           // Check Addressing Mode
+           if var.addr_mode != checked.addr_mode {
+               return err!(
+                   self,
+                   "Expr of different AddrMode! {:?} vs {:?} =>\n{var:#?}\n.. {checked:#?}",
+                   var.addr_mode,
+                   checked.addr_mode
+               );
+           }
+
+           // Check Type
+           match &self.types.get(var.type_id).unwrap().form {
+               TypeForm::Base {
+                   type_mode: var_type_mode,
+               } => {
+                   let msg = format!("Expr of different Type! =>\n{var:#?}\n.. {checked:#?}");
+                   let temp = ExprData {
+                       type_mode: *var_type_mode,
+                       addr_mode: var.addr_mode,
+                       form: ExprForm::Variable {
+                           ptr: self.new_nonnull(var)?,
+                       },
+                   };
+                   self.check_type_mode(temp.type_mode, checked.type_mode, msg.as_str())?;
+               }
+               TypeForm::Struct { .. } => {
+                   todo!("Struct semantics un-implemented")
+               }
+               TypeForm::Union {} => todo!("Union semantics un-implemented"),
+           }
+
+
+           // Check for Type Narrowing
+           let expr_width = self.get_width(&checked.form);
+           if expr_width > var.width {
+               return err!(
+                   self,
+                   "Expr of different width {expr_width} > {} =>\n{var:#?}\n.. {checked:#?}",
+                   var.width
+               );
+           }
+           Ok(())
+       }
+    */
+
+    fn get_exprdata(&self, var: &SemVariable) -> Result<ExprData, String> {
+        match &self.types.get(var.type_id).unwrap().form {
+            TypeForm::Base { type_mode } => Ok(ExprData {
+                type_mode: *type_mode,
+                addr_mode: var.addr_mode,
+                form: ExprForm::Variable {
+                    ptr: self.new_nonnull(var)?,
+                },
+            }),
+            TypeForm::Struct { .. } => {
+                todo!("Struct type mode")
+            }
+            TypeForm::Union {} => todo!("Union type mode"),
+        }
+    }
+
+    fn check_type_mode(
+        &self,
+        assigner: TypeMode,
+        assignee: TypeMode,
+        msg: &str,
+    ) -> Result<(), String> {
+        if assigner == assignee {
             return Ok(());
         }
 
-        // Check sign equality
-        let sign_match = match data1.type_mode {
+        // Check integer sign equality
+        let sign_match = match assigner {
             TypeMode::IntLit => return Ok(()),
-            TypeMode::Int { signed: sign1 } | TypeMode::Float { signed: sign1 } => {
-                match data2.type_mode {
-                    TypeMode::IntLit => return Ok(()),
-                    TypeMode::Int { signed: sign2 } | TypeMode::Float { signed: sign2 } => {
-                        sign1 == sign2
-                    }
-                    TypeMode::Bool | TypeMode::Void => false,
+            TypeMode::Int { signed: sign1 } | TypeMode::Float { signed: sign1 } => match assignee {
+                TypeMode::IntLit => return Ok(()),
+                TypeMode::Int { signed: sign2 } | TypeMode::Float { signed: sign2 } => {
+                    sign1 == sign2
                 }
-            }
+                TypeMode::Bool | TypeMode::Void => false,
+            },
             TypeMode::Bool | TypeMode::Void => false,
         };
 
         if !sign_match {
             return err!(
                 self,
-                "Expr sign mismatch! {:?} vs {:?} => {msg}",
-                data1.type_mode,
-                data2.type_mode
+                "Expr sign mismatch! {assigner:?} vs {assignee:?} => {msg}"
             );
         }
         Ok(())
@@ -733,13 +846,5 @@ fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> Type {
         ident: ident.to_string(),
         width,
         form: TypeForm::Base { type_mode },
-    }
-}
-
-fn new_struct(ident: &str, width: usize, member_ids: Vec<usize>) -> Type {
-    Type {
-        ident: ident.to_string(),
-        width,
-        form: TypeForm::Struct { member_ids },
     }
 }

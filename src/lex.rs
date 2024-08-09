@@ -1,5 +1,6 @@
 use crate::{debug, err};
 use bitflags::bitflags;
+use core::fmt;
 use std::collections::{HashMap, VecDeque};
 
 const LOG_DEBUG_INFO: bool = false;
@@ -20,6 +21,7 @@ pub enum TokenKind {
     CloseMultiComment, // "*/"
 
     // Operators
+    Array,     // "[]"
     Ptr,       // "^"
     Eq,        // "="
     Add,       // "+"
@@ -69,6 +71,7 @@ pub enum TokenKind {
     Fn,
     Arrow,
     Return,
+
     // Primitive Constructs
     Ident,
     IntLit,
@@ -209,7 +212,7 @@ enum BufKind {
     NewLine,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
     pub value: Option<String>,
@@ -448,5 +451,23 @@ impl Lexer {
             debug!(self, "consuming '{}'", char as char);
         }
         char
+    }
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            writeln!(f, "Token {{")?;
+            writeln!(f, "    kind: {:?}", self.kind)?;
+            writeln!(f, "    value: {:?}", self.value)?;
+            writeln!(f, "    pos: ({}, {})", self.pos.1 + 1, self.pos.0 + 1)?;
+            write!(f, "}}")
+        } else {
+            f.debug_struct("Token")
+                .field("kind", &self.kind)
+                .field("value", &self.value)
+                .field("pos", &self.pos)
+                .finish()
+        }
     }
 }

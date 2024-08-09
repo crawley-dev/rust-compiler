@@ -93,23 +93,22 @@ impl Generator {
                 {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
-                let width = sem_var.width;
                 let name = sem_var.ident.clone();
                 let var = GenVariable {
                     ident: sem_var.ident,
-                    stk_index: self.stk_pos + width,
+                    stk_index: self.stk_pos + sem_var.width,
                     type_id: sem_var.type_id,
-                    width,
+                    width: sem_var.width,
                 };
 
-                self.stk_pos += width;
+                self.stk_pos += sem_var.width;
                 self.var_map
                     .insert(var.ident.value.as_ref().unwrap().clone(), self.stack.len());
                 self.stack.push(var);
 
                 let mut str = String::new();
                 if let Some(expr) = sem_var.init_expr {
-                    let stk_pos = self.gen_stk_access(self.stk_pos, width);
+                    let stk_pos = self.gen_stk_access(self.stk_pos, sem_var.width);
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
                 str.pop(); // remove '\n'

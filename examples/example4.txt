@@ -1,8 +1,12 @@
 fn test(arg1: i32, arg2: usize, arg3: u8) -> i32 {
-    //exit(5); 
-    return 5;
+    if arg2 == 5 {
+        return arg1;
+    } else if arg3 == 10 {
+        return arg1 * 2;
+    }
 }
 
+/*
 fn void_test() {
     return;
 }

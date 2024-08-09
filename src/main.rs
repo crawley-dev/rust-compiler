@@ -123,17 +123,18 @@ fn print_tokens(tokens: &VecDeque<Token>) {
 
 fn get_file_name() -> String {
     let args: String = env::args().skip(1).take(1).collect();
+    let file_name = args.split('.').take(1).collect::<String>();
     let extension = args.split('.').skip(1).take(1).collect::<String>();
     if args.is_empty() {
         panic!("[COMPILER] No file path given!\n");
     } else if extension != "txt" {
         panic!("[COMPILER] Invalid file extension, '.txt' only\n")
     }
-    args
+    file_name
 }
 
 fn get_file_contents(file_name: &str) -> Vec<String> {
-    let file = fs::File::open(format!("./examples/{file_name}"))
+    let file = fs::File::open(format!("./examples/{file_name}.txt"))
         .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
     BufReader::new(file)
         .lines()

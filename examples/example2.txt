@@ -5,7 +5,7 @@ let num: u16 = 5 + 20 - 5;
     //let x: u8 = (10 - 2) * 3 + 5 / (3 + 2);
 }
 let mut test: u8 = 6;
-if test = 5 {
+if test == 5 {
     exit(5);
 }
 exit(num);
