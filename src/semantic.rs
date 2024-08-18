@@ -140,11 +140,6 @@ pub struct HandoffData {
     pub type_map: HashMap<String, usize>,
 }
 
-// What must persist across recursion:
-// - valid_return
-// - return_tok
-// - return_addr_mode
-
 struct SemContext {
     loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
     in_function: bool,
@@ -291,8 +286,6 @@ impl Checker {
                 return_tok,
                 return_addr_mode,
             } => {
-                self.ctx.in_function = true;
-
                 // check for name collisions
                 let fn_ident = ident.value.as_ref().unwrap().as_str();
                 if self.fn_set.contains(fn_ident) {
@@ -304,6 +297,8 @@ impl Checker {
                     );
                 }
 
+                // check valid arg types
+                // TODO(TOM): Add args to vars when called!
                 let mut temp_vec = Vec::new();
                 for arg in &args {
                     let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
@@ -315,31 +310,38 @@ impl Checker {
                         );
                     }
 
-                    // check valid arg types
                     self.get_type_id(arg.type_ident.value.as_ref().unwrap().as_str())?;
                     temp_vec.push(arg_ident);
                 }
 
-                let return_ident = match self.ctx.return_tok {
-                    Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
-                    None => unreachable!(),
-                };
-                let type_id = self.get_type_id(return_ident)?;
-                let return_type = self.types.get(type_id).unwrap();
-                let return_type_mode = match &return_type.form {
-                    TypeForm::Base { type_mode } => *type_mode,
-                    TypeForm::Struct { member_ids } => todo!("fn return struct"),
-                    TypeForm::Union {} => todo!("fn return union"),
-                };
+                self.ctx.in_function = true;
+                self.ctx.return_tok = return_tok;
 
-                self.ctx.return_type_id = Some(type_id);
-                self.ctx.return_type_data = Some(ExprData {
-                    type_mode: return_type_mode,
-                    addr_mode: return_addr_mode.unwrap(),
-                    form: ExprForm::Expr {
-                        inherited_width: return_type.width,
-                    },
-                });
+                match self.ctx.return_tok {
+                    Some(ref ident) => {
+                        let return_ident = ident.value.as_ref().unwrap().as_str();
+                        let return_type_id = self.get_type_id(return_ident)?;
+                        let return_type = self.types.get(return_type_id).unwrap();
+                        let return_type_mode = match &return_type.form {
+                            TypeForm::Base { type_mode } => *type_mode,
+                            TypeForm::Struct { member_ids } => todo!("fn return struct"),
+                            TypeForm::Union {} => todo!("fn return union"),
+                        };
+
+                        self.ctx.return_type_id = Some(return_type_id);
+                        self.ctx.return_type_data = Some(ExprData {
+                            type_mode: return_type_mode,
+                            addr_mode: return_addr_mode.unwrap(),
+                            form: ExprForm::Expr {
+                                inherited_width: return_type.width,
+                            },
+                        });
+                    }
+                    None => {
+                        self.ctx.return_type_id = None;
+                        self.ctx.return_type_data = None;
+                    }
+                }
 
                 // check all paths have a return:
                 // .. iterate backwards up all stmts until a return is found.
@@ -356,6 +358,7 @@ impl Checker {
 
                 self.ctx.in_function = false;
 
+                // TODO(TOM): Add fields to 'SemFn' Struct
                 return Ok(NodeStmt::FnSemantics(SemFn {}));
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
@@ -420,17 +423,41 @@ impl Checker {
                 }
 
                 let checked_scope = self.check_scope(scope)?;
-                if self.ctx.in_function {
-                    let found_return = checked_scope.stmts.iter().find(|stmt| match stmt {
-                        NodeStmt::Return(_) => true,
-                        _ => false,
-                    });
-                }
-
                 let mut new_branches = Vec::new();
                 for branch in branches {
                     new_branches.push(self.check_stmt(branch)?);
                 }
+
+                // early return
+                if !self.ctx.in_function {
+                    return Ok(NodeStmt::If {
+                        condition,
+                        scope: checked_scope,
+                        branches: new_branches,
+                    });
+                }
+
+                // if a return statement is present within the 'if' scope:
+                // - check for an 'else'.
+                //  - if present, a 'return' MUST be present.
+                let found_return = checked_scope.stmts.iter().rev().find(|stmt| match stmt {
+                    NodeStmt::ReturnSemantics { .. } => true,
+                    _ => false,
+                });
+
+                match new_branches.last() {
+                    Some(NodeStmt::Else(scope)) => {
+                        let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
+                            NodeStmt::ReturnSemantics { .. } => true,
+                            _ => false,
+                        });
+                        if found_return != found_return_else {
+                            return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
+                        }
+                    }
+                    _ => (),
+                }
+
                 return Ok(NodeStmt::If {
                     condition,
                     scope: checked_scope,
@@ -683,11 +710,17 @@ impl Checker {
                     TypeForm::Union {} => err!(self, "Union semantics un-implemented"),
                 }
             }
-            NodeTerm::IntLit(_) => Ok(ExprData {
-                type_mode: TypeMode::IntLit,
-                addr_mode: AddressingMode::Primitive,
-                form: ExprForm::Expr { inherited_width: 0 },
-            }),
+            NodeTerm::IntLit(tok) => {
+                unsafe {
+                    let mut_self = self as *const Checker as *mut Checker;
+                    (*mut_self).pos = tok.pos;
+                }
+                Ok(ExprData {
+                    type_mode: TypeMode::IntLit,
+                    addr_mode: AddressingMode::Primitive,
+                    form: ExprForm::Expr { inherited_width: 0 },
+                })
+            }
         }
     }
 

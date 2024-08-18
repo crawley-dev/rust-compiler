@@ -25,6 +25,7 @@ fn main() {
     let contents = get_file_contents(&file_name);
     // println!("\n\n{:#?}\n\n", contents);
 
+    println!("\n");
     let tokens = Lexer::new(contents).tokenize();
     // print_tokens(&tokens);
     let ast = parse(tokens);
@@ -43,8 +44,8 @@ fn parse(tokens: VecDeque<Token>) -> AST {
     let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
         Ok(t) => t,
-        Err(e) => panic!("\n{e}\n"),
-        // Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
+        // Err(e) => panic!("\n{e}\n"),
+        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
 
