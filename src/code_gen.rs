@@ -161,7 +161,7 @@ impl Generator {
             NodeStmt::FnSemantics(sem_fn) => {
                 todo!("fn codegen")
             }
-            NodeStmt::Return(expr) => {
+            NodeStmt::ReturnSemantics { expr } => {
                 todo!("return codegen")
             }
             NodeStmt::ElseIf { condition, scope } => {
@@ -211,7 +211,7 @@ impl Generator {
                 "{SPACE}jmp {label} ; break\n",
                 label = self.ctx.loop_end_label.as_str()
             )),
-            NodeStmt::VarDecl { .. } | NodeStmt::FnDecl { .. } => {
+            NodeStmt::VarDecl { .. } | NodeStmt::FnDecl { .. } | NodeStmt::Return { .. } => {
                 err!("Found {stmt:#?}.. shouldn't have.")
             }
         }

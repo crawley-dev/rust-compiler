@@ -70,6 +70,9 @@ pub enum NodeStmt {
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(SemVariable),
     FnSemantics(SemFn),
+    ReturnSemantics {
+        expr: Option<ExprData>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

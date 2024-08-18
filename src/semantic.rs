@@ -93,7 +93,7 @@ pub enum TypeForm {
     }, // Union: a group of types that share the same storage.
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
     Expr { inherited_width: usize },
@@ -105,7 +105,7 @@ pub enum ExprForm {
 }
 
 // TODO(TOM): re-work to use TypeForm..
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExprData {
     // pub type_form: TypeForm,
     pub type_mode: TypeMode,
@@ -140,8 +140,22 @@ pub struct HandoffData {
     pub type_map: HashMap<String, usize>,
 }
 
+// What must persist across recursion:
+// - valid_return
+// - return_tok
+// - return_addr_mode
+
+struct SemContext {
+    loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
+    in_function: bool,
+    valid_return: bool,
+    return_tok: Option<Token>,
+    return_type_id: Option<usize>,
+    return_type_data: Option<ExprData>,
+}
+
 pub struct Checker {
-    loop_count: isize, // isize not usize for getting useful error messages in debug build, instead of oob error
+    ctx: SemContext,
     pos: (u32, u32),
     types: Vec<Type>,
     vars: Vec<SemVariable>,
@@ -169,7 +183,14 @@ impl Checker {
             new_base("f64", PTR_WIDTH, TypeMode::Int { signed: true }),
         ]);
         let mut checker = Checker {
-            loop_count: 0,
+            ctx: SemContext {
+                loop_count: 0,
+                in_function: false,
+                valid_return: false,
+                return_tok: None,
+                return_type_id: None,
+                return_type_data: None,
+            },
             pos: (0, 0),
             vars: Vec::new(),
             var_map: HashMap::new(),
@@ -263,31 +284,6 @@ impl Checker {
                 }
                 return Ok(NodeStmt::VarSemantics(var));
             }
-            NodeStmt::If {
-                condition,
-                scope,
-                branches,
-            } => {
-                let checked = self.check_expr(&condition)?;
-                match checked.type_mode {
-                    TypeMode::Bool => (),
-                    _ => {
-                        return err!(
-                            self,
-                            "'If' statement condition not 'boolean'\n{condition:#?}"
-                        )
-                    }
-                }
-                let mut new_branches = Vec::new();
-                for branch in branches {
-                    new_branches.push(self.check_stmt(branch)?);
-                }
-                return Ok(NodeStmt::If {
-                    condition,
-                    scope: self.check_scope(scope)?,
-                    branches: new_branches,
-                });
-            }
             NodeStmt::FnDecl {
                 ident,
                 args,
@@ -295,6 +291,8 @@ impl Checker {
                 return_tok,
                 return_addr_mode,
             } => {
+                self.ctx.in_function = true;
+
                 // check for name collisions
                 let fn_ident = ident.value.as_ref().unwrap().as_str();
                 if self.fn_set.contains(fn_ident) {
@@ -306,7 +304,6 @@ impl Checker {
                     );
                 }
 
-                // check unique arg names, vec faster
                 let mut temp_vec = Vec::new();
                 for arg in &args {
                     let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
@@ -323,90 +320,123 @@ impl Checker {
                     temp_vec.push(arg_ident);
                 }
 
-                let ret_ident_str = match return_tok {
+                let return_ident = match self.ctx.return_tok {
                     Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
-                    None => "void",
+                    None => unreachable!(),
+                };
+                let type_id = self.get_type_id(return_ident)?;
+                let return_type = self.types.get(type_id).unwrap();
+                let return_type_mode = match &return_type.form {
+                    TypeForm::Base { type_mode } => *type_mode,
+                    TypeForm::Struct { member_ids } => todo!("fn return struct"),
+                    TypeForm::Union {} => todo!("fn return union"),
                 };
 
-                // check all paths have a return
+                self.ctx.return_type_id = Some(type_id);
+                self.ctx.return_type_data = Some(ExprData {
+                    type_mode: return_type_mode,
+                    addr_mode: return_addr_mode.unwrap(),
+                    form: ExprForm::Expr {
+                        inherited_width: return_type.width,
+                    },
+                });
+
+                // check all paths have a return:
                 // .. iterate backwards up all stmts until a return is found.
-                // ... on an unconditional 'if' stmt e.g "if .. {} .. else {}", if one returns, both must
-                let var_count = self.vars.len();
-                let mut valid_return = false;
-                let mut stmts: Vec<NodeStmt> = Vec::new();
-
+                let mut checked_stmts: Vec<NodeStmt> = Vec::new();
                 for stmt in scope.stmts.into_iter().rev() {
-                    let checked = self.check_stmt(stmt)?;
-                    let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
-
-                    match checked {
-                        NodeStmt::If {
-                            scope, branches, ..
-                        } => {
-                            // check scope & branches for return
-                            // error if 'else' (always last) doesn't contain return, when other branches do!
-                        }
-                        // For non-void return statements.
-                        NodeStmt::Return(expr) if expr.is_some() => {
-                            // check for void return mismatch
-                            if return_tok.is_none() {
-                                return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'void'");
-                            } else if return_addr_mode.is_none() {
-                                return err!(self, "Mismatched function and return types, '{return_type:#?}'\n .. \n'void'");
-                            }
-
-                            let expr = expr.unwrap();
-                            let expr_type_data = self.check_expr(&expr)?;
-
-                            if expr_type_data.addr_mode != return_addr_mode.unwrap() {
-                                return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
-                            }
-
-                            // Check Type Mode
-                            let return_type_mode = match &return_type.form {
-                                TypeForm::Base { type_mode } => *type_mode,
-                                TypeForm::Struct { member_ids } => todo!("fn return struct"),
-                                TypeForm::Union {} => todo!("fn return union"),
-                            };
-
-                            let return_type_data = ExprData {
-                                type_mode: return_type_mode,
-                                addr_mode: return_addr_mode.unwrap(),
-                                form: ExprForm::Expr {
-                                    inherited_width: return_type.width,
-                                },
-                            };
-                            self.check_type_equivalence(&return_type_data, &expr_type_data)?;
-                            valid_return = true;
-                        }
-                        NodeStmt::Return(expr) => {
-                            if let Some(tok) = return_tok {
-                                return err!(
-                                    self,
-                                    "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
-                                );
-                            }
-                            valid_return = true;
-                        }
-                        _ => todo!(),
-                    }
-
-                    // stmts.push(checked_stmt);
+                    let checked_stmt = self.check_stmt(stmt)?;
+                    checked_stmts.push(checked_stmt);
                 }
 
-                if !valid_return {
+                if !self.ctx.valid_return {
                     return err!("Not all code paths return in '{fn_ident}'");
                 }
-                stmts.reverse(); // iterated in reverse, so must flip order back
+                checked_stmts.reverse(); // iterated in reverse, so must flip order back
+
+                self.ctx.in_function = false;
 
                 return Ok(NodeStmt::FnSemantics(SemFn {}));
             }
-            NodeStmt::Return(ref expr) => match expr {
-                Some(expr) => {
-                    self.check_expr(&expr)?;
+            NodeStmt::Return(ref expr) if !self.ctx.in_function => {
+                return err!("not expected outside a function declaration.")
+            }
+            NodeStmt::Return(expr) if expr.is_some() => {
+                let ret_ident_str = match self.ctx.return_tok {
+                    Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
+                    None => unreachable!(),
+                };
+                let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
+
+                // check for void return mismatch
+                if self.ctx.return_tok.is_none() {
+                    return err!(
+                        self,
+                        "Mismatched function and return type, '{return_type:#?}'\n .. \n'void'"
+                    );
+                } else if self.ctx.return_type_data.is_none() {
+                    return err!(
+                        self,
+                        "Mismatched function and return types, '{return_type:#?}'\n .. \n'void'"
+                    );
                 }
-                None => (),
-            },
+                let expr = expr.unwrap();
+                let expr_type_data = self.check_expr(&expr)?;
+                if expr_type_data.addr_mode != self.ctx.return_type_data.as_ref().unwrap().addr_mode
+                {
+                    return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
+                }
+                self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
+
+                self.ctx.valid_return = true;
+                return Ok(NodeStmt::ReturnSemantics {
+                    expr: Some(expr_type_data),
+                });
+            }
+            NodeStmt::Return(expr) => {
+                if let Some(tok) = &self.ctx.return_tok {
+                    return err!(
+                        self,
+                        "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
+                    );
+                }
+                self.ctx.valid_return = true;
+                return Ok(NodeStmt::ReturnSemantics { expr: None });
+            }
+            NodeStmt::If {
+                condition,
+                scope,
+                branches,
+            } => {
+                let checked = self.check_expr(&condition)?;
+                match checked.type_mode {
+                    TypeMode::Bool => (),
+                    _ => {
+                        return err!(
+                            self,
+                            "'If' statement condition not 'boolean'\n{condition:#?}"
+                        )
+                    }
+                }
+
+                let checked_scope = self.check_scope(scope)?;
+                if self.ctx.in_function {
+                    let found_return = checked_scope.stmts.iter().find(|stmt| match stmt {
+                        NodeStmt::Return(_) => true,
+                        _ => false,
+                    });
+                }
+
+                let mut new_branches = Vec::new();
+                for branch in branches {
+                    new_branches.push(self.check_stmt(branch)?);
+                }
+                return Ok(NodeStmt::If {
+                    condition,
+                    scope: checked_scope,
+                    branches: new_branches,
+                });
+            }
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
                 match checked.type_mode {
@@ -425,10 +455,10 @@ impl Checker {
             }
             NodeStmt::Else(scope) => return Ok(NodeStmt::Else(self.check_scope(scope)?)),
             NodeStmt::While { condition, scope } => {
-                self.loop_count += 1;
+                self.ctx.loop_count += 1;
                 self.check_expr(&condition)?;
                 let new_scope = self.check_scope(scope)?;
-                self.loop_count -= 1;
+                self.ctx.loop_count -= 1;
                 return Ok(NodeStmt::While {
                     condition,
                     scope: new_scope,
@@ -445,6 +475,7 @@ impl Checker {
                 let checked = self.check_expr(expr)?;
                 self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
             }
+
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
             }
@@ -452,11 +483,13 @@ impl Checker {
                 return Ok(NodeStmt::NakedScope(self.check_scope(scope)?));
             }
             NodeStmt::Break => {
-                if self.loop_count <= 0 {
+                if self.ctx.loop_count <= 0 {
                     return err!(self, "Not inside a loop! cannot break");
                 }
             }
-            NodeStmt::VarSemantics { .. } | NodeStmt::FnSemantics(_) => {
+            NodeStmt::VarSemantics { .. }
+            | NodeStmt::FnSemantics(_)
+            | NodeStmt::ReturnSemantics { .. } => {
                 return err!(self, "Found {stmt:#?}.. shouldn't have.");
             }
         };
@@ -848,3 +881,33 @@ fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> Type {
         form: TypeForm::Base { type_mode },
     }
 }
+
+/*
+NodeStmt::If {
+               condition,
+               scope,
+               branches,
+           } if self.ctx.in_function => {
+               // ... on an unconditional 'if' stmt e.g "if .. {} .. else {}", if one returns, both must
+
+               // check for a return in 'if' body
+               let checked_scope = self.check_scope(scope)?;
+               let found_return = checked_scope.stmts.iter().find(|stmt| match stmt {
+                   NodeStmt::Return(_) => true,
+                   _ => false,
+               });
+
+               if !found_return {
+
+               }
+
+               // 'else' will always appear last, check for it!
+               if let Some(NodeStmt::Else(scope)) = branches.last() {
+                   for stmt in scope.stmts {
+                       // check for a return
+                       match stmt {
+                           _ => self.check_stmt(stmt),
+                       }
+                   }
+               }
+*/
