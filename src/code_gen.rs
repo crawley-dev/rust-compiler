@@ -10,10 +10,9 @@ use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{HandoffData, Type},
-    SemFn,
+    semantic::{Checker, SemFn, SemVariable, Type},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
@@ -35,24 +34,26 @@ struct CodeGenContext {
 }
 
 pub struct Generator {
+    ast: AST,
     stk_pos: usize,
     pos: (u32, u32),
-    ast: AST,
     types: Vec<Type>,
-    type_map: HashMap<String, usize>,
     ctx: CodeGenContext,
+    fn_set: HashSet<String>,
+    type_map: HashMap<String, usize>,
     stack: Vec<GenVariable>,         // stack contains variables,
     var_map: HashMap<String, usize>, // var_map contains index to variable
 }
 
 impl Generator {
-    pub fn new(data: HandoffData) -> Generator {
+    pub fn new(data: Checker) -> Generator {
         Generator {
             pos: (0, 0),
             stk_pos: 0,
             ast: data.ast,
             types: data.types,
             type_map: data.type_map,
+            fn_set: data.fn_set,
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: CodeGenContext {

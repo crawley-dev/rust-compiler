@@ -289,7 +289,7 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!(self, "No token to parse near =>\n{lhs:#?}"), // TODO(TOM): add token idx
+                None => return err!(self, "No token to parse near =>\n{lhs:#?}"),
             };
             // unary expressions don't recurse as no rhs, only iterate so
             let bin_prec = op.get_prec_binary();

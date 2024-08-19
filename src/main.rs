@@ -43,23 +43,22 @@ fn parse(tokens: VecDeque<Token>) -> AST {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
-        Ok(t) => t,
-        // Err(e) => panic!("\n{e}\n"),
-        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
+        Ok(ast) => ast,
+        Err(e) => panic!("\n{e}\n"),
+        // Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
 
-fn semantic_check(ast: AST) -> HandoffData {
+fn semantic_check(ast: AST) -> Checker {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     match semantic::Checker::check_ast(ast.clone()) {
-        Ok(info) => info,
-        Err(e) => {
-            panic!("{ast:#?}\n\n{e}\n")
-        }
+        Ok(data) => data,
+        Err(e) => panic!("\n{e}\n"),
+        // Err(e) =>  panic!("{ast:#?}\n\n{e}\n"),
     }
 }
 
-fn code_gen(data: HandoffData, file_name: String) {
+fn code_gen(data: Checker, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(data);
     match generator.gen_asm() {

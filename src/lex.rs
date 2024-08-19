@@ -84,8 +84,6 @@ pub enum Associativity {
     None,
 }
 
-// TODO(TOM): Give TokenKind attributes, akin to impl, instead of some match statements
-// .. declare all attributes in bitflag, in one place, i.e ATTR::ASSIGN | ATTR::ARITH
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct TokenFlags: u8 {

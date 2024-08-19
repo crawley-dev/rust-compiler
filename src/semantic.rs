@@ -130,14 +130,14 @@ pub struct SemVariable {
     pub init_expr: Option<NodeExpr>,
 }
 
+// need name, return semantics, arg semantics
 #[derive(Debug, Clone, PartialEq)]
-pub struct SemFn {}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct HandoffData {
-    pub ast: AST,
-    pub types: Vec<Type>,
-    pub type_map: HashMap<String, usize>,
+pub struct SemFn {
+    pub ident: Token,
+    pub scope: NodeScope,
+    pub arg_semantics: Vec<SemVariable>, // treat like semantic variables ??
+    pub return_type_id: Option<usize>,
+    pub return_type_data: Option<ExprData>,
 }
 
 struct SemContext {
@@ -150,17 +150,18 @@ struct SemContext {
 }
 
 pub struct Checker {
+    pub ast: AST,
     ctx: SemContext,
     pos: (u32, u32),
-    types: Vec<Type>,
-    vars: Vec<SemVariable>,
-    fn_set: HashSet<String>,
-    var_map: HashMap<String, usize>,
-    type_map: HashMap<String, usize>,
+    pub types: Vec<Type>,
+    pub vars: Vec<SemVariable>,
+    pub fn_set: HashSet<String>,
+    pub var_map: HashMap<String, usize>,
+    pub type_map: HashMap<String, usize>,
 }
 
 impl Checker {
-    pub fn check_ast(ast: AST) -> Result<HandoffData, String> {
+    pub fn check_ast(ast: AST) -> Result<Checker, String> {
         let types = Vec::from([
             new_base("void", 0, TypeMode::Void),
             new_base("bool", 1, TypeMode::Bool),
@@ -178,6 +179,7 @@ impl Checker {
             new_base("f64", PTR_WIDTH, TypeMode::Int { signed: true }),
         ]);
         let mut checker = Checker {
+            ast: AST { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
                 in_function: false,
@@ -202,12 +204,9 @@ impl Checker {
         for stmt in ast.stmts {
             sem_ast.stmts.push(checker.check_stmt(stmt)?);
         }
+        checker.ast = sem_ast;
 
-        Ok(HandoffData {
-            ast: sem_ast,
-            types: checker.types,
-            type_map: checker.type_map,
-        })
+        Ok(checker)
     }
 
     // Either early return a new statement if something changes, or return the original statement
@@ -279,6 +278,8 @@ impl Checker {
                 }
                 return Ok(NodeStmt::VarSemantics(var));
             }
+
+            // TODO(TOM): stack frames !! Functions don't inherit scopes!
             NodeStmt::FnDecl {
                 ident,
                 args,
@@ -345,21 +346,30 @@ impl Checker {
 
                 // check all paths have a return:
                 // .. iterate backwards up all stmts until a return is found.
-                let mut checked_stmts: Vec<NodeStmt> = Vec::new();
+                let mut checked_scope: Vec<NodeStmt> = Vec::new();
                 for stmt in scope.stmts.into_iter().rev() {
                     let checked_stmt = self.check_stmt(stmt)?;
-                    checked_stmts.push(checked_stmt);
+                    checked_scope.push(checked_stmt);
                 }
 
                 if !self.ctx.valid_return {
                     return err!("Not all code paths return in '{fn_ident}'");
                 }
-                checked_stmts.reverse(); // iterated in reverse, so must flip order back
+                checked_scope.reverse(); // iterated in reverse, so must flip order back
 
                 self.ctx.in_function = false;
 
                 // TODO(TOM): Add fields to 'SemFn' Struct
-                return Ok(NodeStmt::FnSemantics(SemFn {}));
+                return Ok(NodeStmt::FnSemantics(SemFn {
+                    ident,
+                    scope: NodeScope {
+                        stmts: checked_scope,
+                        inherits_stmts: false,
+                    },
+                    arg_semantics: vec![],
+                    return_type_id: self.ctx.return_type_id,
+                    return_type_data: self.ctx.return_type_data,
+                }));
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
                 return err!("not expected outside a function declaration.")
@@ -914,33 +924,3 @@ fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> Type {
         form: TypeForm::Base { type_mode },
     }
 }
-
-/*
-NodeStmt::If {
-               condition,
-               scope,
-               branches,
-           } if self.ctx.in_function => {
-               // ... on an unconditional 'if' stmt e.g "if .. {} .. else {}", if one returns, both must
-
-               // check for a return in 'if' body
-               let checked_scope = self.check_scope(scope)?;
-               let found_return = checked_scope.stmts.iter().find(|stmt| match stmt {
-                   NodeStmt::Return(_) => true,
-                   _ => false,
-               });
-
-               if !found_return {
-
-               }
-
-               // 'else' will always appear last, check for it!
-               if let Some(NodeStmt::Else(scope)) = branches.last() {
-                   for stmt in scope.stmts {
-                       // check for a return
-                       match stmt {
-                           _ => self.check_stmt(stmt),
-                       }
-                   }
-               }
-*/

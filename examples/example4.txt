@@ -1,5 +1,7 @@
+let test123: usize = 5;
+
 fn test(arg1: i32, arg2: usize, arg3: u8) -> i32 {
-    if 56 == 5 {
+    if test123 == 5 {
         return 10;
     } else if 7 == 10 {
         return 5 * 2;
