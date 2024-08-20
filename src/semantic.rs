@@ -125,7 +125,8 @@ pub struct SemVariable {
     pub ident: Token,
     pub mutable: bool,
     pub width: usize,
-    pub type_id: usize, // has TypeMode
+    pub scope_id: usize,
+    pub type_id: usize, // Can get a TypeMode from this
     pub addr_mode: AddressingMode,
     pub init_expr: Option<NodeExpr>,
 }
@@ -142,6 +143,8 @@ pub struct SemFn {
 
 struct SemContext {
     loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
+    cur_scope_id: usize,
+    scope_inherit_bounds_id: Option<usize>,
     in_function: bool,
     valid_return: bool,
     return_tok: Option<Token>,
@@ -182,6 +185,8 @@ impl Checker {
             ast: AST { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
+                cur_scope_id: 0,
+                scope_inherit_bounds_id: None,
                 in_function: false,
                 valid_return: false,
                 return_tok: None,
@@ -242,6 +247,7 @@ impl Checker {
                     ident,
                     mutable,
                     width,
+                    scope_id: self.ctx.cur_scope_id,
                     type_id,
                     addr_mode: type_addr_mode,
                     init_expr,
@@ -267,18 +273,10 @@ impl Checker {
                             ptr: self.new_nonnull(&var)?,
                         },
                     };
-                    match self.check_type_equivalence(&var_data, &checked) {
-                        Ok(_) => (),
-                        Err(e) => {
-                            let er = err!(self, "INIT EXPR:\n{e}");
-                            debug!(self, "{}", er.as_ref().unwrap_err());
-                            return er;
-                        }
-                    }
+                    self.check_type_equivalence(&var_data, &checked)?;
                 }
                 return Ok(NodeStmt::VarSemantics(var));
             }
-
             // TODO(TOM): stack frames !! Functions don't inherit scopes!
             NodeStmt::FnDecl {
                 ident,
@@ -344,35 +342,41 @@ impl Checker {
                     }
                 }
 
-                // check all paths have a return:
-                // .. iterate backwards up all stmts until a return is found.
-                let mut checked_scope: Vec<NodeStmt> = Vec::new();
-                for stmt in scope.stmts.into_iter().rev() {
-                    let checked_stmt = self.check_stmt(stmt)?;
-                    checked_scope.push(checked_stmt);
-                }
+                // I truly hate the borrow checker!!
+                let mut checked_scope;
+                let mut_self = self as *const Checker as *mut Checker;
+                let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
+                    self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
 
-                if !self.ctx.valid_return {
-                    return err!("Not all code paths return in '{fn_ident}'");
+                    let mut checked_stmts = Vec::new();
+                    for stmt in stmts.into_iter().rev() {
+                        checked_stmts.push(self.check_stmt(stmt)?)
+                    }
+
+                    if !self.ctx.valid_return {
+                        return err!(self, "Not all code paths return in '{fn_ident}'");
+                    }
+                    checked_stmts.reverse();
+
+                    Ok(checked_stmts)
+                };
+                unsafe {
+                    checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
                 }
-                checked_scope.reverse(); // iterated in reverse, so must flip order back
 
                 self.ctx.in_function = false;
+                self.ctx.scope_inherit_bounds_id = None;
 
-                // TODO(TOM): Add fields to 'SemFn' Struct
                 return Ok(NodeStmt::FnSemantics(SemFn {
                     ident,
-                    scope: NodeScope {
-                        stmts: checked_scope,
-                        inherits_stmts: false,
-                    },
-                    arg_semantics: vec![],
+                    scope: checked_scope,
+                    arg_semantics: todo!("arg semantics"),
                     return_type_id: self.ctx.return_type_id,
                     return_type_data: self.ctx.return_type_data,
                 }));
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
-                return err!("not expected outside a function declaration.")
+                return err!(self, "not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {
                 let ret_ident_str = match self.ctx.return_tok {
@@ -432,7 +436,7 @@ impl Checker {
                     }
                 }
 
-                let checked_scope = self.check_scope(scope)?;
+                let checked_scope = self.check_scope_default(scope)?;
                 let mut new_branches = Vec::new();
                 for branch in branches {
                     new_branches.push(self.check_stmt(branch)?);
@@ -455,17 +459,14 @@ impl Checker {
                     _ => false,
                 });
 
-                match new_branches.last() {
-                    Some(NodeStmt::Else(scope)) => {
-                        let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
-                            NodeStmt::ReturnSemantics { .. } => true,
-                            _ => false,
-                        });
-                        if found_return != found_return_else {
-                            return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
-                        }
+                if let Some(NodeStmt::Else(scope)) = new_branches.last() {
+                    let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
+                        NodeStmt::ReturnSemantics { .. } => true,
+                        _ => false,
+                    });
+                    if found_return.is_some() != found_return_else.is_some() {
+                        return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
                     }
-                    _ => (),
                 }
 
                 return Ok(NodeStmt::If {
@@ -487,14 +488,14 @@ impl Checker {
                 }
                 return Ok(NodeStmt::ElseIf {
                     condition,
-                    scope: self.check_scope(scope)?,
+                    scope: self.check_scope_default(scope)?,
                 });
             }
-            NodeStmt::Else(scope) => return Ok(NodeStmt::Else(self.check_scope(scope)?)),
+            NodeStmt::Else(scope) => return Ok(NodeStmt::Else(self.check_scope_default(scope)?)),
             NodeStmt::While { condition, scope } => {
                 self.ctx.loop_count += 1;
                 self.check_expr(&condition)?;
-                let new_scope = self.check_scope(scope)?;
+                let new_scope = self.check_scope_default(scope)?;
                 self.ctx.loop_count -= 1;
                 return Ok(NodeStmt::While {
                     condition,
@@ -512,12 +513,11 @@ impl Checker {
                 let checked = self.check_expr(expr)?;
                 self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
             }
-
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
             }
             NodeStmt::NakedScope(scope) => {
-                return Ok(NodeStmt::NakedScope(self.check_scope(scope)?));
+                return Ok(NodeStmt::NakedScope(self.check_scope_default(scope)?));
             }
             NodeStmt::Break => {
                 if self.ctx.loop_count <= 0 {
@@ -533,25 +533,50 @@ impl Checker {
         Ok(stmt)
     }
 
-    fn check_scope(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
+    // 1. checks all stmts in scope
+    // 2. once scope has ended, removes all variables confined to that scopes
+    fn check_scope<F>(&mut self, scope: NodeScope, func: Option<F>) -> Result<NodeScope, String>
+    where
+        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
+    {
+        self.ctx.cur_scope_id += 1;
+        let does_inherit = scope.inherits_stmts;
         let var_count = self.vars.len();
-        let mut stmts = Vec::new();
-        for stmt in scope.stmts {
-            stmts.push(self.check_stmt(stmt)?);
-        }
+
+        let stmts = match func {
+            Some(mut lambda) => lambda(scope.stmts)?,
+            None => {
+                let mut stmts = Vec::new();
+                for stmt in scope.stmts {
+                    stmts.push(self.check_stmt(stmt)?);
+                }
+                stmts
+            }
+        };
+
+        self.ctx.cur_scope_id -= 1;
         let pop_amt = self.vars.len() - var_count;
         debug!(self, "Ending scope, pop({pop_amt})");
         for _ in 0..pop_amt {
             let popped_var = match self.vars.pop() {
                 Some(var) => self.var_map.remove(var.ident.value.unwrap().as_str()),
-                None => return err!(self, "uhh.. scope messed up"),
+                None => unreachable!("invalid var removal"),
             };
             debug!(self, "Scope ended, removing {popped_var:#?}");
         }
+
         Ok(NodeScope {
             stmts,
-            inherits_stmts: true,
+            inherits_stmts: does_inherit,
         })
+    }
+
+    // Compiler doesn't understand type of 'None', so must annotate. but thats cumbersome!
+    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
+        self.check_scope(
+            scope,
+            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>>,
+        )
     }
 
     fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
@@ -645,7 +670,7 @@ impl Checker {
                 match op {
                     TokenKind::Tilde => match checked.addr_mode  {
                         AddressingMode::Primitive => Ok(checked),
-                        _ => err!("'~' unary operator requires 'primitive' addressing =>\n{checked:#?}")
+                        _ => err!(self, "'~' unary operator requires 'primitive' addressing =>\n{checked:#?}")
                     }
                     TokenKind::Sub => match checked.type_mode {
                         TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
@@ -694,7 +719,14 @@ impl Checker {
                     _ => err!(self, "Illegal unary Expression '{op:?}' =>\n{checked:#?}"),
                 }
             }
-            NodeExpr::Term(term) => self.check_term(term),
+            NodeExpr::Term(term) => {
+                debug!("check_expr => term!");
+                // match self.check_term(term) {
+                //     Ok(o) => Ok(o),
+                //     Err(e) => panic!("{e}"),
+                // }
+                self.check_term(term)
+            }
         }
     }
 
@@ -766,53 +798,6 @@ impl Checker {
         Ok(())
     }
 
-    /*
-       fn check_assign(&self, var: &SemVariable, checked: &ExprData) -> Result<(), String> {
-           // Check Addressing Mode
-           if var.addr_mode != checked.addr_mode {
-               return err!(
-                   self,
-                   "Expr of different AddrMode! {:?} vs {:?} =>\n{var:#?}\n.. {checked:#?}",
-                   var.addr_mode,
-                   checked.addr_mode
-               );
-           }
-
-           // Check Type
-           match &self.types.get(var.type_id).unwrap().form {
-               TypeForm::Base {
-                   type_mode: var_type_mode,
-               } => {
-                   let msg = format!("Expr of different Type! =>\n{var:#?}\n.. {checked:#?}");
-                   let temp = ExprData {
-                       type_mode: *var_type_mode,
-                       addr_mode: var.addr_mode,
-                       form: ExprForm::Variable {
-                           ptr: self.new_nonnull(var)?,
-                       },
-                   };
-                   self.check_type_mode(temp.type_mode, checked.type_mode, msg.as_str())?;
-               }
-               TypeForm::Struct { .. } => {
-                   todo!("Struct semantics un-implemented")
-               }
-               TypeForm::Union {} => todo!("Union semantics un-implemented"),
-           }
-
-
-           // Check for Type Narrowing
-           let expr_width = self.get_width(&checked.form);
-           if expr_width > var.width {
-               return err!(
-                   self,
-                   "Expr of different width {expr_width} > {} =>\n{var:#?}\n.. {checked:#?}",
-                   var.width
-               );
-           }
-           Ok(())
-       }
-    */
-
     fn get_exprdata(&self, var: &SemVariable) -> Result<ExprData, String> {
         match &self.types.get(var.type_id).unwrap().form {
             TypeForm::Base { type_mode } => Ok(ExprData {
@@ -881,7 +866,16 @@ impl Checker {
 
     fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
         match self.var_map.get(ident) {
-            Some(idx) => Ok(self.vars.get(*idx).unwrap()),
+            Some(idx) if self.ctx.scope_inherit_bounds_id.is_none() => {
+                Ok(self.vars.get(*idx).unwrap())
+            }
+            Some(idx) => {
+                let var = self.vars.get(*idx).unwrap();
+                if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
+                    return err!(self, "Variable '{ident}' outside scope inheritance bounds");
+                }
+                Ok(var)
+            }
             None => err!(self, "Variable '{ident}' not found"),
         }
     }
