@@ -35,6 +35,7 @@ pub enum TokenKind {
     AndNot,    // "&~"
     Shl,       // "<<"
     Shr,       // ">>"
+    Arrow,     //  "->"
 
     // Combo Assign
     AddEq,    // "+="
@@ -69,8 +70,9 @@ pub enum TokenKind {
     Break,
     Mut,
     Fn,
-    Arrow,
     Return,
+    True,
+    False,
 
     // Primitive Constructs
     Ident,
@@ -255,6 +257,7 @@ impl Lexer {
             ("&~", TokenKind::AndNot),
             ("<<", TokenKind::Shl),
             (">>", TokenKind::Shr),
+            ("->", TokenKind::Arrow),
             // Combo Assign
             ("+=", TokenKind::AddEq),
             ("-=", TokenKind::SubEq),
@@ -286,7 +289,8 @@ impl Lexer {
             ("mut", TokenKind::Mut),
             ("while", TokenKind::While),
             ("break", TokenKind::Break),
-            ("->", TokenKind::Arrow),
+            ("true", TokenKind::True),
+            ("false", TokenKind::False),
         ]);
         Lexer {
             idx: 0,

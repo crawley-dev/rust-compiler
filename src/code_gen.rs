@@ -319,6 +319,7 @@ impl Generator {
 
     fn gen_term(&mut self, term: NodeTerm, ans_reg: Option<&str>) -> Result<String, String> {
         match term {
+            NodeTerm::False | NodeTerm::True => todo!("NodeTerm False/True"),
             NodeTerm::IntLit(tok) => {
                 self.pos = tok.pos;
                 let reg = match ans_reg {

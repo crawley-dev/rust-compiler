@@ -64,13 +64,13 @@ const PTR_WIDTH: usize = 8;
 const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "SEMANTIC";
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
     Primitive,
     Pointer,
     Array,
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 
 pub enum TypeMode {
     Void,
@@ -80,7 +80,7 @@ pub enum TypeMode {
     Float { signed: bool },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeForm {
     Base {
         type_mode: TypeMode,
@@ -93,7 +93,7 @@ pub enum TypeForm {
     }, // Union: a group of types that share the same storage.
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
     Expr { inherited_width: usize },
@@ -105,7 +105,7 @@ pub enum ExprForm {
 }
 
 // TODO(TOM): re-work to use TypeForm..
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExprData {
     // pub type_form: TypeForm,
     pub type_mode: TypeMode,
@@ -113,14 +113,14 @@ pub struct ExprData {
     pub form: ExprForm,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Type {
     pub width: usize,
     pub ident: String,
     pub form: TypeForm,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemVariable {
     pub ident: Token,
     pub mutable: bool,
@@ -132,7 +132,7 @@ pub struct SemVariable {
 }
 
 // need name, return semantics, arg semantics
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemFn {
     pub ident: Token,
     pub scope: NodeScope,
@@ -296,21 +296,46 @@ impl Checker {
                     );
                 }
 
-                // check valid arg types
-                // TODO(TOM): Add args to vars when called!
-                let mut temp_vec = Vec::new();
-                for arg in &args {
+                // Validate semantics for arguments.
+                let mut arg_idents = Vec::new();
+                let mut arg_semantics = Vec::new();
+                for arg in args {
                     let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
-                    if temp_vec.contains(&arg_ident) {
+
+                    // O(n^2) complexity.. funcs normally < ~5 params, so alright!
+                    if arg_idents.contains(&arg_ident) {
+                        return err!(
+                            "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
+                        );
+                    } else if self.var_map.contains_key(arg_ident) {
                         return err!(
                             self,
-                            "Duplicate argument: {arg_ident} in function: {}",
-                            ident.value.as_ref().unwrap().as_str()
+                            "Argument name in use: {arg_ident} in function: {fn_ident}"
+                        );
+                    } else if self.type_map.contains_key(arg_ident) {
+                        return err!(
+                            self,
+                            "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
 
-                    self.get_type_id(arg.type_ident.value.as_ref().unwrap().as_str())?;
-                    temp_vec.push(arg_ident);
+                    let type_id = self.get_type_id(&arg.type_tok.value.unwrap())?;
+                    let type_ref = self.types.get(type_id).unwrap();
+                    let addr_mode = match &type_ref.form {
+                        TypeForm::Base { type_mode } => *type_mode,
+                        TypeForm::Struct { member_ids } => todo!("fn arg struct"),
+                        TypeForm::Union {} => todo!("fn arg union"),
+                    };
+
+                    arg_semantics.push(SemVariable {
+                        ident: arg.ident,
+                        mutable: arg.mutable,
+                        width: type_ref.width,
+                        scope_id: self.ctx.cur_scope_id,
+                        type_id,
+                        addr_mode: arg.addr_mode,
+                        init_expr: None,
+                    })
                 }
 
                 self.ctx.in_function = true;
@@ -370,7 +395,7 @@ impl Checker {
                 return Ok(NodeStmt::FnSemantics(SemFn {
                     ident,
                     scope: checked_scope,
-                    arg_semantics: todo!("arg semantics"),
+                    arg_semantics,
                     return_type_id: self.ctx.return_type_id,
                     return_type_data: self.ctx.return_type_data,
                 }));
@@ -732,24 +757,38 @@ impl Checker {
 
     fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
         match term {
+            NodeTerm::True | NodeTerm::False => {
+                let type_ref = self.types.get(*self.type_map.get("bool").unwrap()).unwrap();
+                match &type_ref.form {
+                    TypeForm::Base { type_mode } => Ok(ExprData {
+                        type_mode: *type_mode,
+                        addr_mode: AddressingMode::Primitive,
+                        form: ExprForm::Expr {
+                            inherited_width: type_ref.width,
+                        },
+                    }),
+                    TypeForm::Struct { member_ids } => todo!("check_term boolean struct"),
+                    TypeForm::Union {} => todo!("check_term boolean union"),
+                }
+            }
             NodeTerm::Ident(tok) => {
                 unsafe {
                     let mut_self = self as *const Checker as *mut Checker;
                     (*mut_self).pos = tok.pos;
                 }
                 let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
-                match self.types.get(var.type_id).unwrap().form {
+                match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
-                        type_mode,
+                        type_mode: *type_mode,
                         addr_mode: var.addr_mode,
                         form: ExprForm::Variable {
                             ptr: self.new_nonnull(var)?,
                         },
                     }),
-                    TypeForm::Struct { .. } => {
-                        err!(self, "Struct Semantics un-implemented")
+                    TypeForm::Struct { member_ids } => {
+                        todo!("check_term Ident Struct")
                     }
-                    TypeForm::Union {} => err!(self, "Union semantics un-implemented"),
+                    TypeForm::Union {} => todo!("check_term Ident Union"),
                 }
             }
             NodeTerm::IntLit(tok) => {
@@ -859,6 +898,8 @@ impl Checker {
             }
             NodeExpr::UnaryExpr { operand, .. } => self.get_expr_ident(&*operand, false),
             NodeExpr::Term(term) => match term {
+                NodeTerm::True => "true".to_string(),
+                NodeTerm::False => "false".to_string(),
                 NodeTerm::IntLit(tok) | NodeTerm::Ident(tok) => tok.value.as_ref().unwrap().clone(),
             },
         }
