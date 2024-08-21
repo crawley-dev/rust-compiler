@@ -12,24 +12,26 @@ use std::{collections::VecDeque, ops::Add};
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AST {
     pub stmts: Vec<NodeStmt>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NodeScope {
     pub stmts: Vec<NodeStmt>,
     pub inherits_stmts: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arg {
+    pub mutable: bool,
     pub ident: Token,
-    pub type_ident: Token,
+    pub type_tok: Token,
+    pub addr_mode: AddressingMode,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeStmt {
     FnDecl {
         ident: Token,
@@ -75,7 +77,7 @@ pub enum NodeStmt {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeExpr {
     BinaryExpr {
         op: TokenKind,
@@ -89,8 +91,10 @@ pub enum NodeExpr {
     Term(NodeTerm),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeTerm {
+    True,
+    False,
     Ident(Token),
     IntLit(Token),
 }
@@ -181,10 +185,17 @@ impl Parser {
                     if args.len() > 0 {
                         self.expect(TokenKind::Comma)?;
                     }
+
+                    let mutable = self.expect(TokenKind::Mut).is_ok();
                     let ident = self.expect(TokenKind::Ident)?;
                     self.expect(TokenKind::Colon)?;
-                    let type_ident = self.expect(TokenKind::Ident)?;
-                    args.push(Arg { ident, type_ident });
+                    let (type_tok, addr_mode) = self.parse_type()?;
+                    args.push(Arg {
+                        mutable,
+                        ident,
+                        type_tok,
+                        addr_mode,
+                    });
                 }
                 self.expect(TokenKind::CloseParen)?;
 
@@ -370,6 +381,8 @@ impl Parser {
             }
             TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
+            TokenKind::True => Ok(NodeExpr::Term(NodeTerm::True)),
+            TokenKind::False => Ok(NodeExpr::Term(NodeTerm::False)),
             _ => err!(self, "Invalid Term =>\n{tok:#?}"),
         }
     }
