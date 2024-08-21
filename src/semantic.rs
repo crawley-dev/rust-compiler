@@ -157,9 +157,9 @@ pub struct Checker {
     ctx: SemContext,
     pos: (u32, u32),
     pub types: Vec<Type>,
-    pub vars: Vec<SemVariable>,
-    pub fn_set: HashSet<String>,
-    pub var_map: HashMap<String, usize>,
+    pub fn_map: HashMap<String, SemFn>,
+    vars: Vec<SemVariable>,
+    var_map: HashMap<String, usize>,
     pub type_map: HashMap<String, usize>,
 }
 
@@ -195,8 +195,8 @@ impl Checker {
             },
             pos: (0, 0),
             vars: Vec::new(),
+            fn_map: HashMap::new(),
             var_map: HashMap::new(),
-            fn_set: HashSet::new(),
             types,
             type_map: HashMap::new(),
         };
@@ -287,7 +287,7 @@ impl Checker {
             } => {
                 // check for name collisions
                 let fn_ident = ident.value.as_ref().unwrap().as_str();
-                if self.fn_set.contains(fn_ident) {
+                if self.fn_map.contains_key(fn_ident) {
                     return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
                 } else if self.type_map.contains_key(fn_ident) {
                     return err!(
@@ -391,14 +391,18 @@ impl Checker {
 
                 self.ctx.in_function = false;
                 self.ctx.scope_inherit_bounds_id = None;
+                self.fn_map.insert(
+                    ident.value.as_ref().unwrap().clone(),
+                    SemFn {
+                        ident: ident.clone(),
+                        scope: checked_scope,
+                        arg_semantics,
+                        return_type_id: self.ctx.return_type_id,
+                        return_type_data: self.ctx.return_type_data,
+                    },
+                );
 
-                return Ok(NodeStmt::FnSemantics(SemFn {
-                    ident,
-                    scope: checked_scope,
-                    arg_semantics,
-                    return_type_id: self.ctx.return_type_id,
-                    return_type_data: self.ctx.return_type_data,
-                }));
+                return Ok(NodeStmt::FnSemantics { ident });
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
                 return err!(self, "not expected outside a function declaration.")
@@ -429,22 +433,51 @@ impl Checker {
                     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
                 }
                 self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
-
                 self.ctx.valid_return = true;
+
                 return Ok(NodeStmt::ReturnSemantics {
                     expr: Some(expr_type_data),
                 });
             }
-            NodeStmt::Return(expr) => {
-                if let Some(tok) = &self.ctx.return_tok {
+            NodeStmt::Return(expr) => match &self.ctx.return_tok {
+                Some(tok) => {
                     return err!(
                         self,
                         "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
-                    );
+                    )
                 }
-                self.ctx.valid_return = true;
-                return Ok(NodeStmt::ReturnSemantics { expr: None });
-            }
+                _ => {
+                    self.ctx.valid_return = true;
+                    return Ok(NodeStmt::ReturnSemantics { expr: None });
+                }
+            },
+            // NodeStmt::FnCall { ident, args } => {
+            //     // check fn of that name exists
+            //     let str = ident.value.as_ref().unwrap().as_str();
+            //     let fn_ref = match self.fn_map.get(str) {
+            //         Some(fn_ref) => fn_ref,
+            //         _ => return err!(self, "No associated function with attempted call. {str}"),
+            //     };
+
+            //     // check correct amount of arguments
+            //     if args.len() != fn_ref.arg_semantics.len() {
+            //         return err!(
+            //             self,
+            //             "Incorrect amount of arguments for function '{str}'. {} missing",
+            //             fn_ref.arg_semantics.len() - args.len()
+            //         );
+            //     }
+
+            //     // check args are of valid type
+            //     for (i, arg) in args.into_iter().enumerate() {
+            //         let arg_expr = self.check_expr(&arg)?;
+            //         let fn_arg =
+            //             self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
+            //         self.check_type_equivalence(&fn_arg, &arg_expr)?;
+            //     }
+
+            //     return Ok(NodeStmt::FnCallSemantics(fn_ref.return_type_data.unwrap()));
+            // }
             NodeStmt::If {
                 condition,
                 scope,
@@ -503,7 +536,12 @@ impl Checker {
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
                 match checked.type_mode {
-                    TypeMode::Bool => (),
+                    TypeMode::Bool => {
+                        return Ok(NodeStmt::ElseIf {
+                            condition,
+                            scope: self.check_scope_default(scope)?,
+                        })
+                    }
                     _ => {
                         return err!(
                             self,
@@ -511,10 +549,6 @@ impl Checker {
                         )
                     }
                 }
-                return Ok(NodeStmt::ElseIf {
-                    condition,
-                    scope: self.check_scope_default(scope)?,
-                });
             }
             NodeStmt::Else(scope) => return Ok(NodeStmt::Else(self.check_scope_default(scope)?)),
             NodeStmt::While { condition, scope } => {
@@ -550,8 +584,9 @@ impl Checker {
                 }
             }
             NodeStmt::VarSemantics { .. }
-            | NodeStmt::FnSemantics(_)
-            | NodeStmt::ReturnSemantics { .. } => {
+            | NodeStmt::FnSemantics { .. }
+            | NodeStmt::ReturnSemantics { .. }
+            | NodeStmt::FnCallSemantics(_) => {
                 return err!(self, "Found {stmt:#?}.. shouldn't have.");
             }
         };

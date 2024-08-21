@@ -40,6 +40,11 @@ pub enum NodeStmt {
         return_tok: Option<Token>,
         return_addr_mode: Option<AddressingMode>,
     },
+    // TODO(TOM): this should be an expr or term!!!
+    FnCall {
+        ident: Token,
+        args: Vec<NodeExpr>,
+    },
     VarDecl {
         init_expr: Option<NodeExpr>,
         ident: Token,
@@ -71,7 +76,10 @@ pub enum NodeStmt {
     Return(Option<NodeExpr>),
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(SemVariable),
-    FnSemantics(SemFn),
+    FnCallSemantics(ExprData),
+    FnSemantics {
+        ident: Token,
+    },
     ReturnSemantics {
         expr: Option<ExprData>,
     },
@@ -142,6 +150,7 @@ impl Parser {
                     Ok(_) => Some(self.parse_expr(0)?),
                     Err(_) => None,
                 };
+
                 NodeStmt::VarDecl {
                     init_expr,
                     ident,
@@ -169,6 +178,7 @@ impl Parser {
                     branches.push(NodeStmt::Else(self.parse_scope()?));
                     break;
                 }
+
                 NodeStmt::If {
                     condition,
                     scope,
@@ -207,6 +217,7 @@ impl Parser {
                     return_addr_mode = Some(addr_mode);
                 }
                 let scope = self.parse_scope()?;
+
                 NodeStmt::FnDecl {
                     ident,
                     args,
@@ -217,10 +228,9 @@ impl Parser {
             }
             TokenKind::Return => {
                 self.expect(TokenKind::Return)?;
-                if self.token_equals(TokenKind::SemiColon, 0).is_ok() {
-                    NodeStmt::Return(None)
-                } else {
-                    NodeStmt::Return(Some(self.parse_expr(0)?))
+                match self.peek(0) {
+                    Some(tok) if tok.kind == TokenKind::SemiColon => NodeStmt::Return(None),
+                    _ => NodeStmt::Return(Some(self.parse_expr(0)?)),
                 }
             }
             TokenKind::While => {
@@ -230,26 +240,37 @@ impl Parser {
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
-                let mut ident: Token;
-                match self.peek(1) {
-                    // Assignment: consume ident & assign. parse expr.
-                    Some(tok) if tok.kind == TokenKind::Eq => {
-                        ident = self.expect(TokenKind::Ident)?;
-                        self.expect(TokenKind::Eq)?;
+                let ident = self.expect(TokenKind::Ident)?;
+                match self.peek(0) {
+                    // Function Calls
+                    Some(tok) if tok.kind == TokenKind::OpenParen => {
+                        todo!("fncalls are not statements!!");
+                        let mut args = Vec::new();
+                        while self.token_equals(TokenKind::CloseParen, 0).is_err() {
+                            if args.len() > 0 {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                            args.push(self.parse_expr(0)?);
+                        }
+                        NodeStmt::FnCall { ident, args }
                     }
-                    // Compound Assign: switch compound assign to its arith counterpart
-                    //      - reuse stmt, parse it as an expr, "ident += expr" => "ident + expr"
-                    //      - "expr" = "ident + expr"
+                    // Assignment: consume ident & '='. parse expr.
+                    Some(tok) if tok.kind == TokenKind::Eq => NodeStmt::Assign {
+                        ident,
+                        expr: self.parse_expr(0)?,
+                    },
+                    // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
+                    //      - 'ident += 5;' => 'ident + 5;'
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
-                        ident = self.peek(0).unwrap().clone();
+                        self.tokens.push_front(ident.clone());
                         let comp_assign = self.peek_mut(1).unwrap();
                         comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
+                        NodeStmt::Assign {
+                            ident,
+                            expr: self.parse_expr(0)?,
+                        }
                     }
                     _ => return err!(self, "Naked Expression => '{:?}', Not Valid", self.peek(0)),
-                };
-                NodeStmt::Assign {
-                    ident,
-                    expr: self.parse_expr(0)?,
                 }
             }
             TokenKind::Exit => {
