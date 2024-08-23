@@ -275,7 +275,8 @@ impl Checker {
                     };
                     self.check_type_equivalence(&var_data, &checked)?;
                 }
-                return Ok(NodeStmt::VarSemantics(var));
+
+                Ok(NodeStmt::VarSemantics(var))
             }
             // TODO(TOM): stack frames !! Functions don't inherit scopes!
             NodeStmt::FnDecl {
@@ -390,6 +391,7 @@ impl Checker {
                         return err!(self, "Not all code paths return in '{fn_ident}'");
                     }
                     checked_stmts.reverse();
+
                     // removes args for me!
                     Ok(checked_stmts)
                 };
@@ -410,10 +412,10 @@ impl Checker {
                     },
                 );
 
-                return Ok(NodeStmt::FnSemantics { ident });
+                Ok(NodeStmt::FnSemantics { ident })
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
-                return err!(self, "return not expected outside a function declaration.")
+                err!(self, "return not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {
                 let ret_ident_str = match self.ctx.return_tok {
@@ -446,52 +448,22 @@ impl Checker {
                 self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
                 self.ctx.valid_return = true;
 
-                return Ok(NodeStmt::ReturnSemantics {
+                Ok(NodeStmt::ReturnSemantics {
                     expr: Some(expr_type_data),
-                });
+                })
             }
             NodeStmt::Return(expr) => match &self.ctx.return_tok {
                 Some(tok) => {
-                    return err!(
+                    err!(
                         self,
                         "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
                     )
                 }
                 _ => {
                     self.ctx.valid_return = true;
-                    return Ok(NodeStmt::ReturnSemantics { expr: None });
+                    Ok(NodeStmt::ReturnSemantics { expr: None })
                 }
             },
-            NodeStmt::FnCall { .. } => {
-                todo!("")
-            }
-            // NodeStmt::FnCall { ident, args } => {
-            //     // check fn of that name exists
-            //     let str = ident.value.as_ref().unwrap().as_str();
-            //     let fn_ref = match self.fn_map.get(str) {
-            //         Some(fn_ref) => fn_ref,
-            //         _ => return err!(self, "No associated function with attempted call. {str}"),
-            //     };
-
-            //     // check correct amount of arguments
-            //     if args.len() != fn_ref.arg_semantics.len() {
-            //         return err!(
-            //             self,
-            //             "Incorrect amount of arguments for function '{str}'. {} missing",
-            //             fn_ref.arg_semantics.len() - args.len()
-            //         );
-            //     }
-
-            //     // check args are of valid type
-            //     for (i, arg) in args.into_iter().enumerate() {
-            //         let arg_expr = self.check_expr(&arg)?;
-            //         let fn_arg =
-            //             self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
-            //         self.check_type_equivalence(&fn_arg, &arg_expr)?;
-            //     }
-
-            //     return Ok(NodeStmt::FnCallSemantics(fn_ref.return_type_data.unwrap()));
-            // }
             NodeStmt::If {
                 condition,
                 scope,
@@ -504,7 +476,7 @@ impl Checker {
                         return err!(
                             self,
                             "'If' statement condition not 'boolean'\n{condition:#?}"
-                        )
+                        );
                     }
                 }
 
@@ -541,23 +513,21 @@ impl Checker {
                     }
                 }
 
-                return Ok(NodeStmt::If {
+                Ok(NodeStmt::If {
                     condition,
                     scope: checked_scope,
                     branches: new_branches,
-                });
+                })
             }
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
                 match checked.type_mode {
-                    TypeMode::Bool => {
-                        return Ok(NodeStmt::ElseIf {
-                            condition,
-                            scope: self.check_scope_default(scope)?,
-                        })
-                    }
+                    TypeMode::Bool => Ok(NodeStmt::ElseIf {
+                        condition,
+                        scope: self.check_scope_default(scope)?,
+                    }),
                     _ => {
-                        return err!(
+                        err!(
                             self,
                             "'ElseIf' statement condition not 'boolean'\n{condition:#?}"
                         )
@@ -570,10 +540,11 @@ impl Checker {
                 self.check_expr(&condition)?;
                 let new_scope = self.check_scope_default(scope)?;
                 self.ctx.loop_count -= 1;
-                return Ok(NodeStmt::While {
+
+                Ok(NodeStmt::While {
                     condition,
                     scope: new_scope,
-                });
+                })
             }
             NodeStmt::Assign {
                 ref ident,
@@ -585,26 +556,27 @@ impl Checker {
                 }
                 let checked = self.check_expr(expr)?;
                 self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
+                Ok(stmt)
             }
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
+                Ok(stmt)
             }
             NodeStmt::NakedScope(scope) => {
-                return Ok(NodeStmt::NakedScope(self.check_scope_default(scope)?));
+                Ok(NodeStmt::NakedScope(self.check_scope_default(scope)?))
             }
             NodeStmt::Break => {
                 if self.ctx.loop_count <= 0 {
                     return err!(self, "Not inside a loop! cannot break");
                 }
+                Ok(stmt)
             }
             NodeStmt::VarSemantics { .. }
             | NodeStmt::FnSemantics { .. }
-            | NodeStmt::ReturnSemantics { .. }
-            | NodeStmt::FnCallSemantics(_) => {
-                return err!(self, "Found {stmt:#?}.. shouldn't have.");
+            | NodeStmt::ReturnSemantics { .. } => {
+                err!(self, "Found {stmt:#?}.. shouldn't have.")
             }
-        };
-        Ok(stmt)
+        }
     }
 
     // 1. checks all stmts in scope
@@ -797,38 +769,24 @@ impl Checker {
                     _ => err!(self, "Illegal unary Expression '{op:?}' =>\n{checked:#?}"),
                 }
             }
-            NodeExpr::Term(term) => {
-                debug!("check_expr => term!");
-                // match self.check_term(term) {
-                //     Ok(o) => Ok(o),
-                //     Err(e) => panic!("{e}"),
-                // }
-                self.check_term(term)
-            }
+            NodeExpr::Term(term) => self.check_term(term),
         }
     }
 
     fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
         match term {
-            NodeTerm::True | NodeTerm::False => {
-                let type_ref = self.types.get(*self.type_map.get("bool").unwrap()).unwrap();
-                match &type_ref.form {
-                    TypeForm::Base { type_mode } => Ok(ExprData {
-                        type_mode: *type_mode,
-                        addr_mode: AddressingMode::Primitive,
-                        form: ExprForm::Expr {
-                            inherited_width: type_ref.width,
-                        },
-                    }),
-                    TypeForm::Struct { member_ids } => todo!("check_term boolean struct"),
-                    TypeForm::Union {} => todo!("check_term boolean union"),
-                }
+            NodeTerm::IntLit(tok) => {
+                self.update_pos(tok.pos);
+
+                Ok(ExprData {
+                    type_mode: TypeMode::IntLit,
+                    addr_mode: AddressingMode::Primitive,
+                    form: ExprForm::Expr { inherited_width: 0 },
+                })
             }
             NodeTerm::Ident(tok) => {
-                unsafe {
-                    let mut_self = self as *const Checker as *mut Checker;
-                    (*mut_self).pos = tok.pos;
-                }
+                self.update_pos(tok.pos);
+
                 let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
                 match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
@@ -844,16 +802,49 @@ impl Checker {
                     TypeForm::Union {} => todo!("check_term Ident Union"),
                 }
             }
-            NodeTerm::IntLit(tok) => {
-                unsafe {
-                    let mut_self = self as *const Checker as *mut Checker;
-                    (*mut_self).pos = tok.pos;
+
+            NodeTerm::True | NodeTerm::False => {
+                let type_ref = self.types.get(*self.type_map.get("bool").unwrap()).unwrap();
+                match &type_ref.form {
+                    TypeForm::Base { type_mode } => Ok(ExprData {
+                        type_mode: *type_mode,
+                        addr_mode: AddressingMode::Primitive,
+                        form: ExprForm::Expr {
+                            inherited_width: type_ref.width,
+                        },
+                    }),
+                    TypeForm::Struct { member_ids } => todo!("check_term boolean struct"),
+                    TypeForm::Union {} => todo!("check_term boolean union"),
                 }
-                Ok(ExprData {
-                    type_mode: TypeMode::IntLit,
-                    addr_mode: AddressingMode::Primitive,
-                    form: ExprForm::Expr { inherited_width: 0 },
-                })
+            }
+            NodeTerm::FnCall { ident, args } => {
+                self.update_pos(ident.pos);
+
+                // check fn of that name exists
+                let str = ident.value.as_ref().unwrap().as_str();
+                let fn_ref = match self.fn_map.get(str) {
+                    Some(fn_ref) => fn_ref,
+                    _ => return err!(self, "No associated function with attempted call. {str}"),
+                };
+
+                // check correct amount of arguments
+                if args.len() != fn_ref.arg_semantics.len() {
+                    return err!(
+                        self,
+                        "Incorrect amount of arguments for function '{str}'. {} missing",
+                        fn_ref.arg_semantics.len() - args.len()
+                    );
+                }
+
+                // check args are of valid type
+                for (i, arg) in args.into_iter().enumerate() {
+                    let arg_expr = self.check_expr(&arg)?;
+                    let fn_arg =
+                        self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
+                    self.check_type_equivalence(&fn_arg, &arg_expr)?;
+                }
+
+                Ok(fn_ref.return_type_data.unwrap())
             }
         }
     }
@@ -953,7 +944,9 @@ impl Checker {
             NodeExpr::Term(term) => match term {
                 NodeTerm::True => "true".to_string(),
                 NodeTerm::False => "false".to_string(),
-                NodeTerm::IntLit(tok) | NodeTerm::Ident(tok) => tok.value.as_ref().unwrap().clone(),
+                NodeTerm::IntLit(tok)
+                | NodeTerm::Ident(tok)
+                | NodeTerm::FnCall { ident: tok, .. } => tok.value.as_ref().unwrap().clone(),
             },
         }
     }
@@ -997,6 +990,13 @@ impl Checker {
         self.type_map
             .insert(new_type.ident.clone(), self.types.len());
         self.types.push(new_type);
+    }
+
+    fn update_pos(&self, pos: (u32, u32)) {
+        unsafe {
+            let mut_self = self as *const Checker as *mut Checker;
+            (*mut_self).pos = pos;
+        }
     }
 
     fn new_nonnull(&self, reference: &SemVariable) -> Result<NonNull<SemVariable>, String> {

@@ -40,11 +40,6 @@ pub enum NodeStmt {
         return_tok: Option<Token>,
         return_addr_mode: Option<AddressingMode>,
     },
-    // TODO(TOM): this should be an expr or term!!!
-    FnCall {
-        ident: Token,
-        args: Vec<NodeExpr>,
-    },
     VarDecl {
         init_expr: Option<NodeExpr>,
         ident: Token,
@@ -76,7 +71,6 @@ pub enum NodeStmt {
     Return(Option<NodeExpr>),
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(SemVariable),
-    FnCallSemantics(ExprData),
     FnSemantics {
         ident: Token,
     },
@@ -105,6 +99,7 @@ pub enum NodeTerm {
     False,
     Ident(Token),
     IntLit(Token),
+    FnCall { ident: Token, args: Vec<NodeExpr> },
 }
 
 pub struct Parser {
@@ -242,19 +237,6 @@ impl Parser {
             TokenKind::Ident => {
                 let ident = self.expect(TokenKind::Ident)?;
                 match self.peek(0) {
-                    // Function Calls
-                    Some(tok) if tok.kind == TokenKind::OpenParen => {
-                        todo!("fncalls are not statements!!");
-                        let mut args = Vec::new();
-                        while self.token_equals(TokenKind::CloseParen, 0).is_err() {
-                            if args.len() > 0 {
-                                self.expect(TokenKind::Comma)?;
-                            }
-                            args.push(self.parse_expr(0)?);
-                        }
-                        NodeStmt::FnCall { ident, args }
-                    }
-
                     // Assignment: consume ident & '='. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => NodeStmt::Assign {
                         ident,
@@ -401,7 +383,25 @@ impl Parser {
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
             }
-            TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
+            TokenKind::Ident => {
+                match self.peek(0) {
+                    // Function Calls
+                    Some(next) if next.kind == TokenKind::OpenParen => {
+                        todo!("fncalls are not statements!!");
+                        let mut args = Vec::new();
+                        while self.expect(TokenKind::CloseParen).is_err() {
+                            if args.len() > 0 {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                            args.push(self.parse_expr(0)?);
+                        }
+                        Ok(NodeExpr::Term(NodeTerm::FnCall { ident: tok, args }))
+                    }
+                    Some(_) => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
+                    None => err!(self, "Incomplete expression, nothing after =>\n{tok:#?}"),
+                }
+            }
+            // TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
             TokenKind::True => Ok(NodeExpr::Term(NodeTerm::True)),
             TokenKind::False => Ok(NodeExpr::Term(NodeTerm::False)),

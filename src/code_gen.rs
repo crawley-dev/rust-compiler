@@ -215,8 +215,6 @@ impl Generator {
             NodeStmt::VarDecl { .. } | NodeStmt::FnDecl { .. } | NodeStmt::Return { .. } => {
                 err!("Found {stmt:#?}.. shouldn't have.")
             }
-            NodeStmt::FnCall { ident, args } => todo!(),
-            NodeStmt::FnCallSemantics(_) => todo!(),
         }
     }
 
@@ -344,6 +342,7 @@ impl Generator {
                 };
                 Ok(format!("{SPACE}mov {reg}, {stk_pos} ; {tok:?}\n"))
             }
+            NodeTerm::FnCall { ident, args } => todo!(),
         }
     }
 
