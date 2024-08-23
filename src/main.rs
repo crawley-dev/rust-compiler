@@ -23,7 +23,7 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
-    println!("\n\n{:#?}\n\n", contents);
+    // println!("\n\n{:#?}\n\n", contents);
 
     println!("\n");
     let tokens = Lexer::new(contents).tokenize();
@@ -53,8 +53,8 @@ fn semantic_check(ast: AST) -> Checker {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     match semantic::Checker::check_ast(ast.clone()) {
         Ok(data) => data,
-        Err(e) => panic!("\n{e}\n"),
-        // Err(e) =>  panic!("{ast:#?}\n\n{e}\n"),
+        // Err(e) => panic!("\n{e}\n"),
+        Err(e) => panic!("{ast:#?}\n\n{e}\n"),
     }
 }
 

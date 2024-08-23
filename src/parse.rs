@@ -7,7 +7,7 @@ use crate::{
     semantic::{SemFn, SemVariable},
     AddressingMode, ExprData, ExprForm, Type, TypeMode,
 };
-use std::{collections::VecDeque, ops::Add};
+use std::collections::VecDeque;
 
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
@@ -37,7 +37,7 @@ pub enum NodeStmt {
         ident: Token,
         args: Vec<Arg>,
         scope: NodeScope,
-        return_tok: Option<Token>,
+        return_type_tok: Option<Token>,
         return_addr_mode: Option<AddressingMode>,
     },
     VarDecl {
@@ -120,9 +120,62 @@ impl Parser {
     pub fn parse_ast(&mut self) -> Result<AST, String> {
         let mut ast: AST = AST { stmts: Vec::new() };
         while self.peek(0).is_some() {
-            ast.stmts.push(self.parse_stmt()?);
+            ast.stmts.push(self.parse_func()?);
         }
         Ok(ast)
+    }
+
+    fn parse_func(&mut self) -> Result<NodeStmt, String> {
+        match self.peek(0) {
+            Some(tok) if tok.kind == TokenKind::Fn => {
+                self.expect(TokenKind::Fn)?;
+                let ident = self.expect(TokenKind::Ident)?;
+                self.expect(TokenKind::OpenParen)?;
+
+                let mut args = Vec::new();
+                while self.token_equals(TokenKind::CloseParen, 0).is_err() {
+                    if args.len() > 0 {
+                        self.expect(TokenKind::Comma)?;
+                    }
+
+                    let mutable = self.expect(TokenKind::Mut).is_ok();
+                    let ident = self.expect(TokenKind::Ident)?;
+                    self.expect(TokenKind::Colon)?;
+                    let (type_tok, addr_mode) = self.parse_type()?;
+                    args.push(Arg {
+                        mutable,
+                        ident,
+                        type_tok,
+                        addr_mode,
+                    });
+                }
+                self.expect(TokenKind::CloseParen)?;
+
+                let mut return_type_tok = None;
+                let mut return_addr_mode = None;
+                if self.expect(TokenKind::Arrow).is_ok() {
+                    let (tok, addr_mode) = self.parse_type()?;
+                    return_type_tok = Some(tok);
+                    return_addr_mode = Some(addr_mode);
+                }
+                let scope = self.parse_scope()?;
+
+                Ok(NodeStmt::FnDecl {
+                    ident,
+                    args,
+                    scope,
+                    return_type_tok,
+                    return_addr_mode,
+                })
+            }
+            Some(tok) => {
+                err!(
+                    self,
+                    "A Program only consists of functions, this is a {tok:?}"
+                )
+            }
+            None => err!(self, "No function to parse"),
+        }
     }
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
@@ -181,45 +234,10 @@ impl Parser {
                 }
             }
             TokenKind::Fn => {
-                self.expect(TokenKind::Fn)?;
-                let ident = self.expect(TokenKind::Ident)?;
-                self.expect(TokenKind::OpenParen)?;
-
-                let mut args = Vec::new();
-                while self.token_equals(TokenKind::CloseParen, 0).is_err() {
-                    if args.len() > 0 {
-                        self.expect(TokenKind::Comma)?;
-                    }
-
-                    let mutable = self.expect(TokenKind::Mut).is_ok();
-                    let ident = self.expect(TokenKind::Ident)?;
-                    self.expect(TokenKind::Colon)?;
-                    let (type_tok, addr_mode) = self.parse_type()?;
-                    args.push(Arg {
-                        mutable,
-                        ident,
-                        type_tok,
-                        addr_mode,
-                    });
-                }
-                self.expect(TokenKind::CloseParen)?;
-
-                let mut return_tok = None;
-                let mut return_addr_mode = None;
-                if self.expect(TokenKind::Arrow).is_ok() {
-                    let (tok, addr_mode) = self.parse_type()?;
-                    return_tok = Some(tok);
-                    return_addr_mode = Some(addr_mode);
-                }
-                let scope = self.parse_scope()?;
-
-                NodeStmt::FnDecl {
-                    ident,
-                    args,
-                    scope,
-                    return_tok,
-                    return_addr_mode,
-                }
+                return err!(
+                    self,
+                    "Functions cannot be nested, they're top level statements"
+                )
             }
             TokenKind::Return => {
                 self.expect(TokenKind::Return)?;
@@ -387,10 +405,10 @@ impl Parser {
                 match self.peek(0) {
                     // Function Calls
                     Some(next) if next.kind == TokenKind::OpenParen => {
-                        todo!("fncalls are not statements!!");
+                        self.expect(TokenKind::OpenParen)?;
                         let mut args = Vec::new();
                         while self.expect(TokenKind::CloseParen).is_err() {
-                            if args.len() > 0 {
+                            if args.len() > 1 {
                                 self.expect(TokenKind::Comma)?;
                             }
                             args.push(self.parse_expr(0)?);
@@ -401,7 +419,6 @@ impl Parser {
                     None => err!(self, "Incomplete expression, nothing after =>\n{tok:#?}"),
                 }
             }
-            // TokenKind::Ident => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
             TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
             TokenKind::True => Ok(NodeExpr::Term(NodeTerm::True)),
             TokenKind::False => Ok(NodeExpr::Term(NodeTerm::False)),

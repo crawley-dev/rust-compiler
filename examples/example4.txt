@@ -2,6 +2,11 @@ fn plus5(arg1: i32) -> i32 {
     return arg1 + 5;
 }
 
+fn main() {
+    let num: i32 = 1;
+    let numplus5: i64 = plus5(num);
+}
+
 /*
 let test123: usize = 5;
 if test123 == 5 {

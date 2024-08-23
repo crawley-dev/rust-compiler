@@ -258,12 +258,12 @@ impl Generator {
 
                 let flags = op.get_flags();
                 let op_asm = match flags {
-                    _ if flags.contains(TokenFlags::BIT) => self.gen_bitwise(op)?,
-                    _ if flags.contains(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
-                    _ if flags.contains(TokenFlags::CMP) => self.gen_comparison(op)?,
                     _ if flags.contains(TokenFlags::LOG) => {
                         return self.gen_logical(op, ans_reg, lhs_asm, rhs_asm)
                     }
+                    _ if flags.contains(TokenFlags::CMP) => self.gen_comparison(op)?,
+                    _ if flags.contains(TokenFlags::BIT) => self.gen_bitwise(op)?,
+                    _ if flags.contains(TokenFlags::ARITH) => self.gen_arithmetic(op)?,
                     _ => {
                         return err!(
                             "Unable to generate binary expression:\n{lhs_asm}..{op:?}..\n{rhs_asm}"
@@ -463,7 +463,7 @@ impl Generator {
             TokenKind::GtEq => Ok("ge"),
             TokenKind::Lt => Ok("l"),
             TokenKind::LtEq => Ok("le"),
-            _ => err!("Unable to generate comparison modifier"),
+            _ => err!("Unable to generate comparison modifier '{op:?}'"),
         }
     }
 

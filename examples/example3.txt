@@ -1,32 +1,33 @@
-/*
+/**/
 // https://www.mycompiler.io/new/asm-x86_64
 
-let x = 20;
-let a = x + 30; // Addition
-let b = x - 10; // Subtraction
-let c = x * 2;  // Multiply
-let d = x / 2;  // Divide
+let x: u32 = 20;
+let a: u32 = x + 30; // Addition
+let b: u32 = x - 10; // Subtraction
+let c: u32 = x * 2;  // Multiply
+let d: u32 = x / 2;  // Divide
 
-let e = ~x;     // Bitwise NOT
-let f = x | a;  // Bitwise Or
-let g = x & a;  // Bitwise And
-let h = x ^ 2;  // Bitwise Xor
-let i = x << 2; // Left Shift
-let j = x >> 3; // Right Shift 
+let e: u32 = ~x;     // Bitwise NOT
+let f: u32 = x | a;  // Bitwise Or
+let g: u32 = x & a;  // Bitwise And
+let h: u32 = x ~ 2;  // Bitwise Xor
+let i: u32 = x << 2; // Left Shift
+let j: u32 = x >> 3; // Right Shift 
 
-let l = 4 > 2 && 2 == 2; // LogicalAnd expr
-let n = 0 || 5 + 1 > 6;
-let ans = 10 == 10 && 5 == 5; // LogicalOr expr
+let l: bool = 4 > 2 && 2 == 2; // LogicalAnd expr
+let n: bool = 0 || 5 + 1 > 6;
+let ans: bool = 10 == 10 && 5 == 5; // LogicalOr expr
 
-let a = 15;
-let b = 7;
-let c = 20;
-let d = 3;
-let e = 5;
-let f = 8;
-let g = 6;
-let h = 9;
-let i = 4;
+/*
+let a: u8 = 15;
+let b: u8 = 7;
+let c: u8 = 20;
+let d: u8 = 3;
+let e: u8 = 5;
+let f: u8 = 8;
+let g: u8 = 6;
+let h: u8 = 9;
+let i: u8 = 4;
     
 // Longer complex arithmetic expression
 let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
@@ -42,7 +43,6 @@ let ans = (100 / (50 + 50)) + 5;
 
 let ans = ((15 + 7 * 20) - (3 * 5 + 8)) / 6;
 let ans = (~5 + 5) -5;
-
 
 if 0 || 5 + 1 > 6 {
     exit(69);
@@ -65,7 +65,6 @@ test_test = (i_ptr^) + (i_ptr^);
 
 let ans: u8 = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
 
-*/
 
 let mut i = 0;
 let mut ans: i8 = 2;

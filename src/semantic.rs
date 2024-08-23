@@ -145,9 +145,9 @@ struct SemContext {
     loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
     cur_scope_id: usize,
     scope_inherit_bounds_id: Option<usize>,
-    in_function: bool,
+    in_function_decl: bool,
     valid_return: bool,
-    return_tok: Option<Token>,
+    return_type_tok: Option<Token>,
     return_type_id: Option<usize>,
     return_type_data: Option<ExprData>,
 }
@@ -187,9 +187,9 @@ impl Checker {
                 loop_count: 0,
                 cur_scope_id: 0,
                 scope_inherit_bounds_id: None,
-                in_function: false,
+                in_function_decl: false,
                 valid_return: false,
-                return_tok: None,
+                return_type_tok: None,
                 return_type_id: None,
                 return_type_data: None,
             },
@@ -207,14 +207,41 @@ impl Checker {
 
         let mut sem_ast = AST { stmts: Vec::new() };
         for stmt in ast.stmts {
-            sem_ast.stmts.push(checker.check_stmt(stmt)?);
+            sem_ast.stmts.push(checker.check_func(stmt)?);
         }
         checker.ast = sem_ast;
 
-        Ok(checker)
+        // Checking for Entry Point | main()
+        match checker.fn_map.get("main") {
+            Some(func) if !func.arg_semantics.is_empty() => {
+                err!(
+                    &checker,
+                    "The 'main' function takes no arguments =>\nremove {:#?}",
+                    func.arg_semantics
+                )
+            }
+            None => {
+                err!(
+                    &checker,
+                    "No entry point for the program found. Add a 'main' function."
+                )
+            }
+            _ => Ok(checker),
+        }
     }
 
-    // Either early return a new statement if something changes, or return the original statement
+    fn check_func(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+        match stmt {
+            NodeStmt::FnDecl { .. } => self.check_stmt(stmt),
+            _ => {
+                err!(
+                    self,
+                    "A Program only consists of functions, this is a {stmt:?}"
+                )
+            }
+        }
+    }
+
     fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
             NodeStmt::VarDecl {
@@ -278,12 +305,11 @@ impl Checker {
 
                 Ok(NodeStmt::VarSemantics(var))
             }
-            // TODO(TOM): stack frames !! Functions don't inherit scopes!
             NodeStmt::FnDecl {
                 ident,
                 args,
                 scope,
-                return_tok,
+                return_type_tok,
                 return_addr_mode,
             } => {
                 // check for name collisions
@@ -339,10 +365,10 @@ impl Checker {
                     })
                 }
 
-                self.ctx.in_function = true;
-                self.ctx.return_tok = return_tok;
+                self.ctx.in_function_decl = true;
+                self.ctx.return_type_tok = return_type_tok;
 
-                match self.ctx.return_tok {
+                match self.ctx.return_type_tok {
                     Some(ref ident) => {
                         let return_ident = ident.value.as_ref().unwrap().as_str();
                         let return_type_id = self.get_type_id(return_ident)?;
@@ -372,10 +398,10 @@ impl Checker {
                 let mut checked_scope;
                 let mut_self = self as *const Checker as *mut Checker;
                 let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
+                    debug!(self, "checking {fn_ident}'s statements!");
                     self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
 
                     for arg in &arg_semantics {
-                        debug!(self, "adding var {:?}", arg.ident);
                         // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
                         self.var_map
                             .insert(arg.ident.value.as_ref().unwrap().clone(), self.vars.len());
@@ -383,8 +409,9 @@ impl Checker {
                     }
 
                     let mut checked_stmts = Vec::new();
-                    for stmt in stmts.into_iter().rev() {
-                        checked_stmts.push(self.check_stmt(stmt)?)
+                    for stmt in stmts {
+                        checked_stmts.push(self.check_stmt(stmt)?);
+                        debug!(self, "added {:#?}", checked_stmts.last())
                     }
 
                     if !self.ctx.valid_return {
@@ -399,7 +426,7 @@ impl Checker {
                     checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
                 }
 
-                self.ctx.in_function = false;
+                self.ctx.in_function_decl = false;
                 self.ctx.scope_inherit_bounds_id = None;
                 self.fn_map.insert(
                     ident.value.as_ref().unwrap().clone(),
@@ -414,18 +441,18 @@ impl Checker {
 
                 Ok(NodeStmt::FnSemantics { ident })
             }
-            NodeStmt::Return(ref expr) if !self.ctx.in_function => {
+            NodeStmt::Return(ref expr) if !self.ctx.in_function_decl => {
                 err!(self, "return not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {
-                let ret_ident_str = match self.ctx.return_tok {
+                let ret_ident_str = match self.ctx.return_type_tok {
                     Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
                     None => unreachable!(),
                 };
                 let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
 
                 // check for void return mismatch
-                if self.ctx.return_tok.is_none() {
+                if self.ctx.return_type_tok.is_none() {
                     return err!(
                         self,
                         "Mismatched function and return type, '{return_type:#?}'\n .. \n'void'"
@@ -452,7 +479,7 @@ impl Checker {
                     expr: Some(expr_type_data),
                 })
             }
-            NodeStmt::Return(expr) => match &self.ctx.return_tok {
+            NodeStmt::Return(expr) => match &self.ctx.return_type_tok {
                 Some(tok) => {
                     err!(
                         self,
@@ -487,7 +514,7 @@ impl Checker {
                 }
 
                 // early return
-                if !self.ctx.in_function {
+                if !self.ctx.in_function_decl {
                     return Ok(NodeStmt::If {
                         condition,
                         scope: checked_scope,
@@ -607,7 +634,11 @@ impl Checker {
             match self.vars.last() {
                 Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
                 Some(var) => {
-                    debug!(self, "Scope ended, removing {var:#?}");
+                    debug!(
+                        self,
+                        "Scope ended, removing '{}'",
+                        var.ident.value.as_ref().unwrap().as_str()
+                    );
                     let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
                     self.var_map.remove(var.ident.value.unwrap().as_str());
                 }
@@ -634,7 +665,7 @@ impl Checker {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
                 let ldata = self.check_expr(lhs)?;
                 let rdata = self.check_expr(rhs)?;
-                debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
+                // debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
 
                 // Binary ops allowed for primitives && pointers.
                 match ldata.addr_mode {
@@ -682,7 +713,7 @@ impl Checker {
                             )
                         }
                     },
-                    _ if op_flags.contains(TokenFlags::ARITH) => {
+                    _ if op_flags.intersects(TokenFlags::ARITH | TokenFlags::BIT) => {
                         match ldata.type_mode {
                             TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
                                 Ok(ExprData {
@@ -706,7 +737,7 @@ impl Checker {
             }
             NodeExpr::UnaryExpr { op, operand } => {
                 let checked = self.check_expr(&*operand)?;
-                debug!(self, "{checked:#?}");
+                // debug!(self, "{checked:#?}");
 
                 // 'Unary sub' signed int or lit => int | signed
                 // 'Cmp Not'   bool => bool
@@ -875,7 +906,7 @@ impl Checker {
         if assigner_width < assignee_width {
             return err!(
                 self,
-                "Illegal Type Narrowing, Assigner is wider than Assignee, '{assigner_width}' < '{assignee_width}' =>\n{assigner:#?}\n.. {assignee:#?}"
+                "Illegal Type Narrowing, Assignee({assignee_width}) < Assigner({assigner_width}) =>\n{assigner:#?}\n.. {assignee:#?}"
             );
         }
         Ok(())
