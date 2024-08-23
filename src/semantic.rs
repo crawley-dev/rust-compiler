@@ -331,7 +331,7 @@ impl Checker {
                         ident: arg.ident,
                         mutable: arg.mutable,
                         width: type_ref.width,
-                        scope_id: self.ctx.cur_scope_id,
+                        scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
                         type_id,
                         addr_mode: arg.addr_mode,
                         init_expr: None,
@@ -367,11 +367,19 @@ impl Checker {
                     }
                 }
 
-                // I truly hate the borrow checker!!
+                // The borrow checker too strict!
                 let mut checked_scope;
                 let mut_self = self as *const Checker as *mut Checker;
                 let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
                     self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
+
+                    for arg in &arg_semantics {
+                        debug!(self, "adding var {:?}", arg.ident);
+                        // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
+                        self.var_map
+                            .insert(arg.ident.value.as_ref().unwrap().clone(), self.vars.len());
+                        self.vars.push(arg.clone());
+                    }
 
                     let mut checked_stmts = Vec::new();
                     for stmt in stmts.into_iter().rev() {
@@ -382,7 +390,7 @@ impl Checker {
                         return err!(self, "Not all code paths return in '{fn_ident}'");
                     }
                     checked_stmts.reverse();
-
+                    // removes args for me!
                     Ok(checked_stmts)
                 };
                 unsafe {
@@ -405,7 +413,7 @@ impl Checker {
                 return Ok(NodeStmt::FnSemantics { ident });
             }
             NodeStmt::Return(ref expr) if !self.ctx.in_function => {
-                return err!(self, "not expected outside a function declaration.")
+                return err!(self, "return not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {
                 let ret_ident_str = match self.ctx.return_tok {
@@ -426,8 +434,11 @@ impl Checker {
                         "Mismatched function and return types, '{return_type:#?}'\n .. \n'void'"
                     );
                 }
+
                 let expr = expr.unwrap();
                 let expr_type_data = self.check_expr(&expr)?;
+
+                // checked prior to "check_type_equivalence" for better err message
                 if expr_type_data.addr_mode != self.ctx.return_type_data.as_ref().unwrap().addr_mode
                 {
                     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
@@ -451,6 +462,9 @@ impl Checker {
                     return Ok(NodeStmt::ReturnSemantics { expr: None });
                 }
             },
+            NodeStmt::FnCall { .. } => {
+                todo!("")
+            }
             // NodeStmt::FnCall { ident, args } => {
             //     // check fn of that name exists
             //     let str = ident.value.as_ref().unwrap().as_str();
@@ -601,7 +615,9 @@ impl Checker {
     {
         self.ctx.cur_scope_id += 1;
         let does_inherit = scope.inherits_stmts;
-        let var_count = self.vars.len();
+        if !does_inherit {
+            self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
+        }
 
         let stmts = match func {
             Some(mut lambda) => lambda(scope.stmts)?,
@@ -615,14 +631,16 @@ impl Checker {
         };
 
         self.ctx.cur_scope_id -= 1;
-        let pop_amt = self.vars.len() - var_count;
-        debug!(self, "Ending scope, pop({pop_amt})");
-        for _ in 0..pop_amt {
-            let popped_var = match self.vars.pop() {
-                Some(var) => self.var_map.remove(var.ident.value.unwrap().as_str()),
-                None => unreachable!("invalid var removal"),
-            };
-            debug!(self, "Scope ended, removing {popped_var:#?}");
+        loop {
+            match self.vars.last() {
+                Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
+                Some(var) => {
+                    debug!(self, "Scope ended, removing {var:#?}");
+                    let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
+                    self.var_map.remove(var.ident.value.unwrap().as_str());
+                }
+                None => break,
+            }
         }
 
         Ok(NodeScope {
@@ -948,7 +966,12 @@ impl Checker {
             Some(idx) => {
                 let var = self.vars.get(*idx).unwrap();
                 if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
-                    return err!(self, "Variable '{ident}' outside scope inheritance bounds");
+                    return err!(
+                        self,
+                        "Variable '{ident}' outside scope inheritance bounds, {} < {}",
+                        var.scope_id,
+                        self.ctx.scope_inherit_bounds_id.unwrap()
+                    );
                 }
                 Ok(var)
             }

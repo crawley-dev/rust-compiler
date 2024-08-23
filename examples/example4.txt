@@ -1,9 +1,12 @@
+fn plus5(arg1: i32) -> i32 {
+    return arg1 + 5;
+}
+
 /*
 let test123: usize = 5;
 if test123 == 5 {
     exit(5);
 }
-*/
 
 fn test(mut arg1: i32, arg2: usize, arg3: u8) -> i32 {
     if 5 == 5 {

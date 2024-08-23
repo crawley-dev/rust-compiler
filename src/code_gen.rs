@@ -39,7 +39,7 @@ pub struct Generator {
     pos: (u32, u32),
     types: Vec<Type>,
     ctx: CodeGenContext,
-    fn_set: HashSet<String>,
+    fn_map: HashMap<String, SemFn>,
     type_map: HashMap<String, usize>,
     stack: Vec<GenVariable>,         // stack contains variables,
     var_map: HashMap<String, usize>, // var_map contains index to variable
@@ -53,7 +53,7 @@ impl Generator {
             ast: data.ast,
             types: data.types,
             type_map: data.type_map,
-            fn_set: data.fn_set,
+            fn_map: data.fn_map,
             stack: Vec::new(),
             var_map: HashMap::new(),
             ctx: CodeGenContext {
@@ -159,7 +159,7 @@ impl Generator {
                     {endif_goto}"
                 ))
             }
-            NodeStmt::FnSemantics(sem_fn) => {
+            NodeStmt::FnSemantics { .. } => {
                 todo!("fn codegen")
             }
             NodeStmt::ReturnSemantics { expr } => {
@@ -215,6 +215,8 @@ impl Generator {
             NodeStmt::VarDecl { .. } | NodeStmt::FnDecl { .. } | NodeStmt::Return { .. } => {
                 err!("Found {stmt:#?}.. shouldn't have.")
             }
+            NodeStmt::FnCall { ident, args } => todo!(),
+            NodeStmt::FnCallSemantics(_) => todo!(),
         }
     }
 

@@ -23,7 +23,7 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
-    // println!("\n\n{:#?}\n\n", contents);
+    println!("\n\n{:#?}\n\n", contents);
 
     println!("\n");
     let tokens = Lexer::new(contents).tokenize();

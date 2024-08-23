@@ -254,6 +254,7 @@ impl Parser {
                         }
                         NodeStmt::FnCall { ident, args }
                     }
+
                     // Assignment: consume ident & '='. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => NodeStmt::Assign {
                         ident,
@@ -262,7 +263,7 @@ impl Parser {
                     // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
                     //      - 'ident += 5;' => 'ident + 5;'
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
-                        self.tokens.push_front(ident.clone());
+                        self.tokens.push_front(ident.clone()); // TODO(TOM): this may not work !
                         let comp_assign = self.peek_mut(1).unwrap();
                         comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
                         NodeStmt::Assign {
