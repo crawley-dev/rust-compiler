@@ -232,7 +232,147 @@ impl Checker {
 
     fn check_func(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
-            NodeStmt::FnDecl { .. } => self.check_stmt(stmt),
+            NodeStmt::FnDecl {
+                ident,
+                args,
+                scope,
+                return_type_tok,
+                return_addr_mode,
+            } => {
+                // check for name collisions
+                let fn_ident = ident.value.as_ref().unwrap().as_str();
+                if self.fn_map.contains_key(fn_ident) {
+                    return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
+                } else if self.type_map.contains_key(fn_ident) {
+                    return err!(
+                        self,
+                        "Illegal Function name, Types are reserved: '{fn_ident}'"
+                    );
+                }
+
+                // Validate semantics for arguments.
+                let mut arg_idents: Vec<String> = Vec::new();
+                let mut arg_semantics = Vec::new();
+                for arg in args {
+                    let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
+
+                    // O(n^2) complexity.. funcs normally < ~5 params, so alright!
+                    if arg_idents.contains(&arg.ident.value.as_ref().unwrap()) {
+                        return err!(
+                            "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
+                        );
+                    } else if self.var_map.contains_key(arg_ident) {
+                        return err!(
+                            self,
+                            "Argument name in use: {arg_ident} in function: {fn_ident}"
+                        );
+                    } else if self.type_map.contains_key(arg_ident) {
+                        return err!(
+                            self,
+                            "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
+                        );
+                    }
+
+                    let type_id = self.get_type_id(&arg.type_tok.value.unwrap())?;
+                    let type_ref = self.types.get(type_id).unwrap();
+
+                    arg_semantics.push(SemVariable {
+                        ident: arg.ident,
+                        mutable: arg.mutable,
+                        width: type_ref.width,
+                        scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
+                        type_id,
+                        addr_mode: arg.addr_mode,
+                        init_expr: None,
+                    });
+                    arg_idents.push(
+                        arg_semantics
+                            .last()
+                            .unwrap()
+                            .ident
+                            .value
+                            .as_ref()
+                            .unwrap()
+                            .clone(),
+                    );
+                }
+
+                self.ctx.in_function_decl = true;
+                self.ctx.return_type_tok = return_type_tok;
+
+                match self.ctx.return_type_tok {
+                    Some(ref ident) => {
+                        let return_ident = ident.value.as_ref().unwrap().as_str();
+                        let return_type_id = self.get_type_id(return_ident)?;
+                        let return_type = self.types.get(return_type_id).unwrap();
+                        let return_type_mode = match &return_type.form {
+                            TypeForm::Base { type_mode } => *type_mode,
+                            TypeForm::Struct { .. } => todo!("fn return struct"),
+                            TypeForm::Union {} => todo!("fn return union"),
+                        };
+
+                        self.ctx.return_type_id = Some(return_type_id);
+                        self.ctx.return_type_data = Some(ExprData {
+                            type_mode: return_type_mode,
+                            addr_mode: return_addr_mode.unwrap(),
+                            form: ExprForm::Expr {
+                                inherited_width: return_type.width,
+                            },
+                        });
+                    }
+                    None => {
+                        self.ctx.return_type_id = None;
+                        self.ctx.return_type_data = None;
+                    }
+                }
+
+                // The borrow checker too strict!
+                let checked_scope;
+                let mut_self = self as *const Checker as *mut Checker;
+                let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
+                    debug!(self, "checking {fn_ident}'s statements!");
+                    self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
+
+                    for arg in &arg_semantics {
+                        // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
+                        self.var_map
+                            .insert(arg.ident.value.as_ref().unwrap().clone(), self.vars.len());
+                        self.vars.push(arg.clone());
+                    }
+
+                    let mut checked_stmts = Vec::new();
+                    for stmt in stmts {
+                        checked_stmts.push(self.check_stmt(stmt)?);
+                        debug!(self, "added {:#?}", checked_stmts.last())
+                    }
+
+                    if !self.ctx.valid_return {
+                        return err!(self, "Not all code paths return in '{fn_ident}'");
+                    }
+                    checked_stmts.reverse();
+
+                    // removes args for me!
+                    Ok(checked_stmts)
+                };
+                unsafe {
+                    checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
+                }
+
+                self.ctx.in_function_decl = false;
+                self.ctx.scope_inherit_bounds_id = None;
+                self.fn_map.insert(
+                    ident.value.as_ref().unwrap().clone(),
+                    SemFn {
+                        ident: ident.clone(),
+                        scope: checked_scope,
+                        arg_semantics,
+                        return_type_id: self.ctx.return_type_id,
+                        return_type_data: self.ctx.return_type_data,
+                    },
+                );
+
+                Ok(NodeStmt::FnSemantics { ident })
+            }
             _ => {
                 err!(
                     self,
@@ -291,7 +431,7 @@ impl Checker {
                         type_mode: {
                             match &self.types.get(var.type_id).unwrap().form {
                                 TypeForm::Base { type_mode } => *type_mode,
-                                TypeForm::Struct { member_ids } => todo!(),
+                                TypeForm::Struct { .. } => todo!(),
                                 TypeForm::Union {} => todo!(),
                             }
                         },
@@ -305,143 +445,13 @@ impl Checker {
 
                 Ok(NodeStmt::VarSemantics(var))
             }
-            NodeStmt::FnDecl {
-                ident,
-                args,
-                scope,
-                return_type_tok,
-                return_addr_mode,
-            } => {
-                // check for name collisions
-                let fn_ident = ident.value.as_ref().unwrap().as_str();
-                if self.fn_map.contains_key(fn_ident) {
-                    return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
-                } else if self.type_map.contains_key(fn_ident) {
-                    return err!(
-                        self,
-                        "Illegal Function name, Types are reserved: '{fn_ident}'"
-                    );
-                }
-
-                // Validate semantics for arguments.
-                let mut arg_idents = Vec::new();
-                let mut arg_semantics = Vec::new();
-                for arg in args {
-                    let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
-
-                    // O(n^2) complexity.. funcs normally < ~5 params, so alright!
-                    if arg_idents.contains(&arg_ident) {
-                        return err!(
-                            "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
-                        );
-                    } else if self.var_map.contains_key(arg_ident) {
-                        return err!(
-                            self,
-                            "Argument name in use: {arg_ident} in function: {fn_ident}"
-                        );
-                    } else if self.type_map.contains_key(arg_ident) {
-                        return err!(
-                            self,
-                            "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
-                        );
-                    }
-
-                    let type_id = self.get_type_id(&arg.type_tok.value.unwrap())?;
-                    let type_ref = self.types.get(type_id).unwrap();
-                    let addr_mode = match &type_ref.form {
-                        TypeForm::Base { type_mode } => *type_mode,
-                        TypeForm::Struct { member_ids } => todo!("fn arg struct"),
-                        TypeForm::Union {} => todo!("fn arg union"),
-                    };
-
-                    arg_semantics.push(SemVariable {
-                        ident: arg.ident,
-                        mutable: arg.mutable,
-                        width: type_ref.width,
-                        scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
-                        type_id,
-                        addr_mode: arg.addr_mode,
-                        init_expr: None,
-                    })
-                }
-
-                self.ctx.in_function_decl = true;
-                self.ctx.return_type_tok = return_type_tok;
-
-                match self.ctx.return_type_tok {
-                    Some(ref ident) => {
-                        let return_ident = ident.value.as_ref().unwrap().as_str();
-                        let return_type_id = self.get_type_id(return_ident)?;
-                        let return_type = self.types.get(return_type_id).unwrap();
-                        let return_type_mode = match &return_type.form {
-                            TypeForm::Base { type_mode } => *type_mode,
-                            TypeForm::Struct { member_ids } => todo!("fn return struct"),
-                            TypeForm::Union {} => todo!("fn return union"),
-                        };
-
-                        self.ctx.return_type_id = Some(return_type_id);
-                        self.ctx.return_type_data = Some(ExprData {
-                            type_mode: return_type_mode,
-                            addr_mode: return_addr_mode.unwrap(),
-                            form: ExprForm::Expr {
-                                inherited_width: return_type.width,
-                            },
-                        });
-                    }
-                    None => {
-                        self.ctx.return_type_id = None;
-                        self.ctx.return_type_data = None;
-                    }
-                }
-
-                // The borrow checker too strict!
-                let mut checked_scope;
-                let mut_self = self as *const Checker as *mut Checker;
-                let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
-                    debug!(self, "checking {fn_ident}'s statements!");
-                    self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
-
-                    for arg in &arg_semantics {
-                        // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
-                        self.var_map
-                            .insert(arg.ident.value.as_ref().unwrap().clone(), self.vars.len());
-                        self.vars.push(arg.clone());
-                    }
-
-                    let mut checked_stmts = Vec::new();
-                    for stmt in stmts {
-                        checked_stmts.push(self.check_stmt(stmt)?);
-                        debug!(self, "added {:#?}", checked_stmts.last())
-                    }
-
-                    if !self.ctx.valid_return {
-                        return err!(self, "Not all code paths return in '{fn_ident}'");
-                    }
-                    checked_stmts.reverse();
-
-                    // removes args for me!
-                    Ok(checked_stmts)
-                };
-                unsafe {
-                    checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
-                }
-
-                self.ctx.in_function_decl = false;
-                self.ctx.scope_inherit_bounds_id = None;
-                self.fn_map.insert(
-                    ident.value.as_ref().unwrap().clone(),
-                    SemFn {
-                        ident: ident.clone(),
-                        scope: checked_scope,
-                        arg_semantics,
-                        return_type_id: self.ctx.return_type_id,
-                        return_type_data: self.ctx.return_type_data,
-                    },
-                );
-
-                Ok(NodeStmt::FnSemantics { ident })
+            NodeStmt::FnDecl { .. } => {
+                return err!(
+                    self,
+                    "Functions cannot be nested, they're top level statements"
+                )
             }
-            NodeStmt::Return(ref expr) if !self.ctx.in_function_decl => {
+            NodeStmt::Return(_) if !self.ctx.in_function_decl => {
                 err!(self, "return not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {

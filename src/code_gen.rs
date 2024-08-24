@@ -1,18 +1,20 @@
 // >>CODE GEN<< Taking AST from parse && info from semantic and generating (hopefully optimising) code!
-//  Useful Semantic Info:
+//  ✅ Useful Semantic Info:
 //      - ✅ replace stmt NodeStmt with semantic equivalent (holds different info, types etc.)
 //      - Let stmt --> Semantic Variable created, use that! don't need to consume
-//  Pointers:
+//  ✅ Pointers:
 //      - address of: get var's stk_pos and use "lea" to get the memory address
 //      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
+//     Stack Allocation:
+//      - every 8 bytes allocatted,
 
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{Checker, SemFn, SemVariable, Type},
+    semantic::{Checker, SemFn, Type},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
@@ -34,28 +36,24 @@ struct CodeGenContext {
 }
 
 pub struct Generator {
-    ast: AST,
     stk_pos: usize,
     pos: (u32, u32),
-    types: Vec<Type>,
+    checker: Checker,
     ctx: CodeGenContext,
-    fn_map: HashMap<String, SemFn>,
-    type_map: HashMap<String, usize>,
-    stack: Vec<GenVariable>,         // stack contains variables,
+    stack: Vec<GenVariable>, // stack contains variables,
+    fn_map: HashMap<String, String>,
     var_map: HashMap<String, usize>, // var_map contains index to variable
 }
 
 impl Generator {
-    pub fn new(data: Checker) -> Generator {
+    pub fn new(checker: Checker) -> Generator {
         Generator {
             pos: (0, 0),
             stk_pos: 0,
-            ast: data.ast,
-            types: data.types,
-            type_map: data.type_map,
-            fn_map: data.fn_map,
+            checker,
             stack: Vec::new(),
             var_map: HashMap::new(),
+            fn_map: HashMap::new(),
             ctx: CodeGenContext {
                 reg_count: 0,
                 label_count: 0,
@@ -67,11 +65,34 @@ impl Generator {
 
     pub fn gen_asm(&mut self) -> Result<String, String> {
         let mut asm = String::new();
-        while !self.ast.stmts.is_empty() {
-            let stmt = self.ast.stmts.remove(0);
-            asm += self.gen_stmt(stmt)?.as_str();
+        while !self.checker.ast.stmts.is_empty() {
+            let stmt = self.checker.ast.stmts.remove(0);
+            asm += self.gen_func(stmt)?.as_str();
         }
         Ok(asm)
+    }
+
+    fn gen_func(&mut self, stmt: NodeStmt) -> Result<String, String> {
+        match stmt {
+            // Create the potential code for a function, then store it in a map.
+            // on function calls: read the information and use it.
+            NodeStmt::FnDecl {
+                ident,
+                args,
+                scope,
+                return_type_tok,
+                return_addr_mode,
+            } => {
+                // setup stackframe
+                //
+
+                todo!("fn codegen")
+            }
+            _ => err!(
+                self,
+                "A Program only consists of functions, this is a {stmt:?}"
+            ),
+        }
     }
 
     // TODO: BYTE ARRAYS!
@@ -160,7 +181,10 @@ impl Generator {
                 ))
             }
             NodeStmt::FnSemantics { .. } => {
-                todo!("fn codegen")
+                return err!(
+                    self,
+                    "Functions cannot be nested, they're top level statements"
+                )
             }
             NodeStmt::ReturnSemantics { expr } => {
                 todo!("return codegen")

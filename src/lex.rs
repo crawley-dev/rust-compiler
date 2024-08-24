@@ -83,7 +83,6 @@ pub enum TokenKind {
 pub enum Associativity {
     Left,
     Right,
-    None,
 }
 
 bitflags! {

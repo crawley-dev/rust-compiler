@@ -4,8 +4,8 @@
 use crate::{
     debug, debugln, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::{SemFn, SemVariable},
-    AddressingMode, ExprData, ExprForm, Type, TypeMode,
+    semantic::SemVariable,
+    AddressingMode, ExprData,
 };
 use std::collections::VecDeque;
 
@@ -366,7 +366,7 @@ impl Parser {
             let next_prec = match op.get_associativity(is_unary) {
                 Associativity::Right => bin_prec,
                 Associativity::Left => bin_prec + 1,
-                Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
+                // Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
             };
 
             lhs = NodeExpr::BinaryExpr {
