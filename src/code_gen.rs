@@ -6,7 +6,15 @@
 //      - address of: get var's stk_pos and use "lea" to get the memory address
 //      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
 //     Stack Allocation:
-//      - every 8 bytes allocatted,
+//      - allocate in chunks of 8 bytes (heard it somewhere),
+//      - calculate size of all variables declared in a scope.
+//          - "sub rsp, SIZE_OF_VARS_BYTES" <- point rsp to top of the stack!
+//          - SIZE_OF_VARS is always a multiple of "8"
+//      - base pointer points to stack address at the start of a function
+//      - stack pointer points to the top of the stack.
+//      - push/pop ONLY for rbp, sub/add for all other allocation
+//     Global Variables:
+//      - stored in static memory ".data " section or ".bss" for zero-initialisation
 
 use crate::{
     debug, err,
@@ -83,7 +91,21 @@ impl Generator {
                 return_type_tok,
                 return_addr_mode,
             } => {
-                // setup stackframe
+                // https://www-users.cse.umn.edu/~smccaman/courses/8980/spring2020/lectures/03-x86-funcs-data-8up.pdf
+                // Setup stackframe:
+                //  - store current base pointer location
+                //  - move stack pointer into base pointer.
+                //  - use base pointer as offset into stack vars
+                // End stackframe:
+                //  - "pop rbp" <- put top of stack into base pointer (previous base pointer location
+                //  - "ret" <- hands over program control to code at rbp address
+
+                // first six args are **always** stored in "rdi, rsi, rdx, rcx, r8, r9"
+                // **return** value is in "eax // rax" | "edx/rdx" for high bits
+
+                // stack frames MUST have a 16 BYTE alignment
+
+                // CALLING FUNCTIONS:
                 //
 
                 todo!("fn codegen")

@@ -66,15 +66,15 @@ fn code_gen(data: Checker, file_name: String) {
             println!("[COMPILER] output placed in '{file_path}'");
             let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
             // TODO(TOM): remove for functions impl
-            file.write_all(
-                b"global _start\n\
-                      _start:\n\
-                     ; setup stack frame\n    \
-                     push rbp\n    \
-                     mov rbp, rsp\n    \
-                     ; Program Start\n",
-            )
-            .unwrap();
+            // file.write_all(
+            //     b"global _start\n\
+            //           _start:\n\
+            //          ; setup stack frame\n    \
+            //          push rbp\n    \
+            //          mov rbp, rsp\n    \
+            //          ; Program Start\n",
+            // )
+            // .unwrap();
             file.write_all(string.as_bytes()).unwrap();
         }
         Err(e) => panic!("\n{e}\n"),
