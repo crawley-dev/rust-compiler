@@ -1,22 +1,24 @@
 // >>SEMANTIC<< The rules of the language, not grammar or syntax!
-//  CLONING:
+//  ✅ CLONING:
 //      - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
 //      - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
 //      - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
-//  Assignment:
+//  ✅ Assignment:
 //      - ✅ arith-assign on new var or literal
 //      - ✅ re-assign on immutable vars
-//  Types:
-//      - ✅ expression (lhs & rhs) MUST have SAME type
-//      - ✅ expression operators only work on specified type_map, e.g:
+//  ✅ Types:
+//      ✅ Operators expect specific types.
 //          - "bool PLUS u8" doesn't compile
 //          - LogicalAnd: bool, UnaryMinus: signed int
-//      - ✅ statements expect specific type, e.g expr must eval to bool for 'if' statement.
-//      - ✅ intlit is not a concrete type, can be coerced into any integer, after bounds checked.
-//      - no implict type conversions, all explicit e.g: (type_1 as type_2)
-//      - integer bounds checks
+//      ✅ Type Conversions
+//          - Implicit: integers being converted to a larger integer, e.g u16 = u8
+//          - Explicit: Everything else, using syntax: type_x as type_y
+//      ❌ Integer Bounds Checks
 //          - requires me to interpret every arith expression? let it be ub for now :)
-//      - ✅ pointers, always have usize, not a defined type but an attribute, that modifies byte_size?
+//      ✅ IntegerLitereal Coercion
+//          - its not a concrete type and can be coerced into any integer, after bounds checked.
+//      ✅ Pointers
+//          - always have usize, not a defined type but an attribute, that modifies byte_size?
 //          - kindof its own type (set size), but loose (inherits type's attr)
 //          - a ptr is the original type with modified byte_width (4) & ptr flag set.
 //      ✅ FORM:
@@ -27,8 +29,7 @@
 //      ✅ Var impl:
 //          - store a "type" + modifications, "form".
 //          - e.g its i16, but a pointer! or.. an array!
-//      ✅ Structure Revision:
-//          Either passing Variable or Literal
+//      ✅ Structure Revision: Either passing Variable or Literal
 //          - Both: TypeMode, AddressingMode, e.g Boolean Array
 //          - Var: ptr to the var
 //          - Literal: Inherited Width
@@ -43,12 +44,17 @@
 //      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
 //          - Literals can be coerced into a type of same mode and addressing mode
 //          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
-//  ExprData Rethink (removal):
+
+//  ❌ ExprData Rethink (removal):
 //      - Consolidate TypeMode & AddresingMode to ExprForm::Expr
 //          - because ExprForm::Var holds a Variable,
 //          - Variable has a type (which has a typemode) & addressingmode
 //      - Con: lots of indirection faff
 //      - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
+
+//  ❌ Cpp Style Function overriding:
+//      - match function uniqueness based on its "signature" (name + argument types).
+//      - e.g func123(int,bool) != func123(int). UNIQUE!
 
 use crate::{
     debug, err,
@@ -134,7 +140,7 @@ pub struct SemVariable {
 // need name, return semantics, arg semantics
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemFn {
-    pub ident: Token,
+    pub signature: String,
     pub scope: NodeScope,
     pub arg_semantics: Vec<SemVariable>, // treat like semantic variables ??
     pub return_type_id: Option<usize>,
@@ -211,23 +217,25 @@ impl Checker {
         }
         checker.ast = sem_ast;
 
+        // TODO(TOM): this needs to be changed to be ".contains("main")"
         // Checking for Entry Point | main()
-        match checker.fn_map.get("main") {
-            Some(func) if !func.arg_semantics.is_empty() => {
-                err!(
-                    &checker,
-                    "The 'main' function takes no arguments =>\nremove {:#?}",
-                    func.arg_semantics
-                )
-            }
-            None => {
-                err!(
-                    &checker,
-                    "No entry point for the program found. Add a 'main' function."
-                )
-            }
-            _ => Ok(checker),
-        }
+        // match checker.fn_map.get("main") {
+        //     Some(func) if !func.arg_semantics.is_empty() => {
+        //         err!(
+        //             &checker,
+        //             "The 'main' function takes no arguments =>\nremove {:#?}",
+        //             func.arg_semantics
+        //         )
+        //     }
+        //     None => {
+        //         err!(
+        //             &checker,
+        //             "No entry point for the program found. Add a 'main' function."
+        //         )
+        //     }
+        //     _ => Ok(checker),
+        // }
+        Ok(checker)
     }
 
     fn check_func(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
@@ -240,7 +248,7 @@ impl Checker {
                 return_addr_mode,
             } => {
                 // check for name collisions
-                let fn_ident = ident.value.as_ref().unwrap().as_str();
+                let fn_ident = ident.as_str();
                 if self.fn_map.contains_key(fn_ident) {
                     return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
                 } else if self.type_map.contains_key(fn_ident) {
@@ -254,7 +262,7 @@ impl Checker {
                 let mut arg_idents: Vec<String> = Vec::new();
                 let mut arg_semantics = Vec::new();
                 for arg in args {
-                    let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
+                    let arg_ident = arg.ident.as_str();
 
                     // O(n^2) complexity.. funcs normally < ~5 params, so alright!
                     if arg_idents.contains(&arg.ident.value.as_ref().unwrap()) {
@@ -302,7 +310,7 @@ impl Checker {
 
                 match self.ctx.return_type_tok {
                     Some(ref ident) => {
-                        let return_ident = ident.value.as_ref().unwrap().as_str();
+                        let return_ident = ident.as_str();
                         let return_type_id = self.get_type_id(return_ident)?;
                         let return_type = self.types.get(return_type_id).unwrap();
                         let return_type_mode = match &return_type.form {
@@ -358,12 +366,27 @@ impl Checker {
                     checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
                 }
 
+                let signature = match ident.as_str() {
+                    "main" => "main".to_owned(),
+                    name @ _ => {
+                        let mut str = String::new();
+                        str += name;
+                        str += "(";
+                        for (i, arg) in arg_semantics.iter().enumerate() {
+                            str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                            str += ",";
+                        }
+                        str.pop(); // removes extra ','
+                        str + ")"
+                    }
+                };
+
                 self.ctx.in_function_decl = false;
                 self.ctx.scope_inherit_bounds_id = None;
                 self.fn_map.insert(
                     ident.value.as_ref().unwrap().clone(),
                     SemFn {
-                        ident: ident.clone(),
+                        signature: signature.clone(),
                         scope: checked_scope,
                         arg_semantics,
                         return_type_id: self.ctx.return_type_id,
@@ -371,13 +394,14 @@ impl Checker {
                     },
                 );
 
-                Ok(NodeStmt::FnSemantics { ident })
+                Ok(NodeStmt::FnSemantics { signature })
             }
             _ => {
-                err!(
-                    self,
-                    "A Program only consists of functions, this is a {stmt:?}"
-                )
+                self.check_stmt(stmt)
+                // err!(
+                //     self,
+                //     "A Program only consists of functions, this is a {stmt:?}"
+                // )
             }
         }
     }
@@ -392,14 +416,14 @@ impl Checker {
                 mutable,
             } => {
                 // check for name collisions
-                let str = ident.value.as_ref().unwrap().as_str();
+                let str = ident.as_str();
                 if self.var_map.contains_key(str) {
                     return err!(self, "Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = self.get_type_id(type_tok.value.as_ref().unwrap().as_str())?;
+                let type_id = self.get_type_id(type_tok.as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
                 // change byte width if its a pointer
@@ -456,7 +480,7 @@ impl Checker {
             }
             NodeStmt::Return(expr) if expr.is_some() => {
                 let ret_ident_str = match self.ctx.return_type_tok {
-                    Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
+                    Some(ref ident) => ident.as_str(),
                     None => unreachable!(),
                 };
                 let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
@@ -587,7 +611,7 @@ impl Checker {
                 ref ident,
                 ref expr,
             } => {
-                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(ident.as_str())?;
                 if !var.mutable {
                     return err!(self, "Re-assignment of a Constant:\n{var:#?}");
                 }
@@ -644,11 +668,7 @@ impl Checker {
             match self.vars.last() {
                 Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
                 Some(var) => {
-                    debug!(
-                        self,
-                        "Scope ended, removing '{}'",
-                        var.ident.value.as_ref().unwrap().as_str()
-                    );
+                    debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
                     let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
                     self.var_map.remove(var.ident.value.unwrap().as_str());
                 }
@@ -828,7 +848,7 @@ impl Checker {
             NodeTerm::Ident(tok) => {
                 self.update_pos(tok.pos);
 
-                let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(tok.as_str())?;
                 match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
                         type_mode: *type_mode,
@@ -862,7 +882,7 @@ impl Checker {
                 self.update_pos(ident.pos);
 
                 // check fn of that name exists
-                let str = ident.value.as_ref().unwrap().as_str();
+                let str = ident.as_str();
                 let fn_ref = match self.fn_map.get(str) {
                     Some(fn_ref) => fn_ref,
                     _ => return err!(self, "No associated function with attempted call. {str}"),

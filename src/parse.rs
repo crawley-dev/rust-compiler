@@ -72,7 +72,7 @@ pub enum NodeStmt {
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(SemVariable),
     FnSemantics {
-        ident: Token,
+        signature: String,
     },
     ReturnSemantics {
         expr: Option<ExprData>,
@@ -169,10 +169,11 @@ impl Parser {
                 })
             }
             Some(tok) => {
-                err!(
-                    self,
-                    "A Program only consists of functions, this is a {tok:?}"
-                )
+                self.parse_stmt()
+                // err!(
+                //     self,
+                //     "A Program only consists of functions, this is =>\n{tok:#?}"
+                // )
             }
             None => err!(self, "No function to parse"),
         }

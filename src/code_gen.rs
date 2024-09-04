@@ -5,16 +5,41 @@
 //  ✅ Pointers:
 //      - address of: get var's stk_pos and use "lea" to get the memory address
 //      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
-//     Stack Allocation:
-//      - allocate in chunks of 8 bytes (heard it somewhere),
+
+//  ❌ Stack Allocation:
+//      - allocate in chunks of 8 bytes (don't think its a formal thing!),
 //      - calculate size of all variables declared in a scope.
 //          - "sub rsp, SIZE_OF_VARS_BYTES" <- point rsp to top of the stack!
 //          - SIZE_OF_VARS is always a multiple of "8"
 //      - base pointer points to stack address at the start of a function
 //      - stack pointer points to the top of the stack.
 //      - push/pop ONLY for rbp, sub/add for all other allocation
-//     Global Variables:
-//      - stored in static memory ".data " section or ".bss" for zero-initialisation
+
+//  ❌ Global Variables:
+//       - stored in static memory ".data " section or ".bss" for zero-initialisation
+
+//  ❌ Functions:
+//       - https://www-users.cse.umn.edu/~smccaman/courses/8980/spring2020/lectures/03-x86-funcs-data-8up.pdf
+//       - Setup stackframe:
+//          - store current base pointer location
+//          - move stack pointer into base pointer.
+//          - use base pointer as offset into stack vars
+//       - End stackframe:
+//          - "pop rbp" <- put top of stack into base pointer (previous base pointer location
+//          - "ret" <- hands over program control to code at rbp address
+//
+//       - first six args are **always** stored in "rdi, rsi, rdx, rcx, r8, r9"
+//       - **return** value:
+//          - if 8 bytes or less: "eax / rax"
+//          - if 16 bytes or less: "edx/rdx" stores high bits (9-16)
+//          - if greater: "rdi" stores a pointer to the value.
+//
+//       - stack frames MUST have a 16 BYTE alignment
+//          - push extra bytes if not aligned?
+
+//  ❌ Calling FUNCTIONS:
+//      -"call _FUNC_NAME_"
+//      - return val in rax
 
 use crate::{
     debug, err,
@@ -23,6 +48,7 @@ use crate::{
     semantic::{Checker, SemFn, Type},
 };
 use std::collections::HashMap;
+type Bytes = usize;
 
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
@@ -33,7 +59,7 @@ struct GenVariable {
     ident: Token,
     width: usize,
     type_id: usize,
-    stk_index: usize,
+    stk_index: Bytes,
 }
 
 struct CodeGenContext {
@@ -41,10 +67,11 @@ struct CodeGenContext {
     label_count: usize,
     endif_label: String,
     loop_end_label: String,
+    scope_allocations: Bytes,
 }
 
 pub struct Generator {
-    stk_pos: usize,
+    stk_pos: Bytes,
     pos: (u32, u32),
     checker: Checker,
     ctx: CodeGenContext,
@@ -65,6 +92,7 @@ impl Generator {
             ctx: CodeGenContext {
                 reg_count: 0,
                 label_count: 0,
+                scope_allocations: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
@@ -72,7 +100,7 @@ impl Generator {
     }
 
     pub fn gen_asm(&mut self) -> Result<String, String> {
-        let mut asm = String::new();
+        let mut asm = "global main\n".to_string();
         while !self.checker.ast.stmts.is_empty() {
             let stmt = self.checker.ast.stmts.remove(0);
             asm += self.gen_func(stmt)?.as_str();
@@ -84,37 +112,15 @@ impl Generator {
         match stmt {
             // Create the potential code for a function, then store it in a map.
             // on function calls: read the information and use it.
-            NodeStmt::FnDecl {
-                ident,
-                args,
-                scope,
-                return_type_tok,
-                return_addr_mode,
-            } => {
-                // https://www-users.cse.umn.edu/~smccaman/courses/8980/spring2020/lectures/03-x86-funcs-data-8up.pdf
-                // Setup stackframe:
-                //  - store current base pointer location
-                //  - move stack pointer into base pointer.
-                //  - use base pointer as offset into stack vars
-                // End stackframe:
-                //  - "pop rbp" <- put top of stack into base pointer (previous base pointer location
-                //  - "ret" <- hands over program control to code at rbp address
-
-                // first six args are **always** stored in "rdi, rsi, rdx, rcx, r8, r9"
-                // **return** value is in "eax // rax" | "edx/rdx" for high bits
-
-                // stack frames MUST have a 16 BYTE alignment
-
-                // CALLING FUNCTIONS:
-                //
-
-                todo!("fn codegen")
+            NodeStmt::FnSemantics { signature } => {
+                todo!("")
             }
             _ => err!(
                 self,
-                "A Program only consists of functions, this is a {stmt:?}"
+                "A Program only consists of functions, this is =>\n{stmt:#?}"
             ),
         }
+        // self.gen_stmt(stmt)
     }
 
     // TODO: BYTE ARRAYS!
@@ -131,10 +137,7 @@ impl Generator {
                 ))
             }
             NodeStmt::VarSemantics(sem_var) => {
-                if self
-                    .get_var(sem_var.ident.value.as_ref().unwrap().as_str())
-                    .is_ok()
-                {
+                if self.get_var(sem_var.ident.as_str()).is_ok() {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let name = sem_var.ident.clone();
@@ -160,7 +163,7 @@ impl Generator {
                 Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
-                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(ident.as_str())?;
                 let ans_reg = self.gen_stk_access(var.stk_index, var.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
@@ -267,6 +270,8 @@ impl Generator {
     // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
         debug!("Beginning scope");
+
+        self.ctx.scope_allocations = 0;
         let var_count = self.stack.len();
         let mut asm = String::new();
         for stmt in scope.stmts {
@@ -278,15 +283,19 @@ impl Generator {
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => var,
-                None => return err!("uhh.. scope messed up"),
+                None => return err!("incorrect scope closure variable pop amount!"),
             };
             self.stk_pos -= popped_var.width;
-            self.var_map
-                .remove(popped_var.ident.value.as_ref().unwrap().as_str())
-                .unwrap();
+            self.var_map.remove(popped_var.ident.as_str()).unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
-        Ok(asm)
+        if self.ctx.scope_allocations > 0 {
+            todo!("scope allocations");
+            // TODO(TOM): Variable allocations made, allocate space on stack for them (subtract from rbp)
+            // Ok(format!("{}\n {asm}"))
+        } else {
+            Ok(asm)
+        }
     }
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
@@ -337,9 +346,7 @@ impl Generator {
                     ),
                     TokenKind::Ampersand => match operand_clone {
                         NodeExpr::Term(NodeTerm::Ident(name)) => {
-                            let stk_pos = self
-                                .get_var(name.value.as_ref().unwrap().as_str())?
-                                .stk_index;
+                            let stk_pos = self.get_var(name.as_str())?.stk_index;
                             format!("{SPACE}lea {reg}, [rbp+{stk_pos}]\n")
                         }
                         _ => return err!("Attempted 'addr_of' operation, found right hand value"),
@@ -357,6 +364,7 @@ impl Generator {
         // don't need to release reg if its just operation, just doing stuff on data.
         // only release if changing stack data.
         if let Some(reg) = ans_reg {
+            // this is an assign, allocate space for it ?
             asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
             self.release_reg();
         }
