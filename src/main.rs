@@ -25,7 +25,6 @@ fn main() {
     let contents = get_file_contents(&file_name);
     // println!("\n\n{:#?}\n\n", contents);
 
-    println!("\n");
     let tokens = Lexer::new(contents).tokenize();
     // print_tokens(&tokens);
     let ast = parse(tokens);
@@ -62,7 +61,56 @@ fn code_gen(data: Checker, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(data);
     match generator.gen_asm() {
-        Ok(string) => {
+        Ok(asm) => {
+            /* formatting */
+            let mut max_cmd_pos = 0; // longest cmd
+                                     // let mut max_comma_pos = 0; // longest until comma
+                                     // let mut max_comment_pos = 0; // longest until comment
+            for line in asm.lines() {
+                max_cmd_pos = max_cmd_pos.max(
+                    line.chars()
+                        .skip(4)
+                        .position(char::is_whitespace)
+                        .unwrap_or(0)
+                        + 4,
+                );
+                // max_comma_pos = max_comma_pos.max(line.chars().position(|x| x == ',').unwrap_or(0));
+                // max_comment_pos =
+                //     max_comment_pos.max(line.chars().position(|x| x == ';').unwrap_or(0));
+            }
+
+            // applying formatting to each line.
+            let mut fmt_asm = String::new();
+            for line in asm.lines() {
+                // Position is wrong by default! doesn't take into account iterations skipped!
+                let cmd_pos = line
+                    .chars()
+                    .skip(4)
+                    .position(|x| x.is_whitespace())
+                    .unwrap_or(0)
+                    + 4;
+                // let comma_pos = line.chars().position(|x| x == ',').unwrap_or(0).
+                // let comment_pos = line.chars().position(|x| x == ';').unwrap_or(0);
+
+                if cmd_pos != 0 && max_cmd_pos - cmd_pos != 0 {
+                    if line == "    cqo" {
+                        fmt_asm += &line[..cmd_pos];
+                        println!("pre:{:?}", &line[..cmd_pos]);
+                        fmt_asm += " ".repeat(max_cmd_pos - cmd_pos).as_str(); // add extra whitespace
+                        fmt_asm += &line[cmd_pos..];
+                        fmt_asm += "\n";
+                    } else {
+                        fmt_asm += &line[..cmd_pos];
+                        fmt_asm += " ".repeat(max_cmd_pos - cmd_pos).as_str(); // add extra whitespace
+                        fmt_asm += &line[cmd_pos..];
+                        fmt_asm += "\n";
+                    }
+                } else {
+                    fmt_asm += line;
+                }
+            }
+            /* formatting */
+
             println!("[COMPILER] output placed in '{file_path}'");
             let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
             // TODO(TOM): remove for functions impl
@@ -75,7 +123,7 @@ fn code_gen(data: Checker, file_name: String) {
             //          ; Program Start\n",
             // )
             // .unwrap();
-            file.write_all(string.as_bytes()).unwrap();
+            file.write_all(asm.as_bytes()).unwrap();
         }
         Err(e) => panic!("\n{e}\n"),
     };

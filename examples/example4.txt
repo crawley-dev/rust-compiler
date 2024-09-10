@@ -1,5 +1,15 @@
+let test: i32;
+test = 5;
+let test: i64;
+test = 10;
+/*
+
 fn plus5(arg1: i32, arg2: bool, arg3: i64, arg4: u8) -> i32 {
     return arg1 + 5;
+}
+
+fn plus5(arg1: i32) {
+    return arg1+ 5;
 }
 
 fn main() {

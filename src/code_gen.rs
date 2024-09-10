@@ -7,11 +7,11 @@
 //      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
 
 //  ❌ Stack Allocation:
-//      - allocate in chunks of 8 bytes (don't think its a formal thing!),
 //      - calculate size of all variables declared in a scope.
 //          - "sub rsp, SIZE_OF_VARS_BYTES" <- point rsp to top of the stack!
 //          - SIZE_OF_VARS is always a multiple of "8"
 //      - base pointer points to stack address at the start of a function
+//          - thats why always reference variables from start of the rbp
 //      - stack pointer points to the top of the stack.
 //      - push/pop ONLY for rbp, sub/add for all other allocation
 
@@ -45,10 +45,9 @@ use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{Checker, SemFn, Type},
+    semantic::{Byte, Checker, InitExpr, SemFn, Type},
 };
 use std::collections::HashMap;
-type Bytes = usize;
 
 const LOG_DEBUG_INFO: bool = false;
 const SPACE: &'static str = "    ";
@@ -57,9 +56,9 @@ const MSG: &'static str = "CODEGEN";
 #[derive(Debug, Clone, PartialEq)]
 struct GenVariable {
     ident: Token,
-    width: usize,
+    width: Byte,
     type_id: usize,
-    stk_index: Bytes,
+    stk_index: Byte,
 }
 
 struct CodeGenContext {
@@ -67,11 +66,11 @@ struct CodeGenContext {
     label_count: usize,
     endif_label: String,
     loop_end_label: String,
-    scope_allocations: Bytes,
+    scope_allocations: Byte,
 }
 
 pub struct Generator {
-    stk_pos: Bytes,
+    stk_pos: Byte,
     pos: (u32, u32),
     checker: Checker,
     ctx: CodeGenContext,
@@ -103,24 +102,26 @@ impl Generator {
         let mut asm = "global main\n".to_string();
         while !self.checker.ast.stmts.is_empty() {
             let stmt = self.checker.ast.stmts.remove(0);
-            asm += self.gen_func(stmt)?.as_str();
+            asm += self.gen_top_level(stmt)?.as_str();
         }
         Ok(asm)
     }
 
-    fn gen_func(&mut self, stmt: NodeStmt) -> Result<String, String> {
+    fn gen_top_level(&mut self, stmt: NodeStmt) -> Result<String, String> {
         match stmt {
             // Create the potential code for a function, then store it in a map.
             // on function calls: read the information and use it.
             NodeStmt::FnSemantics { signature } => {
                 todo!("")
             }
-            _ => err!(
-                self,
-                "A Program only consists of functions, this is =>\n{stmt:#?}"
-            ),
+            _ => {
+                self.gen_stmt(stmt)
+                //     err!(
+                //     self,
+                //     "A Program only consists of functions, this is =>\n{stmt:#?}"
+                // )
+            }
         }
-        // self.gen_stmt(stmt)
     }
 
     // TODO: BYTE ARRAYS!
@@ -154,7 +155,7 @@ impl Generator {
                 self.stack.push(var);
 
                 let mut str = String::new();
-                if let Some(expr) = sem_var.init_expr {
+                if let InitExpr::Some(expr) = sem_var.init_expr {
                     let stk_pos = self.gen_stk_access(self.stk_pos, sem_var.width);
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
@@ -289,13 +290,15 @@ impl Generator {
             self.var_map.remove(popped_var.ident.as_str()).unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
-        if self.ctx.scope_allocations > 0 {
-            todo!("scope allocations");
-            // TODO(TOM): Variable allocations made, allocate space on stack for them (subtract from rbp)
-            // Ok(format!("{}\n {asm}"))
-        } else {
-            Ok(asm)
+
+        if self.ctx.scope_allocations == 0 {
+            return Ok(asm);
         }
+        Ok(format!(
+            "{SPACE}sub rsp, {alloc}\n
+                 {asm}",
+            alloc = self.ctx.scope_allocations
+        ))
     }
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
@@ -527,21 +530,22 @@ impl Generator {
     }
 
     // TODO(TOM): need to use word_size??
-    fn gen_var_access(&self, stk_index: usize, word_size: usize) -> String {
+    fn gen_var_access(&self, stk_index: usize, word_size: Byte) -> String {
         format!("[rbp-{stk_index}]")
     }
 
-    fn gen_stk_access(&self, stk_index: usize, word_size: usize) -> String {
+    fn gen_stk_access(&mut self, stk_index: usize, word_size: Byte) -> String {
+        self.ctx.scope_allocations += word_size;
         format!("{} [rbp-{stk_index}]", self.gen_access_size(word_size))
     }
 
-    fn gen_access_size(&self, word_size: usize) -> &str {
+    fn gen_access_size(&self, word_size: Byte) -> &str {
         match word_size {
             1 => "byte",
             2 => "word",
             4 => "dword",
             8 => "qword",
-            _ => err!("Invalid word_size found: '{word_size}' .. should be unreachable?").unwrap(),
+            _ => unreachable!("Invalid word_size found: '{word_size}'"),
         }
     }
 
@@ -553,7 +557,7 @@ impl Generator {
                 self.ctx.reg_count += 1;
                 reg
             }
-            None => err!("out of registers! uhh probably should fix this").unwrap(),
+            None => panic!("out of registers! uhh probably should fix this"),
         }
     }
 
@@ -562,8 +566,7 @@ impl Generator {
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         match scratch_registers.get(index - 1) {
             Some(reg) => reg,
-            None => err!("out of registers! uhh probably should fix this").unwrap(),
-            // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
+            None => panic!("out of registers! uhh probably should fix this"), // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
         }
     }
 

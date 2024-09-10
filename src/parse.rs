@@ -4,8 +4,7 @@
 use crate::{
     debug, debugln, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::SemVariable,
-    AddressingMode, ExprData,
+    semantic::{AddressingMode, ExprData, InitExpr, SemVariable},
 };
 use std::collections::VecDeque;
 
@@ -41,7 +40,7 @@ pub enum NodeStmt {
         return_addr_mode: Option<AddressingMode>,
     },
     VarDecl {
-        init_expr: Option<NodeExpr>,
+        init_expr: InitExpr,
         ident: Token,
         type_tok: Token,
         type_addr_mode: AddressingMode,
@@ -119,64 +118,64 @@ impl Parser {
 
     pub fn parse_ast(&mut self) -> Result<AST, String> {
         let mut ast: AST = AST { stmts: Vec::new() };
-        while self.peek(0).is_some() {
-            ast.stmts.push(self.parse_func()?);
+        while let Some(_) = self.peek(0) {
+            ast.stmts.push(self.parse_top_level()?);
         }
         Ok(ast)
     }
 
-    fn parse_func(&mut self) -> Result<NodeStmt, String> {
+    fn parse_top_level(&mut self) -> Result<NodeStmt, String> {
         match self.peek(0) {
-            Some(tok) if tok.kind == TokenKind::Fn => {
-                self.expect(TokenKind::Fn)?;
-                let ident = self.expect(TokenKind::Ident)?;
-                self.expect(TokenKind::OpenParen)?;
-
-                let mut args = Vec::new();
-                while self.token_equals(TokenKind::CloseParen, 0).is_err() {
-                    if args.len() > 0 {
-                        self.expect(TokenKind::Comma)?;
-                    }
-
-                    let mutable = self.expect(TokenKind::Mut).is_ok();
-                    let ident = self.expect(TokenKind::Ident)?;
-                    self.expect(TokenKind::Colon)?;
-                    let (type_tok, addr_mode) = self.parse_type()?;
-                    args.push(Arg {
-                        mutable,
-                        ident,
-                        type_tok,
-                        addr_mode,
-                    });
-                }
-                self.expect(TokenKind::CloseParen)?;
-
-                let mut return_type_tok = None;
-                let mut return_addr_mode = None;
-                if self.expect(TokenKind::Arrow).is_ok() {
-                    let (tok, addr_mode) = self.parse_type()?;
-                    return_type_tok = Some(tok);
-                    return_addr_mode = Some(addr_mode);
-                }
-                let scope = self.parse_scope()?;
-
-                Ok(NodeStmt::FnDecl {
-                    ident,
-                    args,
-                    scope,
-                    return_type_tok,
-                    return_addr_mode,
-                })
-            }
-            Some(tok) => {
-                self.parse_stmt()
+            Some(tok) if tok.kind != TokenKind::Fn => {
+                return self.parse_stmt();
                 // err!(
                 //     self,
                 //     "A Program only consists of functions, this is =>\n{tok:#?}"
                 // )
             }
-            None => err!(self, "No function to parse"),
+            Some(_) => (),
+            None => return err!(self, "No token to parse"),
+        };
+
+        self.expect(TokenKind::Fn)?;
+        let ident = self.expect(TokenKind::Ident)?;
+        self.expect(TokenKind::OpenParen)?;
+
+        let mut args = Vec::new();
+        while self.token_equals(TokenKind::CloseParen, 0).is_err() {
+            if args.len() > 0 {
+                self.expect(TokenKind::Comma)?;
+            }
+
+            let mutable = self.expect(TokenKind::Mut).is_ok();
+            let ident = self.expect(TokenKind::Ident)?;
+            self.expect(TokenKind::Colon)?;
+            let (type_tok, addr_mode) = self.parse_type()?;
+            args.push(Arg {
+                mutable,
+                ident,
+                type_tok,
+                addr_mode,
+            });
         }
+        self.expect(TokenKind::CloseParen)?;
+
+        let mut return_type_tok = None;
+        let mut return_addr_mode = None;
+        if self.expect(TokenKind::Arrow).is_ok() {
+            let (tok, addr_mode) = self.parse_type()?;
+            return_type_tok = Some(tok);
+            return_addr_mode = Some(addr_mode);
+        }
+        let scope = self.parse_scope()?;
+
+        Ok(NodeStmt::FnDecl {
+            ident,
+            args,
+            scope,
+            return_type_tok,
+            return_addr_mode,
+        })
     }
 
     fn parse_stmt(&mut self) -> Result<NodeStmt, String> {
@@ -196,8 +195,8 @@ impl Parser {
                 let (type_tok, type_addr_mode) = self.parse_type()?;
 
                 let init_expr = match self.expect(TokenKind::Eq) {
-                    Ok(_) => Some(self.parse_expr(0)?),
-                    Err(_) => None,
+                    Ok(_) => InitExpr::Some(self.parse_expr(0)?),
+                    Err(_) => InitExpr::None,
                 };
 
                 NodeStmt::VarDecl {
@@ -257,10 +256,13 @@ impl Parser {
                 let ident = self.expect(TokenKind::Ident)?;
                 match self.peek(0) {
                     // Assignment: consume ident & '='. parse expr.
-                    Some(tok) if tok.kind == TokenKind::Eq => NodeStmt::Assign {
-                        ident,
-                        expr: self.parse_expr(0)?,
-                    },
+                    Some(tok) if tok.kind == TokenKind::Eq => {
+                        self.expect(TokenKind::Eq)?;
+                        NodeStmt::Assign {
+                            ident,
+                            expr: self.parse_expr(0)?,
+                        }
+                    }
                     // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
                     //      - 'ident += 5;' => 'ident + 5;'
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
@@ -304,7 +306,7 @@ impl Parser {
     }
 
     fn parse_scope(&mut self) -> Result<NodeScope, String> {
-        // consumes statements until a matching closebrace is found.
+        // consumes statements until a closebrace is found.
         self.expect(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
         while self.expect(TokenKind::CloseBrace).is_err() {

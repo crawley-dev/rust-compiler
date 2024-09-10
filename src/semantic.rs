@@ -66,7 +66,8 @@ use std::{
     ptr::NonNull,
 };
 
-const PTR_WIDTH: usize = 8;
+pub type Byte = usize;
+const PTR_WIDTH: Byte = 8;
 const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "SEMANTIC";
 
@@ -102,9 +103,9 @@ pub enum TypeForm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
-    Expr { inherited_width: usize },
+    Expr { inherited_width: Byte },
     // Expr {
-    //     inherited_width: usize,
+    //     inherited_width: Byte,
     //     type_mode: TypeMode,
     //     addr_mode: AddressingMode,
     // },
@@ -121,20 +122,27 @@ pub struct ExprData {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Type {
-    pub width: usize,
+    pub width: Byte,
     pub ident: String,
     pub form: TypeForm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InitExpr {
+    Some(NodeExpr),
+    None,
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemVariable {
     pub ident: Token,
     pub mutable: bool,
-    pub width: usize,
+    pub width: Byte,
     pub scope_id: usize,
     pub type_id: usize, // Can get a TypeMode from this
     pub addr_mode: AddressingMode,
-    pub init_expr: Option<NodeExpr>,
+    pub init_expr: InitExpr,
 }
 
 // need name, return semantics, arg semantics
@@ -213,32 +221,36 @@ impl Checker {
 
         let mut sem_ast = AST { stmts: Vec::new() };
         for stmt in ast.stmts {
-            sem_ast.stmts.push(checker.check_func(stmt)?);
+            sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
         checker.ast = sem_ast;
 
-        // TODO(TOM): this needs to be changed to be ".contains("main")"
+        // TODO(TOM): for ref, cpp "main" function either:
+        //      - takes no arguments, main().
+        //      - takes 2 arguments, main(int argc, char* argv[]).
+        //          - argc: amount of arguments given when the program is run (cmd line!)
+        //          - argv: an array of length argc+1, each pointer points to a null terminated char[]
+        // Instead: use one array with length
         // Checking for Entry Point | main()
-        // match checker.fn_map.get("main") {
-        //     Some(func) if !func.arg_semantics.is_empty() => {
-        //         err!(
-        //             &checker,
-        //             "The 'main' function takes no arguments =>\nremove {:#?}",
-        //             func.arg_semantics
-        //         )
-        //     }
-        //     None => {
-        //         err!(
-        //             &checker,
-        //             "No entry point for the program found. Add a 'main' function."
-        //         )
-        //     }
-        //     _ => Ok(checker),
-        // }
-        Ok(checker)
+        match checker.fn_map.get("main") {
+            //     Some(func) if !func.arg_semantics.is_empty() => {
+            //         err!(
+            //             &checker,
+            //             "The 'main' function takes no arguments =>\nremove {:#?}",
+            //             func.arg_semantics
+            //         )
+            //     }
+            //     None => {
+            //         err!(
+            //             &checker,
+            //             "No entry point for the program found. Add a 'main' function."
+            //         )
+            //     }
+            _ => Ok(checker),
+        }
     }
 
-    fn check_func(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
             NodeStmt::FnDecl {
                 ident,
@@ -291,7 +303,7 @@ impl Checker {
                         scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
                         type_id,
                         addr_mode: arg.addr_mode,
-                        init_expr: None,
+                        init_expr: InitExpr::None,
                     });
                     arg_idents.push(
                         arg_semantics
@@ -449,7 +461,7 @@ impl Checker {
                 self.vars.push(var.clone());
 
                 // check intial expression
-                if let Some(ref expr) = var.init_expr {
+                if let InitExpr::Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
                     let var_data = ExprData {
                         type_mode: {
@@ -612,11 +624,19 @@ impl Checker {
                 ref expr,
             } => {
                 let var = self.get_var(ident.as_str())?;
+                let var_data = self.get_exprdata(var)?;
                 if !var.mutable {
-                    return err!(self, "Re-assignment of a Constant:\n{var:#?}");
+                    // if the variable is not initialised, this is the initialisation!
+                    match var.init_expr {
+                        InitExpr::None => {
+                            let var_mut = self.get_var_mut(ident.as_str())?;
+                            var_mut.init_expr = InitExpr::Deferred
+                        }
+                        _ => return err!(self, "Re-assignment of a Constant:\n{var:#?}"),
+                    }
                 }
                 let checked = self.check_expr(expr)?;
-                self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
+                self.check_type_equivalence(&var_data, &checked)?;
                 Ok(stmt)
             }
             NodeStmt::Exit(ref expr) => {
@@ -682,7 +702,7 @@ impl Checker {
         })
     }
 
-    // Compiler doesn't understand type of 'None', so must annotate. but thats cumbersome!
+    // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
     fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
         self.check_scope(
             scope,
@@ -1019,6 +1039,27 @@ impl Checker {
             }
             Some(idx) => {
                 let var = self.vars.get(*idx).unwrap();
+                if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
+                    return err!(
+                        self,
+                        "Variable '{ident}' outside scope inheritance bounds, {} < {}",
+                        var.scope_id,
+                        self.ctx.scope_inherit_bounds_id.unwrap()
+                    );
+                }
+                Ok(var)
+            }
+            None => err!(self, "Variable '{ident}' not found"),
+        }
+    }
+
+    fn get_var_mut(&mut self, ident: &str) -> Result<&mut SemVariable, String> {
+        match self.var_map.get(ident) {
+            Some(idx) if self.ctx.scope_inherit_bounds_id.is_none() => {
+                Ok(self.vars.get_mut(*idx).unwrap())
+            }
+            Some(idx) => {
+                let var = self.vars.get_mut(*idx).unwrap();
                 if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
                     return err!(
                         self,
