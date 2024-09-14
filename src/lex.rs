@@ -403,7 +403,6 @@ impl Lexer {
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
                 value: Some(buf_str),
-                // value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -414,13 +413,11 @@ impl Lexer {
             Some(kind) => Some(Token {
                 kind: kind.clone(),
                 value: None,
-                // value: "".to_string(),
                 pos: (self.pos.0, self.pos.1),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
                 value: Some(buf_str),
-                // value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -433,7 +430,6 @@ impl Lexer {
                     return Some(Token {
                         kind: *kind,
                         value: None,
-                        // value: "".to_string(),
                         pos: (self.pos.0, self.pos.1),
                     });
                 }

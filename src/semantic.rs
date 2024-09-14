@@ -220,7 +220,9 @@ impl Checker {
             checker.type_map.insert(base.ident.clone(), n);
         }
 
-        let mut sem_ast = AST { stmts: Vec::new() };
+        let mut sem_ast = AST {
+            stmts: Vec::with_capacity(ast.stmts.len()),
+        };
         for stmt in ast.stmts {
             sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
@@ -895,45 +897,75 @@ impl Checker {
                 // check fn of that name exists
                 // iterating over hash map aswell! bad!!!
 
-                // iterate over fn_map
-                // delimit by '(', take first to get fn_str
-                // compare to attempted fncall
-                // match to see if associated function is found for call.
+                // check args are of valid type
+                // for (i, arg) in args.into_iter().enumerate() {
+                //     let arg_expr = self.check_expr(&arg)?;
+                //     let fn_arg =
+                //         self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
+                //     self.check_type_equivalence(&fn_arg, &arg_expr)?;
+                // }
+
                 let fn_str = ident.as_str();
-                let is_fn_name_valid = self.fn_map.iter().find(|(sig, fn_ref)| {
-                    sig.as_str()
-                        .split('(')
-                        .collect::<Vec<&str>>()
-                        .get(1)
-                        .unwrap()
-                        == &fn_str
-                });
-                let (signature, fn_ref) = match is_fn_name_valid {
-                    Some((sig, fn_ref)) => (sig.as_str(), fn_ref),
-                    None => {
-                        return err!(
-                            self,
-                            "No associated function with attempted call. '{fn_str}'"
-                        )
+                let mut args_data = Vec::with_capacity(args.len());
+                for arg in args.into_iter() {
+                    args_data.push(self.check_expr(arg)?);
+                }
+
+                // construct a function signature!!
+                let signature = match ident.as_str() {
+                    "main" => "main".to_owned(),
+                    name @ _ => {
+                        let mut str = String::new();
+                        str += name;
+                        str += "(";
+                        for (i, arg) in args_data.iter().enumerate() {
+                            // ExprData => Type
+                            // str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                            str += ",";
+                        }
+                        str.pop(); // removes extra ','
+                        str + ")"
                     }
                 };
 
-                // check correct amount of arguments
-                if args.len() != fn_ref.arg_semantics.len() {
-                    return err!(
-                        self,
-                        "Incorrect amount of arguments for function '{signature}'. {} missing",
-                        fn_ref.arg_semantics.len() - args.len()
-                    );
-                }
+                // iterate over fn_map
+                // compare to attempted fncall
+                //      - amount of args first
+                //      - compare each arg id.
+                //      - then by name (delimit by '(')
+                // match to see if associated function is found for call.
+                // for (sig, fn_ref) in &self.fn_map {
+                //     if fn_ref.arg_semantics.len() != args.len() {
+                //         continue;
+                //     }
+                // }
 
-                // check args are of valid type
-                for (i, arg) in args.into_iter().enumerate() {
-                    let arg_expr = self.check_expr(&arg)?;
-                    let fn_arg =
-                        self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
-                    self.check_type_equivalence(&fn_arg, &arg_expr)?;
-                }
+                // let is_fn_name_valid = self.fn_map.iter().find(|(sig, fn_ref)| {
+                //     sig.as_str()
+                //         .split('(')
+                //         .collect::<Vec<&str>>()
+                //         .get(0)
+                //         .unwrap()
+                //         == &fn_str
+                // });
+                // let (signature, fn_ref) = match is_fn_name_valid {
+                //     Some((sig, fn_ref)) => (sig.as_str(), fn_ref),
+                //     None => {
+                //         return err!(
+                //             self,
+                //             "No associated function with attempted call. '{fn_str}'"
+                //         )
+                //     }
+                // };
+
+                // check correct amount of arguments
+                // if args.len() != fn_ref.arg_semantics.len() {
+                //     return err!(
+                //         self,
+                //         "Incorrect amount of arguments for function '{signature}'. {} missing",
+                //         fn_ref.arg_semantics.len() - args.len()
+                //     );
+                // }
 
                 Ok(fn_ref.return_type_data.unwrap())
             }

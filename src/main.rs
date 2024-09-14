@@ -52,8 +52,8 @@ fn semantic_check(ast: AST) -> Checker {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     match semantic::Checker::check_ast(ast.clone()) {
         Ok(data) => data,
-        // Err(e) => panic!("\n{e}\n"),
-        Err(e) => panic!("{ast:#?}\n\n{e}\n"),
+        Err(e) => panic!("\n{e}\n"),
+        // Err(e) => panic!("{ast:#?}\n\n{e}\n"),
     }
 }
 
