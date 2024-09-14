@@ -86,7 +86,7 @@ fn code_gen(data: Checker, file_name: String) {
 
 fn print_tokens(tokens: &VecDeque<Token>) {
     fn fmt_123(tok: &Token) -> String {
-        match tok.value.as_str() {
+        match tok.as_str() {
             // Some(val) => match tok.kind {
             //     TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
             //     _ => format!("{:?}({val})", tok.kind),

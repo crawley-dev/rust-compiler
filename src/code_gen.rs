@@ -151,7 +151,7 @@ impl Generator {
 
                 self.stk_pos += sem_var.width;
                 self.var_map
-                    .insert(var.ident.value.clone(), self.stack.len());
+                    .insert(var.ident.as_str().to_string(), self.stack.len());
                 self.stack.push(var);
 
                 let mut str = String::new();
@@ -160,7 +160,7 @@ impl Generator {
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
                 str.pop(); // remove '\n'
-                str += format!(" ; Ident('{}')\n", name.value.as_str()).as_str();
+                str += format!(" ; Ident('{}')\n", name.as_str()).as_str();
                 Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
@@ -383,11 +383,11 @@ impl Generator {
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
-                Ok(format!("{SPACE}mov {reg}, {}\n", tok.value))
+                Ok(format!("{SPACE}mov {reg}, {}\n", tok.as_str()))
             }
             NodeTerm::Ident(tok) => {
                 self.pos = tok.pos;
-                let var = self.get_var(tok.value.as_str())?;
+                let var = self.get_var(tok.as_str())?;
                 let stk_pos = self.gen_var_access(var.stk_index, var.width);
                 let reg = match ans_reg {
                     Some(reg) => reg,

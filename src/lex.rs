@@ -214,8 +214,7 @@ enum BufKind {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
-    // pub value: Option<String>,
-    pub value: String,
+    pub value: Option<String>,
     pub pos: (u32, u32),
 }
 
@@ -403,8 +402,8 @@ impl Lexer {
             BufKind::Symbol => self.match_symbol(buf_str),
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
-                // value: Some(buf_str),
-                value: buf_str,
+                value: Some(buf_str),
+                // value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -414,14 +413,14 @@ impl Lexer {
         match self.reg.get(buf_str.as_str()) {
             Some(kind) => Some(Token {
                 kind: kind.clone(),
-                // value: None,
-                value: "".to_string(),
+                value: None,
+                // value: "".to_string(),
                 pos: (self.pos.0, self.pos.1),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
-                // value: Some(buf_str),
-                value: buf_str,
+                value: Some(buf_str),
+                // value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -433,8 +432,8 @@ impl Lexer {
                 Some(kind) => {
                     return Some(Token {
                         kind: *kind,
-                        // value: None,
-                        value: "".to_string(),
+                        value: None,
+                        // value: "".to_string(),
                         pos: (self.pos.0, self.pos.1),
                     });
                 }

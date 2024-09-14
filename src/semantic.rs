@@ -277,7 +277,7 @@ impl Checker {
 
                     // O(n^2) complexity.. funcs normally < ~6 params, so alright! use set otherwise
                     // need this to create signature, so can't give most accurate err msgs..
-                    if arg_idents.contains(&arg.ident.value) {
+                    if arg_idents.contains(arg.ident.value.as_ref().unwrap()) {
                         return err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
@@ -293,7 +293,7 @@ impl Checker {
                         );
                     }
 
-                    let type_id = self.get_type_id(arg.type_tok.value.as_str())?;
+                    let type_id = self.get_type_id(arg.type_tok.as_str())?;
                     let type_ref = self.types.get(type_id).unwrap();
 
                     arg_semantics.push(SemVariable {
@@ -369,7 +369,7 @@ impl Checker {
                     for arg in &arg_semantics {
                         // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
                         self.var_map
-                            .insert(arg.ident.value.clone(), self.vars.len());
+                            .insert(arg.ident.as_str().to_string(), self.vars.len());
                         self.vars.push(arg.clone());
                     }
 
@@ -456,7 +456,7 @@ impl Checker {
                 };
                 // insert into registry
                 self.var_map
-                    .insert(var.ident.value.clone(), self.vars.len());
+                    .insert(var.ident.as_str().to_string(), self.vars.len());
                 self.vars.push(var.clone());
 
                 // check intial expression
@@ -681,7 +681,7 @@ impl Checker {
                 Some(var) => {
                     // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
                     let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
-                    self.var_map.remove(var.ident.value.as_str());
+                    self.var_map.remove(var.ident.as_str());
                 }
                 None => break,
             }
@@ -1037,7 +1037,7 @@ impl Checker {
                 NodeTerm::False => "false".to_string(),
                 NodeTerm::IntLit(tok)
                 | NodeTerm::Ident(tok)
-                | NodeTerm::FnCall { ident: tok, .. } => tok.value.clone(),
+                | NodeTerm::FnCall { ident: tok, .. } => tok.as_str().to_string(),
             },
         }
     }
