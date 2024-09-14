@@ -109,10 +109,7 @@ impl Generator {
                 ))
             }
             NodeStmt::VarSemantics(sem_var) => {
-                if self
-                    .get_var(sem_var.ident.value.as_ref().unwrap().as_str())
-                    .is_ok()
-                {
+                if self.get_var(sem_var.ident.value.as_str()).is_ok() {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let name = sem_var.ident.clone();
@@ -125,7 +122,7 @@ impl Generator {
 
                 self.stk_pos += sem_var.width;
                 self.var_map
-                    .insert(var.ident.value.as_ref().unwrap().clone(), self.stack.len());
+                    .insert(var.ident.value.clone(), self.stack.len());
                 self.stack.push(var);
 
                 let mut str = String::new();
@@ -134,11 +131,11 @@ impl Generator {
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
                 str.pop(); // remove '\n'
-                str += format!(" ; Ident('{}')\n", name.value.as_ref().unwrap()).as_str();
+                str += format!(" ; Ident('{}')\n", name.value.as_str()).as_str();
                 Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
-                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(ident.value.as_str())?;
                 let ans_reg = self.gen_stk_access(var.stk_index, var.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
@@ -260,7 +257,7 @@ impl Generator {
             };
             self.stk_pos -= popped_var.width;
             self.var_map
-                .remove(popped_var.ident.value.as_ref().unwrap().as_str())
+                .remove(popped_var.ident.value.as_str())
                 .unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
@@ -315,9 +312,7 @@ impl Generator {
                     ),
                     TokenKind::Ampersand => match operand_clone {
                         NodeExpr::Term(NodeTerm::Ident(name)) => {
-                            let stk_pos = self
-                                .get_var(name.value.as_ref().unwrap().as_str())?
-                                .stk_index;
+                            let stk_pos = self.get_var(name.value.as_str())?.stk_index;
                             format!("{SPACE}lea {reg}, [rbp+{stk_pos}]\n")
                         }
                         _ => return err!("Attempted 'addr_of' operation, found right hand value"),
@@ -350,15 +345,11 @@ impl Generator {
                     Some(reg) => reg,
                     None => self.next_reg(),
                 };
-                Ok(format!(
-                    "{SPACE}mov {reg}, {}\n",
-                    tok.value.as_ref().unwrap()
-                ))
+                Ok(format!("{SPACE}mov {reg}, {}\n", tok.value))
             }
             NodeTerm::Ident(tok) => {
                 self.pos = tok.pos;
-                let ident = tok.value.clone().unwrap();
-                let var = self.get_var(ident.as_str())?;
+                let var = self.get_var(tok.value.as_str())?;
                 let stk_pos = self.gen_var_access(var.stk_index, var.width);
                 let reg = match ans_reg {
                     Some(reg) => reg,

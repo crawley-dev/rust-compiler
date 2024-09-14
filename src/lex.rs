@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "LEX";
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
     // Generic Symbols
     Comma,             // ","
@@ -214,7 +214,8 @@ enum BufKind {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
-    pub value: Option<String>,
+    // pub value: Option<String>,
+    pub value: String,
     pub pos: (u32, u32),
 }
 
@@ -393,7 +394,8 @@ impl Lexer {
             BufKind::Symbol => self.match_symbol(buf_str),
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
-                value: Some(buf_str),
+                // value: Some(buf_str),
+                value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -403,12 +405,14 @@ impl Lexer {
         match self.reg.get(buf_str.as_str()) {
             Some(kind) => Some(Token {
                 kind: kind.clone(),
-                value: None,
+                // value: None,
+                value: "".to_string(),
                 pos: (self.pos.0, self.pos.1),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
-                value: Some(buf_str),
+                // value: Some(buf_str),
+                value: buf_str,
                 pos: (self.pos.0, self.pos.1),
             }),
         }
@@ -419,8 +423,9 @@ impl Lexer {
             match self.reg.get(buf_str.as_str()) {
                 Some(kind) => {
                     return Some(Token {
-                        kind: kind.clone(),
-                        value: None,
+                        kind: *kind,
+                        // value: None,
+                        value: "".to_string(),
                         pos: (self.pos.0, self.pos.1),
                     });
                 }

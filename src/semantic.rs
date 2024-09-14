@@ -240,7 +240,7 @@ impl Checker {
                 return_addr_mode,
             } => {
                 // check for name collisions
-                let fn_ident = ident.value.as_ref().unwrap().as_str();
+                let fn_ident = ident.value.as_str();
                 if self.fn_map.contains_key(fn_ident) {
                     return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
                 } else if self.type_map.contains_key(fn_ident) {
@@ -254,10 +254,10 @@ impl Checker {
                 let mut arg_idents: Vec<String> = Vec::new();
                 let mut arg_semantics = Vec::new();
                 for arg in args {
-                    let arg_ident = arg.ident.value.as_ref().unwrap().as_str();
+                    let arg_ident = arg.ident.value.as_str();
 
                     // O(n^2) complexity.. funcs normally < ~5 params, so alright!
-                    if arg_idents.contains(&arg.ident.value.as_ref().unwrap()) {
+                    if arg_idents.contains(&arg.ident.value) {
                         return err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
@@ -273,7 +273,7 @@ impl Checker {
                         );
                     }
 
-                    let type_id = self.get_type_id(&arg.type_tok.value.unwrap())?;
+                    let type_id = self.get_type_id(arg.type_tok.value.as_str())?;
                     let type_ref = self.types.get(type_id).unwrap();
 
                     arg_semantics.push(SemVariable {
@@ -291,8 +291,8 @@ impl Checker {
                             .unwrap()
                             .ident
                             .value
-                            .as_ref()
-                            .unwrap()
+                            // .as_ref()
+                            // .unwrap()
                             .clone(),
                     );
                 }
@@ -302,7 +302,7 @@ impl Checker {
 
                 match self.ctx.return_type_tok {
                     Some(ref ident) => {
-                        let return_ident = ident.value.as_ref().unwrap().as_str();
+                        let return_ident = ident.value.as_str();
                         let return_type_id = self.get_type_id(return_ident)?;
                         let return_type = self.types.get(return_type_id).unwrap();
                         let return_type_mode = match &return_type.form {
@@ -336,7 +336,7 @@ impl Checker {
                     for arg in &arg_semantics {
                         // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
                         self.var_map
-                            .insert(arg.ident.value.as_ref().unwrap().clone(), self.vars.len());
+                            .insert(arg.ident.value.clone(), self.vars.len());
                         self.vars.push(arg.clone());
                     }
 
@@ -361,7 +361,7 @@ impl Checker {
                 self.ctx.in_function_decl = false;
                 self.ctx.scope_inherit_bounds_id = None;
                 self.fn_map.insert(
-                    ident.value.as_ref().unwrap().clone(),
+                    ident.value.clone(),
                     SemFn {
                         ident: ident.clone(),
                         scope: checked_scope,
@@ -392,14 +392,14 @@ impl Checker {
                 mutable,
             } => {
                 // check for name collisions
-                let str = ident.value.as_ref().unwrap().as_str();
+                let str = ident.value.as_str();
                 if self.var_map.contains_key(str) {
                     return err!(self, "Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = self.get_type_id(type_tok.value.as_ref().unwrap().as_str())?;
+                let type_id = self.get_type_id(type_tok.value.as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
                 // change byte width if its a pointer
@@ -421,7 +421,7 @@ impl Checker {
                 };
                 // insert into registry
                 self.var_map
-                    .insert(var.ident.value.as_ref().unwrap().clone(), self.vars.len());
+                    .insert(var.ident.value.clone(), self.vars.len());
                 self.vars.push(var.clone());
 
                 // check intial expression
@@ -456,7 +456,7 @@ impl Checker {
             }
             NodeStmt::Return(expr) if expr.is_some() => {
                 let ret_ident_str = match self.ctx.return_type_tok {
-                    Some(ref ident) => ident.value.as_ref().unwrap().as_str(),
+                    Some(ref ident) => ident.value.as_str(),
                     None => unreachable!(),
                 };
                 let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
@@ -478,8 +478,7 @@ impl Checker {
                 let expr_type_data = self.check_expr(&expr)?;
 
                 // checked prior to "check_type_equivalence" for better err message
-                if expr_type_data.addr_mode != self.ctx.return_type_data.as_ref().unwrap().addr_mode
-                {
+                if expr_type_data.addr_mode != self.ctx.return_type_data.unwrap().addr_mode {
                     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
                 }
                 self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
@@ -587,7 +586,7 @@ impl Checker {
                 ref ident,
                 ref expr,
             } => {
-                let var = self.get_var(ident.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(ident.value.as_str())?;
                 if !var.mutable {
                     return err!(self, "Re-assignment of a Constant:\n{var:#?}");
                 }
@@ -644,13 +643,9 @@ impl Checker {
             match self.vars.last() {
                 Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
                 Some(var) => {
-                    debug!(
-                        self,
-                        "Scope ended, removing '{}'",
-                        var.ident.value.as_ref().unwrap().as_str()
-                    );
+                    debug!(self, "Scope ended, removing '{}'", var.ident.value.as_str());
                     let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
-                    self.var_map.remove(var.ident.value.unwrap().as_str());
+                    self.var_map.remove(var.ident.value.as_str());
                 }
                 None => break,
             }
@@ -828,7 +823,7 @@ impl Checker {
             NodeTerm::Ident(tok) => {
                 self.update_pos(tok.pos);
 
-                let var = self.get_var(tok.value.as_ref().unwrap().as_str())?;
+                let var = self.get_var(tok.value.as_str())?;
                 match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
                         type_mode: *type_mode,
@@ -862,7 +857,7 @@ impl Checker {
                 self.update_pos(ident.pos);
 
                 // check fn of that name exists
-                let str = ident.value.as_ref().unwrap().as_str();
+                let str = ident.value.as_str();
                 let fn_ref = match self.fn_map.get(str) {
                     Some(fn_ref) => fn_ref,
                     _ => return err!(self, "No associated function with attempted call. {str}"),
@@ -987,7 +982,7 @@ impl Checker {
                 NodeTerm::False => "false".to_string(),
                 NodeTerm::IntLit(tok)
                 | NodeTerm::Ident(tok)
-                | NodeTerm::FnCall { ident: tok, .. } => tok.value.as_ref().unwrap().clone(),
+                | NodeTerm::FnCall { ident: tok, .. } => tok.value.clone(),
             },
         }
     }
