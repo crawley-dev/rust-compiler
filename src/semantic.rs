@@ -894,17 +894,36 @@ impl Checker {
                 self.update_pos(ident.pos);
 
                 // check fn of that name exists
-                let str = ident.as_str();
-                let fn_ref = match self.fn_map.get(str) {
-                    Some(fn_ref) => fn_ref,
-                    _ => return err!(self, "No associated function with attempted call. {str}"),
+                // iterating over hash map aswell! bad!!!
+
+                // iterate over fn_map
+                // delimit by '(', take first to get fn_str
+                // compare to attempted fncall
+                // match to see if associated function is found for call.
+                let fn_str = ident.as_str();
+                let is_fn_name_valid = self.fn_map.iter().find(|(sig, fn_ref)| {
+                    sig.as_str()
+                        .split('(')
+                        .collect::<Vec<&str>>()
+                        .get(1)
+                        .unwrap()
+                        == &fn_str
+                });
+                let (signature, fn_ref) = match is_fn_name_valid {
+                    Some((sig, fn_ref)) => (sig.as_str(), fn_ref),
+                    None => {
+                        return err!(
+                            self,
+                            "No associated function with attempted call. '{fn_str}'"
+                        )
+                    }
                 };
 
                 // check correct amount of arguments
                 if args.len() != fn_ref.arg_semantics.len() {
                     return err!(
                         self,
-                        "Incorrect amount of arguments for function '{str}'. {} missing",
+                        "Incorrect amount of arguments for function '{signature}'. {} missing",
                         fn_ref.arg_semantics.len() - args.len()
                     );
                 }
