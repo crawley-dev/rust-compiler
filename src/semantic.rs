@@ -1,22 +1,24 @@
 // >>SEMANTIC<< The rules of the language, not grammar or syntax!
-//  CLONING:
+//  ✅ CLONING:
 //      - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
 //      - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
 //      - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
-//  Assignment:
+//  ✅ Assignment:
 //      - ✅ arith-assign on new var or literal
 //      - ✅ re-assign on immutable vars
-//  Types:
-//      - ✅ expression (lhs & rhs) MUST have SAME type
-//      - ✅ expression operators only work on specified type_map, e.g:
+//  ✅ Types:
+//      ✅ Operators expect specific types.
 //          - "bool PLUS u8" doesn't compile
 //          - LogicalAnd: bool, UnaryMinus: signed int
-//      - ✅ statements expect specific type, e.g expr must eval to bool for 'if' statement.
-//      - ✅ intlit is not a concrete type, can be coerced into any integer, after bounds checked.
-//      - no implict type conversions, all explicit e.g: (type_1 as type_2)
-//      - integer bounds checks
+//      ✅ Type Conversions
+//          - Implicit: integers being converted to a larger integer, e.g u16 = u8
+//          - Explicit: Everything else, using syntax: type_x as type_y
+//      ❌ Integer Bounds Checks
 //          - requires me to interpret every arith expression? let it be ub for now :)
-//      - ✅ pointers, always have usize, not a defined type but an attribute, that modifies byte_size?
+//      ✅ IntegerLitereal Coercion
+//          - its not a concrete type and can be coerced into any integer, after bounds checked.
+//      ✅ Pointers
+//          - always have usize, not a defined type but an attribute, that modifies byte_size?
 //          - kindof its own type (set size), but loose (inherits type's attr)
 //          - a ptr is the original type with modified byte_width (4) & ptr flag set.
 //      ✅ FORM:
@@ -27,8 +29,7 @@
 //      ✅ Var impl:
 //          - store a "type" + modifications, "form".
 //          - e.g its i16, but a pointer! or.. an array!
-//      ✅ Structure Revision:
-//          Either passing Variable or Literal
+//      ✅ Structure Revision: Either passing Variable or Literal
 //          - Both: TypeMode, AddressingMode, e.g Boolean Array
 //          - Var: ptr to the var
 //          - Literal: Inherited Width
@@ -43,12 +44,17 @@
 //      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
 //          - Literals can be coerced into a type of same mode and addressing mode
 //          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
-//  ExprData Rethink (removal):
+
+//  ❌ ExprData Rethink (removal):
 //      - Consolidate TypeMode & AddresingMode to ExprForm::Expr
 //          - because ExprForm::Var holds a Variable,
 //          - Variable has a type (which has a typemode) & addressingmode
 //      - Con: lots of indirection faff
 //      - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
+
+//  ✅ Cpp Style Function overriding:
+//      - match function uniqueness based on its "signature" (name + argument types).
+//      - e.g func123(int,bool) != func123(int). UNIQUE!
 
 use crate::{
     debug, err,
@@ -60,7 +66,8 @@ use std::{
     ptr::NonNull,
 };
 
-const PTR_WIDTH: usize = 8;
+pub type Byte = usize;
+const PTR_WIDTH: Byte = 8;
 const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "SEMANTIC";
 
@@ -96,9 +103,9 @@ pub enum TypeForm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExprForm {
     Variable { ptr: NonNull<SemVariable> },
-    Expr { inherited_width: usize },
+    Expr { inherited_width: Byte },
     // Expr {
-    //     inherited_width: usize,
+    //     inherited_width: Byte,
     //     type_mode: TypeMode,
     //     addr_mode: AddressingMode,
     // },
@@ -115,26 +122,33 @@ pub struct ExprData {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Type {
-    pub width: usize,
+    pub width: Byte,
     pub ident: String,
     pub form: TypeForm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InitExpr {
+    Some(NodeExpr),
+    None,
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemVariable {
     pub ident: Token,
     pub mutable: bool,
-    pub width: usize,
+    pub width: Byte,
     pub scope_id: usize,
     pub type_id: usize, // Can get a TypeMode from this
     pub addr_mode: AddressingMode,
-    pub init_expr: Option<NodeExpr>,
+    pub init_expr: InitExpr,
 }
 
 // need name, return semantics, arg semantics
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemFn {
-    pub ident: Token,
+    pub signature: String,
     pub scope: NodeScope,
     pub arg_semantics: Vec<SemVariable>, // treat like semantic variables ??
     pub return_type_id: Option<usize>,
@@ -145,8 +159,9 @@ struct SemContext {
     loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
     cur_scope_id: usize,
     scope_inherit_bounds_id: Option<usize>,
-    in_function_decl: bool,
+
     valid_return: bool,
+    function_decl_name: Option<String>,
     return_type_tok: Option<Token>,
     return_type_id: Option<usize>,
     return_type_data: Option<ExprData>,
@@ -187,8 +202,8 @@ impl Checker {
                 loop_count: 0,
                 cur_scope_id: 0,
                 scope_inherit_bounds_id: None,
-                in_function_decl: false,
                 valid_return: false,
+                function_decl_name: None,
                 return_type_tok: None,
                 return_type_id: None,
                 return_type_data: None,
@@ -207,11 +222,17 @@ impl Checker {
 
         let mut sem_ast = AST { stmts: Vec::new() };
         for stmt in ast.stmts {
-            sem_ast.stmts.push(checker.check_func(stmt)?);
+            sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
         checker.ast = sem_ast;
 
-        // Checking for Entry Point | main()
+        // TODO(TOM): for ref, cpp "main" function either:
+        //      - takes no arguments, main().
+        //      - takes 2 arguments, main(int argc, char* argv[]).
+        //          - argc: amount of arguments given when the program is run (cmd line!)
+        //          - argv: an array of length argc+1, each pointer points to a null terminated char[]
+        // Instead: use one array with a length
+        // Checking for the Entry Point
         match checker.fn_map.get("main") {
             Some(func) if !func.arg_semantics.is_empty() => {
                 err!(
@@ -230,7 +251,7 @@ impl Checker {
         }
     }
 
-    fn check_func(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
             NodeStmt::FnDecl {
                 ident,
@@ -240,23 +261,22 @@ impl Checker {
                 return_addr_mode,
             } => {
                 // check for name collisions
-                let fn_ident = ident.value.as_str();
-                if self.fn_map.contains_key(fn_ident) {
-                    return err!(self, "Duplicate definition of a Function: '{fn_ident}'");
-                } else if self.type_map.contains_key(fn_ident) {
+                let fn_ident = ident.as_str();
+                if self.type_map.contains_key(fn_ident) {
                     return err!(
                         self,
                         "Illegal Function name, Types are reserved: '{fn_ident}'"
                     );
                 }
 
-                // Validate semantics for arguments.
+                // Validate arguments' semantics.
                 let mut arg_idents: Vec<String> = Vec::new();
                 let mut arg_semantics = Vec::new();
                 for arg in args {
-                    let arg_ident = arg.ident.value.as_str();
+                    let arg_ident = arg.ident.as_str();
 
-                    // O(n^2) complexity.. funcs normally < ~5 params, so alright!
+                    // O(n^2) complexity.. funcs normally < ~6 params, so alright! use set otherwise
+                    // need this to create signature, so can't give most accurate err msgs..
                     if arg_idents.contains(&arg.ident.value) {
                         return err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
@@ -283,26 +303,39 @@ impl Checker {
                         scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
                         type_id,
                         addr_mode: arg.addr_mode,
-                        init_expr: None,
+                        init_expr: InitExpr::None,
                     });
-                    arg_idents.push(
-                        arg_semantics
-                            .last()
-                            .unwrap()
-                            .ident
-                            .value
-                            // .as_ref()
-                            // .unwrap()
-                            .clone(),
-                    );
+                    arg_idents.push(arg_semantics.last().unwrap().ident.as_str().to_string());
                 }
 
-                self.ctx.in_function_decl = true;
-                self.ctx.return_type_tok = return_type_tok;
+                // Creates a function signature, to allow for overloading
+                // e.g plus5(i32,i32)
+                let signature = match ident.as_str() {
+                    "main" => "main".to_owned(),
+                    name @ _ => {
+                        let mut str = String::new();
+                        str += name;
+                        str += "(";
+                        for (i, arg) in arg_semantics.iter().enumerate() {
+                            str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                            str += ",";
+                        }
+                        str.pop(); // removes extra ','
+                        str + ")"
+                    }
+                };
 
+                // check for name collisions with signature.
+                if self.fn_map.contains_key(signature.as_str()) {
+                    return err!(self, "Duplicate definition of a Function: '{signature}'");
+                }
+
+                // Set shared data, for self.check_stmt()'s
+                self.ctx.function_decl_name = Some(signature.clone());
+                self.ctx.return_type_tok = return_type_tok;
                 match self.ctx.return_type_tok {
                     Some(ref ident) => {
-                        let return_ident = ident.value.as_str();
+                        let return_ident = ident.as_str();
                         let return_type_id = self.get_type_id(return_ident)?;
                         let return_type = self.types.get(return_type_id).unwrap();
                         let return_type_mode = match &return_type.form {
@@ -326,11 +359,11 @@ impl Checker {
                     }
                 }
 
-                // The borrow checker too strict!
+                // Create lambda for custom scope check
                 let checked_scope;
                 let mut_self = self as *const Checker as *mut Checker;
                 let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
-                    debug!(self, "checking {fn_ident}'s statements!");
+                    debug!(self, "checking {signature}'s statements!");
                     self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
 
                     for arg in &arg_semantics {
@@ -347,23 +380,24 @@ impl Checker {
                     }
 
                     if !self.ctx.valid_return {
-                        return err!(self, "Not all code paths return in '{fn_ident}'");
+                        return err!(self, "Not all code paths return in '{signature}'");
                     }
                     checked_stmts.reverse();
 
-                    // removes args for me!
+                    // removes args for me! (check_scope() that is)
                     Ok(checked_stmts)
                 };
                 unsafe {
                     checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
                 }
 
-                self.ctx.in_function_decl = false;
+                // un-set shared data.
+                self.ctx.function_decl_name = None;
                 self.ctx.scope_inherit_bounds_id = None;
                 self.fn_map.insert(
-                    ident.value.clone(),
+                    signature.clone(),
                     SemFn {
-                        ident: ident.clone(),
+                        signature: signature.clone(),
                         scope: checked_scope,
                         arg_semantics,
                         return_type_id: self.ctx.return_type_id,
@@ -371,13 +405,14 @@ impl Checker {
                     },
                 );
 
-                Ok(NodeStmt::FnSemantics { ident })
+                Ok(NodeStmt::FnSemantics { signature })
             }
             _ => {
-                err!(
-                    self,
-                    "A Program only consists of functions, this is a {stmt:?}"
-                )
+                self.check_stmt(stmt)
+                // err!(
+                //     self,
+                //     "A Program only consists of functions, this is a {stmt:?}"
+                // )
             }
         }
     }
@@ -392,14 +427,14 @@ impl Checker {
                 mutable,
             } => {
                 // check for name collisions
-                let str = ident.value.as_str();
+                let str = ident.as_str();
                 if self.var_map.contains_key(str) {
                     return err!(self, "Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = self.get_type_id(type_tok.value.as_str())?;
+                let type_id = self.get_type_id(type_tok.as_str())?;
                 let var_type = self.types.get(type_id).unwrap();
 
                 // change byte width if its a pointer
@@ -425,7 +460,7 @@ impl Checker {
                 self.vars.push(var.clone());
 
                 // check intial expression
-                if let Some(ref expr) = var.init_expr {
+                if let InitExpr::Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
                     let var_data = ExprData {
                         type_mode: {
@@ -451,31 +486,24 @@ impl Checker {
                     "Functions cannot be nested, they're top level statements"
                 )
             }
-            NodeStmt::Return(_) if !self.ctx.in_function_decl => {
+            NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
                 err!(self, "return not expected outside a function declaration.")
             }
             NodeStmt::Return(expr) if expr.is_some() => {
-                let ret_ident_str = match self.ctx.return_type_tok {
-                    Some(ref ident) => ident.value.as_str(),
-                    None => unreachable!(),
-                };
-                let return_type = self.types.get(self.get_type_id(ret_ident_str)?).unwrap();
-
-                // check for void return mismatch
-                if self.ctx.return_type_tok.is_none() {
-                    return err!(
-                        self,
-                        "Mismatched function and return type, '{return_type:#?}'\n .. \n'void'"
-                    );
-                } else if self.ctx.return_type_data.is_none() {
-                    return err!(
-                        self,
-                        "Mismatched function and return types, '{return_type:#?}'\n .. \n'void'"
-                    );
-                }
-
                 let expr = expr.unwrap();
                 let expr_type_data = self.check_expr(&expr)?;
+
+                // check for return mismatch with void.
+                let return_type = match self.ctx.return_type_tok {
+                    Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
+                    None => {
+                        return err!(
+                            self,
+                            "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
+                            signature = self.ctx.function_decl_name.as_ref().unwrap(),
+                        );
+                    }
+                };
 
                 // checked prior to "check_type_equivalence" for better err message
                 if expr_type_data.addr_mode != self.ctx.return_type_data.unwrap().addr_mode {
@@ -522,8 +550,8 @@ impl Checker {
                     new_branches.push(self.check_stmt(branch)?);
                 }
 
-                // early return
-                if !self.ctx.in_function_decl {
+                // Avoid function return semantics
+                if self.ctx.function_decl_name.is_none() {
                     return Ok(NodeStmt::If {
                         condition,
                         scope: checked_scope,
@@ -586,12 +614,20 @@ impl Checker {
                 ref ident,
                 ref expr,
             } => {
-                let var = self.get_var(ident.value.as_str())?;
+                let var = self.get_var(ident.as_str())?;
+                let var_data = self.get_exprdata(var)?;
                 if !var.mutable {
-                    return err!(self, "Re-assignment of a Constant:\n{var:#?}");
+                    // if the variable is not initialised, this is the initialisation!
+                    match var.init_expr {
+                        InitExpr::None => {
+                            let var_mut = self.get_var_mut(ident.as_str())?;
+                            var_mut.init_expr = InitExpr::Deferred
+                        }
+                        _ => return err!(self, "Re-assignment of a Constant:\n{var:#?}"),
+                    }
                 }
                 let checked = self.check_expr(expr)?;
-                self.check_type_equivalence(&self.get_exprdata(var)?, &checked)?;
+                self.check_type_equivalence(&var_data, &checked)?;
                 Ok(stmt)
             }
             NodeStmt::Exit(ref expr) => {
@@ -643,7 +679,7 @@ impl Checker {
             match self.vars.last() {
                 Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
                 Some(var) => {
-                    debug!(self, "Scope ended, removing '{}'", var.ident.value.as_str());
+                    // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
                     let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
                     self.var_map.remove(var.ident.value.as_str());
                 }
@@ -657,7 +693,7 @@ impl Checker {
         })
     }
 
-    // Compiler doesn't understand type of 'None', so must annotate. but thats cumbersome!
+    // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
     fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
         self.check_scope(
             scope,
@@ -823,7 +859,7 @@ impl Checker {
             NodeTerm::Ident(tok) => {
                 self.update_pos(tok.pos);
 
-                let var = self.get_var(tok.value.as_str())?;
+                let var = self.get_var(tok.as_str())?;
                 match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
                         type_mode: *type_mode,
@@ -857,17 +893,36 @@ impl Checker {
                 self.update_pos(ident.pos);
 
                 // check fn of that name exists
-                let str = ident.value.as_str();
-                let fn_ref = match self.fn_map.get(str) {
-                    Some(fn_ref) => fn_ref,
-                    _ => return err!(self, "No associated function with attempted call. {str}"),
+                // iterating over hash map aswell! bad!!!
+
+                // iterate over fn_map
+                // delimit by '(', take first to get fn_str
+                // compare to attempted fncall
+                // match to see if associated function is found for call.
+                let fn_str = ident.as_str();
+                let is_fn_name_valid = self.fn_map.iter().find(|(sig, fn_ref)| {
+                    sig.as_str()
+                        .split('(')
+                        .collect::<Vec<&str>>()
+                        .get(1)
+                        .unwrap()
+                        == &fn_str
+                });
+                let (signature, fn_ref) = match is_fn_name_valid {
+                    Some((sig, fn_ref)) => (sig.as_str(), fn_ref),
+                    None => {
+                        return err!(
+                            self,
+                            "No associated function with attempted call. '{fn_str}'"
+                        )
+                    }
                 };
 
                 // check correct amount of arguments
                 if args.len() != fn_ref.arg_semantics.len() {
                     return err!(
                         self,
-                        "Incorrect amount of arguments for function '{str}'. {} missing",
+                        "Incorrect amount of arguments for function '{signature}'. {} missing",
                         fn_ref.arg_semantics.len() - args.len()
                     );
                 }
@@ -994,6 +1049,27 @@ impl Checker {
             }
             Some(idx) => {
                 let var = self.vars.get(*idx).unwrap();
+                if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
+                    return err!(
+                        self,
+                        "Variable '{ident}' outside scope inheritance bounds, {} < {}",
+                        var.scope_id,
+                        self.ctx.scope_inherit_bounds_id.unwrap()
+                    );
+                }
+                Ok(var)
+            }
+            None => err!(self, "Variable '{ident}' not found"),
+        }
+    }
+
+    fn get_var_mut(&mut self, ident: &str) -> Result<&mut SemVariable, String> {
+        match self.var_map.get(ident) {
+            Some(idx) if self.ctx.scope_inherit_bounds_id.is_none() => {
+                Ok(self.vars.get_mut(*idx).unwrap())
+            }
+            Some(idx) => {
+                let var = self.vars.get_mut(*idx).unwrap();
                 if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
                     return err!(
                         self,

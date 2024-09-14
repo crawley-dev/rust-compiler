@@ -5,14 +5,47 @@
 //  ✅ Pointers:
 //      - address of: get var's stk_pos and use "lea" to get the memory address
 //      - deref: currently blind trust towards the memory address that is being de-referenced, may seg faults to come!
-//     Stack Allocation:
-//      - every 8 bytes allocatted,
+
+//  ❌ Stack Allocation:
+//      - calculate size of all variables declared in a scope.
+//          - "sub rsp, SIZE_OF_VARS_BYTES" <- point rsp to top of the stack!
+//          - SIZE_OF_VARS is always a multiple of "8"
+//      - base pointer points to stack address at the start of a function
+//          - thats why always reference variables from start of the rbp
+//      - stack pointer points to the top of the stack.
+//      - push/pop ONLY for rbp, sub/add for all other allocation
+
+//  ❌ Global Variables:
+//       - stored in static memory ".data " section or ".bss" for zero-initialisation
+
+//  ❌ Functions:
+//       - https://www-users.cse.umn.edu/~smccaman/courses/8980/spring2020/lectures/03-x86-funcs-data-8up.pdf
+//       - Setup stackframe:
+//          - store current base pointer location
+//          - move stack pointer into base pointer.
+//          - use base pointer as offset into stack vars
+//       - End stackframe:
+//          - "pop rbp" <- put top of stack into base pointer (previous base pointer location
+//          - "ret" <- hands over program control to code at rbp address
+//
+//       - first six args are **always** stored in "rdi, rsi, rdx, rcx, r8, r9"
+//       - **return** value:
+//          - if 8 bytes or less: "eax / rax"
+//          - if 16 bytes or less: "edx/rdx" stores high bits (9-16)
+//          - if greater: "rdi" stores a pointer to the value.
+//
+//       - stack frames MUST have a 16 BYTE alignment
+//          - push extra bytes if not aligned?
+
+//  ❌ Calling FUNCTIONS:
+//      -"call _FUNC_NAME_"
+//      - return val in rax
 
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
     parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
-    semantic::{Checker, SemFn, Type},
+    semantic::{Byte, Checker, InitExpr, SemFn, Type},
 };
 use std::collections::HashMap;
 
@@ -23,9 +56,9 @@ const MSG: &'static str = "CODEGEN";
 #[derive(Debug, Clone, PartialEq)]
 struct GenVariable {
     ident: Token,
-    width: usize,
+    width: Byte,
     type_id: usize,
-    stk_index: usize,
+    stk_index: Byte,
 }
 
 struct CodeGenContext {
@@ -33,10 +66,11 @@ struct CodeGenContext {
     label_count: usize,
     endif_label: String,
     loop_end_label: String,
+    scope_allocations: Byte,
 }
 
 pub struct Generator {
-    stk_pos: usize,
+    stk_pos: Byte,
     pos: (u32, u32),
     checker: Checker,
     ctx: CodeGenContext,
@@ -57,6 +91,7 @@ impl Generator {
             ctx: CodeGenContext {
                 reg_count: 0,
                 label_count: 0,
+                scope_allocations: 0,
                 endif_label: String::new(),
                 loop_end_label: String::new(),
             },
@@ -64,34 +99,28 @@ impl Generator {
     }
 
     pub fn gen_asm(&mut self) -> Result<String, String> {
-        let mut asm = String::new();
+        let mut asm = "global main\n".to_string();
         while !self.checker.ast.stmts.is_empty() {
             let stmt = self.checker.ast.stmts.remove(0);
-            asm += self.gen_func(stmt)?.as_str();
+            asm += self.gen_top_level(stmt)?.as_str();
         }
         Ok(asm)
     }
 
-    fn gen_func(&mut self, stmt: NodeStmt) -> Result<String, String> {
+    fn gen_top_level(&mut self, stmt: NodeStmt) -> Result<String, String> {
         match stmt {
             // Create the potential code for a function, then store it in a map.
             // on function calls: read the information and use it.
-            NodeStmt::FnDecl {
-                ident,
-                args,
-                scope,
-                return_type_tok,
-                return_addr_mode,
-            } => {
-                // setup stackframe
-                //
-
-                todo!("fn codegen")
+            NodeStmt::FnSemantics { signature } => {
+                todo!("")
             }
-            _ => err!(
-                self,
-                "A Program only consists of functions, this is a {stmt:?}"
-            ),
+            _ => {
+                self.gen_stmt(stmt)
+                //     err!(
+                //     self,
+                //     "A Program only consists of functions, this is =>\n{stmt:#?}"
+                // )
+            }
         }
     }
 
@@ -109,7 +138,7 @@ impl Generator {
                 ))
             }
             NodeStmt::VarSemantics(sem_var) => {
-                if self.get_var(sem_var.ident.value.as_str()).is_ok() {
+                if self.get_var(sem_var.ident.as_str()).is_ok() {
                     return err!("Re-Initialisation of a Variable:\n{sem_var:#?}");
                 }
                 let name = sem_var.ident.clone();
@@ -126,7 +155,7 @@ impl Generator {
                 self.stack.push(var);
 
                 let mut str = String::new();
-                if let Some(expr) = sem_var.init_expr {
+                if let InitExpr::Some(expr) = sem_var.init_expr {
                     let stk_pos = self.gen_stk_access(self.stk_pos, sem_var.width);
                     str += self.gen_expr(expr, Some(stk_pos.as_str()))?.as_str();
                 }
@@ -135,7 +164,7 @@ impl Generator {
                 Ok(str)
             }
             NodeStmt::Assign { ident, expr } => {
-                let var = self.get_var(ident.value.as_str())?;
+                let var = self.get_var(ident.as_str())?;
                 let ans_reg = self.gen_stk_access(var.stk_index, var.width);
                 self.gen_expr(expr, Some(ans_reg.as_str()))
             }
@@ -242,6 +271,8 @@ impl Generator {
     // TODO: scope.inherits_stmts does nothing currently.
     fn gen_scope(&mut self, scope: NodeScope) -> Result<String, String> {
         debug!("Beginning scope");
+
+        self.ctx.scope_allocations = 0;
         let var_count = self.stack.len();
         let mut asm = String::new();
         for stmt in scope.stmts {
@@ -253,15 +284,21 @@ impl Generator {
         for _ in 0..pop_amt {
             let popped_var = match self.stack.pop() {
                 Some(var) => var,
-                None => return err!("uhh.. scope messed up"),
+                None => return err!("incorrect scope closure variable pop amount!"),
             };
             self.stk_pos -= popped_var.width;
-            self.var_map
-                .remove(popped_var.ident.value.as_str())
-                .unwrap();
+            self.var_map.remove(popped_var.ident.as_str()).unwrap();
             debug!("Scope ended, removing {popped_var:#?}");
         }
-        Ok(asm)
+
+        if self.ctx.scope_allocations == 0 {
+            return Ok(asm);
+        }
+        Ok(format!(
+            "{SPACE}sub rsp, {alloc}\n
+                 {asm}",
+            alloc = self.ctx.scope_allocations
+        ))
     }
 
     fn gen_expr(&mut self, expr: NodeExpr, ans_reg: Option<&str>) -> Result<String, String> {
@@ -312,7 +349,7 @@ impl Generator {
                     ),
                     TokenKind::Ampersand => match operand_clone {
                         NodeExpr::Term(NodeTerm::Ident(name)) => {
-                            let stk_pos = self.get_var(name.value.as_str())?.stk_index;
+                            let stk_pos = self.get_var(name.as_str())?.stk_index;
                             format!("{SPACE}lea {reg}, [rbp+{stk_pos}]\n")
                         }
                         _ => return err!("Attempted 'addr_of' operation, found right hand value"),
@@ -330,6 +367,7 @@ impl Generator {
         // don't need to release reg if its just operation, just doing stuff on data.
         // only release if changing stack data.
         if let Some(reg) = ans_reg {
+            // this is an assign, allocate space for it ?
             asm += format!("{SPACE}mov {reg}, {}\n", self.get_reg(self.ctx.reg_count)).as_str();
             self.release_reg();
         }
@@ -488,21 +526,22 @@ impl Generator {
     }
 
     // TODO(TOM): need to use word_size??
-    fn gen_var_access(&self, stk_index: usize, word_size: usize) -> String {
+    fn gen_var_access(&self, stk_index: usize, word_size: Byte) -> String {
         format!("[rbp-{stk_index}]")
     }
 
-    fn gen_stk_access(&self, stk_index: usize, word_size: usize) -> String {
+    fn gen_stk_access(&mut self, stk_index: usize, word_size: Byte) -> String {
+        self.ctx.scope_allocations += word_size;
         format!("{} [rbp-{stk_index}]", self.gen_access_size(word_size))
     }
 
-    fn gen_access_size(&self, word_size: usize) -> &str {
+    fn gen_access_size(&self, word_size: Byte) -> &str {
         match word_size {
             1 => "byte",
             2 => "word",
             4 => "dword",
             8 => "qword",
-            _ => err!("Invalid word_size found: '{word_size}' .. should be unreachable?").unwrap(),
+            _ => unreachable!("Invalid word_size found: '{word_size}'"),
         }
     }
 
@@ -514,7 +553,7 @@ impl Generator {
                 self.ctx.reg_count += 1;
                 reg
             }
-            None => err!("out of registers! uhh probably should fix this").unwrap(),
+            None => panic!("out of registers! uhh probably should fix this"),
         }
     }
 
@@ -523,8 +562,7 @@ impl Generator {
         let scratch_registers = ["rax", "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
         match scratch_registers.get(index - 1) {
             Some(reg) => reg,
-            None => err!("out of registers! uhh probably should fix this").unwrap(),
-            // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
+            None => panic!("out of registers! uhh probably should fix this"), // TODO(TOM): either figure out when to use reserved registers, split expressions that are too long to let registers reset, or use stack!
         }
     }
 

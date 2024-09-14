@@ -219,6 +219,15 @@ pub struct Token {
     pub pos: (u32, u32),
 }
 
+impl Token {
+    pub fn as_str(&self) -> &str {
+        match self.value {
+            Some(ref str) => str,
+            None => panic!("expected value in: {self:#?}"),
+        }
+    }
+}
+
 pub struct Lexer {
     idx: usize,
     pos: (u32, u32),

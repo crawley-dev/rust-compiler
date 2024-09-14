@@ -25,7 +25,6 @@ fn main() {
     let contents = get_file_contents(&file_name);
     // println!("\n\n{:#?}\n\n", contents);
 
-    println!("\n");
     let tokens = Lexer::new(contents).tokenize();
     // print_tokens(&tokens);
     let ast = parse(tokens);
@@ -62,20 +61,20 @@ fn code_gen(data: Checker, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(data);
     match generator.gen_asm() {
-        Ok(string) => {
+        Ok(asm) => {
             println!("[COMPILER] output placed in '{file_path}'");
             let mut file = fs::File::create(file_path).expect("Invalid filepath given.");
             // TODO(TOM): remove for functions impl
-            file.write_all(
-                b"global _start\n\
-                      _start:\n\
-                     ; setup stack frame\n    \
-                     push rbp\n    \
-                     mov rbp, rsp\n    \
-                     ; Program Start\n",
-            )
-            .unwrap();
-            file.write_all(string.as_bytes()).unwrap();
+            // file.write_all(
+            //     b"global _start\n\
+            //           _start:\n\
+            //          ; setup stack frame\n    \
+            //          push rbp\n    \
+            //          mov rbp, rsp\n    \
+            //          ; Program Start\n",
+            // )
+            // .unwrap();
+            file.write_all(asm.as_bytes()).unwrap();
         }
         Err(e) => panic!("\n{e}\n"),
     };
