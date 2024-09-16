@@ -89,35 +89,16 @@ pub enum TypeMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeForm {
+    // Only worry about base for now.
     Base {
         type_mode: TypeMode,
-    }, // Base: just a type, has some flags, chill.
+    }, // Base: a type.
     Struct {
-        member_ids: Vec<ExprData>,
+        // members: Vec<ExprData>,
     }, // Struct: a group of types, stores type id, not type.
     Union {
         // TODO(TOM): define later
-    }, // Union: a group of types that share the same storage.
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ExprForm {
-    Variable { ptr: NonNull<SemVariable> },
-    Expr { inherited_width: Byte },
-    // Expr {
-    //     inherited_width: Byte,
-    //     type_mode: TypeMode,
-    //     addr_mode: AddressingMode,
-    // },
-}
-
-// TODO(TOM): re-work to use TypeForm..
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExprData {
-    // pub type_form: TypeForm,
-    pub type_mode: TypeMode,
-    pub addr_mode: AddressingMode,
-    pub form: ExprForm,
+    }, // Union: a group of types that share the same storage, with an ID to track.
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -126,6 +107,27 @@ pub struct Type {
     pub ident: String,
     pub form: TypeForm,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExprForm {
+    Variable {
+        ptr: NonNull<SemVariable>,
+    },
+    // Expr { inherited_width: Byte },
+    Expr {
+        inherited_width: Byte,
+        type_mode: TypeMode,
+        addr_mode: AddressingMode,
+    },
+}
+
+// TODO(TOM): re-work to use TypeForm..
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct ExprData {
+//     pub type_mode: TypeMode,
+//     pub addr_mode: AddressingMode,
+//     pub form: ExprForm,
+// }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InitExpr {
@@ -911,6 +913,7 @@ impl Checker {
                     args_data.push(self.check_expr(arg)?);
                 }
 
+                //
                 // construct a function signature!!
                 let signature = match ident.as_str() {
                     "main" => "main".to_owned(),
