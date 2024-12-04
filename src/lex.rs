@@ -96,6 +96,7 @@ bitflags! {
         const UNARY = 1 << 5;
     }
 }
+
 impl TokenKind {
     pub fn get_flags(&self) -> TokenFlags {
         match self {
@@ -350,7 +351,10 @@ impl Lexer {
                 b'\n' => BufKind::NewLine,
                 _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
                 b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
-                b'_' if buf_kind == BufKind::IntLit => continue, // skip number spacing, e.g 1_000_000 => 1000000
+                // b'_' if buf_kind == BufKind::IntLit => {
+                //     self.consume();
+                //     continue;
+                // } // skip number spacing, e.g 1_000_000 => 1000000
                 b'0'..=b'9' => BufKind::IntLit,
                 b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
                 b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,

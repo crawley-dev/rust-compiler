@@ -4,7 +4,7 @@
 use crate::{
     debug, debugln, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::{AddressingMode, ExprData, InitExpr, SemVariable},
+    semantic::{AddressingMode, Function, Variable},
 };
 use std::collections::VecDeque;
 
@@ -12,8 +12,18 @@ const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AST {
-    pub stmts: Vec<NodeStmt>,
+pub struct Arg {
+    pub mutable: bool,
+    pub ident: Token,
+    pub type_tok: Token,
+    pub addr_mode: AddressingMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InitExpr {
+    Some(NodeExpr),
+    None,
+    Deferred, // trust me bro, it exists.
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -22,12 +32,8 @@ pub struct NodeScope {
     pub inherits_stmts: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Arg {
-    pub mutable: bool,
-    pub ident: Token,
-    pub type_tok: Token,
-    pub addr_mode: AddressingMode,
+pub struct Ast {
+    pub stmts: Vec<NodeStmt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,13 +75,13 @@ pub enum NodeStmt {
     Break,
     Return(Option<NodeExpr>),
     // SEMANTIC STMT "CONVERSIONS"
-    VarSemantics(SemVariable),
+    VarSemantics(Variable),
     FnSemantics {
         signature: String,
     },
-    ReturnSemantics {
-        expr: Option<ExprData>,
-    },
+    // ReturnSemantics {
+    //     expr: Option<ExprData>,
+    // },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -116,8 +122,8 @@ impl Parser {
         }
     }
 
-    pub fn parse_ast(&mut self) -> Result<AST, String> {
-        let mut ast: AST = AST { stmts: Vec::new() };
+    pub fn parse_ast(&mut self) -> Result<Ast, String> {
+        let mut ast: Ast = Ast { stmts: Vec::new() };
         while let Some(_) = self.peek(0) {
             ast.stmts.push(self.parse_top_level()?);
         }

@@ -1,104 +1,109 @@
-// >>SEMANTIC<< The rules of the language, not grammar or syntax!
-//  ✅ CLONING:
-//      - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
-//      - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
-//      - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
-//  ✅ Assignment:
-//      - ✅ arith-assign on new var or literal
-//      - ✅ re-assign on immutable vars
-//  ✅ Types:
-//      ✅ Operators expect specific types.
-//          - "bool PLUS u8" doesn't compile
-//          - LogicalAnd: bool, UnaryMinus: signed int
-//      ✅ Type Conversions
-//          - Implicit: integers being converted to a larger integer, e.g u16 = u8
-//          - Explicit: Everything else, using syntax: type_x as type_y
-//      ❌ Integer Bounds Checks
-//          - requires me to interpret every arith expression? let it be ub for now :)
-//      ✅ IntegerLitereal Coercion
-//          - its not a concrete type and can be coerced into any integer, after bounds checked.
-//      ✅ Pointers
-//          - always have usize, not a defined type but an attribute, that modifies byte_size?
-//          - kindof its own type (set size), but loose (inherits type's attr)
-//          - a ptr is the original type with modified byte_width (4) & ptr flag set.
-//      ✅ FORM:
-//          - Types have a form, which is the group they fall under, e.g struct or array.
-//          - each form has unique behaviour, such as a literal being non-concrete or an array being index-able]
-//      ✅ Type impl:
-//          - either a primitive or >>FUTURE:<< struct or union
-//      ✅ Var impl:
-//          - store a "type" + modifications, "form".
-//          - e.g its i16, but a pointer! or.. an array!
-//      ✅ Structure Revision: Either passing Variable or Literal
-//          - Both: TypeMode, AddressingMode, e.g Boolean Array
-//          - Var: ptr to the var
-//          - Literal: Inherited Width
-//          - TypeMode:
-//              - What operations can be performed
-//              - (OPTIONAL): Sign, if numerical
-//          - AddressingMode:
-//              - how is it represented in memory, if at all
-//              - (OPTIONAL): mutability, if represented in memory
-//      ✅ Type Narrowing:
-//          - check if the assigned expr is wider than the assignee variable
-//      ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
-//          - Literals can be coerced into a type of same mode and addressing mode
-//          - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
+/*
+>>SEMANTIC<< The rules of the language, not grammar or syntax!
+ ✅ CLONING:
+     - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
+     - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
+     - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
+ ✅ Assignment:
+     - ✅ arith-assign on new var or literal
+     - ✅ re-assign on immutable vars
+ ✅ Types:
+     ✅ Operators expect specific types.
+         - "bool PLUS u8" doesn't compile
+         - LogicalAnd: bool, UnaryMinus: signed int
+     ✅ Type Conversions
+         - Implicit: integers being converted to a larger integer, e.g u16 = u8
+         - Explicit: Everything else, using syntax: type_x as type_y
+     ❌ Integer Bounds Checks
+         - requires me to interpret every arith expression? let it be ub for now :)
+     ✅ IntegerLitereal Coercion
+         - its not a concrete type and can be coerced into any integer, after bounds checked.
+     ✅ Pointers
+         - always have usize, not a defined type but an attribute, that modifies byte_size?
+         - kindof its own type (set size), but loose (inherits type's attr)
+         - a ptr is the original type with modified byte_width (4) & ptr flag set.
+     ✅ FORM:
+         - Types have a form, which is the group they fall under, e.g struct or array.
+         - each form has unique behaviour, such as a literal being non-concrete or an array being index-able]
+     ✅ Type impl:
+         - either a primitive or >>FUTURE:<< struct or union
+     ✅ Var impl:
+         - store a "type" + modifications, "form".
+         - e.g its i16, but a pointer! or.. an array!
+     ✅ Structure Revision: Either passing Variable or Literal
+         - Both: TypeMode, AddressingMode, e.g Boolean Array
+         - Var: ptr to the var
+         - Literal: Inherited Width
+         - TypeMode:
+             - What operations can be performed
+             - (OPTIONAL): Sign, if numerical
+         - AddressingMode:
+             - how is it represented in memory, if at all
+             - (OPTIONAL): mutability, if represented in memory
+     ✅ Type Narrowing:
+         - check if the assigned expr is wider than the assignee variable
+     ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
+         - Literals can be coerced into a type of same mode and addressing mode
+         - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
 
-//  ❌ ExprData Rethink (removal):
-//      - Consolidate TypeMode & AddresingMode to ExprForm::Expr
-//          - because ExprForm::Var holds a Variable,
-//          - Variable has a type (which has a typemode) & addressingmode
-//      - Con: lots of indirection faff
-//      - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
+ ❌ ExprData Rethink (removal):
+     - Consolidate TypeMode & AddresingMode to ExprForm::Expr
+         - because ExprForm::Var holds a Variable,
+         - Variable has a type (which has a typemode) & addressingmode
+     - Con: lots of indirection faff
+     - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
 
-//  ✅ Cpp Style Function overriding:
-//      - match function uniqueness based on its "signature" (name + argument types).
-//      - e.g func123(int,bool) != func123(int). UNIQUE!
+ ✅ Cpp Style Function overriding:
+     - match function uniqueness based on its "signature" (name + argument types).
+     - e.g func123(int,bool) != func123(int). UNIQUE!
+
+
+     /**
+      *  CURRENT IMPLEMENTATION:
+     **/
+
+     - TypeBase: a starting point for a type, e.g. char or u32
+     - PartialType: represents an expression, has characteristics of a type but not the full type
+     - FullType: a complete type, represents a variable.
+*/
 
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
-    parse::{NodeExpr, NodeScope, NodeStmt, NodeTerm, AST},
+    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm},
 };
 use std::{
     collections::{HashMap, HashSet},
+    ops::Add,
     ptr::NonNull,
 };
 
 pub type Byte = usize;
-const PTR_WIDTH: Byte = 8;
+const PTR: Byte = 8;
 const LOG_DEBUG_INFO: bool = true;
 const MSG: &'static str = "SEMANTIC";
 
+/*
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
     Primitive,
     Pointer,
     Array,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeMode {
-    Void,
     Bool,
     IntLit,
     Int { signed: bool },
     Float { signed: bool },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeForm {
-    // Only worry about base for now.
-    Base {
-        type_mode: TypeMode,
-    }, // Base: a type.
-    Struct {
-        // members: Vec<ExprData>,
-    }, // Struct: a group of types, stores type id, not type.
-    Union {
-        // TODO(TOM): define later
-    }, // Union: a group of types that share the same storage, with an ID to track.
+    Base { type_mode: TypeMode },
+    Struct, // Struct: a group of types, stores type id, not type.
+    Union,  // Union: a group of types that share the same storage, with an ID to track.
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -109,25 +114,13 @@ pub struct Type {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ExprForm {
-    Variable {
-        ptr: NonNull<SemVariable>,
-    },
-    // Expr { inherited_width: Byte },
-    Expr {
-        inherited_width: Byte,
-        type_mode: TypeMode,
-        addr_mode: AddressingMode,
-    },
+pub struct ExprData {
+    pub ptr: Option<NonNull<SemVariable>>,
+    pub width: Byte,
+    pub form: TypeForm,
+    pub addr_mode: AddressingMode,
 }
-
-// TODO(TOM): re-work to use TypeForm..
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// pub struct ExprData {
-//     pub type_mode: TypeMode,
-//     pub addr_mode: AddressingMode,
-//     pub form: ExprForm,
-// }
+// endregion
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InitExpr {
@@ -141,90 +134,151 @@ pub struct SemVariable {
     pub ident: Token,
     pub mutable: bool,
     pub width: Byte,
+    pub type_id: usize,
     pub scope_id: usize,
-    pub type_id: usize, // Can get a TypeMode from this
     pub addr_mode: AddressingMode,
     pub init_expr: InitExpr,
 }
 
-// need name, return semantics, arg semantics
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemFn {
+    pub ident: Token,
     pub signature: String,
     pub scope: NodeScope,
     pub arg_semantics: Vec<SemVariable>, // treat like semantic variables ??
     pub return_type_id: Option<usize>,
-    pub return_type_data: Option<ExprData>,
+    // pub return_type_data: Option<ExprData>,
+}
+    */
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AddressingMode {
+    Primitive,
+    Pointer,
+    Array,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TypeMode {
+    Boolean,
+    Int(bool), // sign
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum TypeForm {
+    Base(BaseType),
+    Struct(Vec<FullType>),
+    Union(Vec<FullType>),
+}
+
+// TODO(TOM): redo: a base type needs to have a form, because you can create define a union or struct
+// what makes a fulltype special?
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct BaseType {
+    ident: String,
+    width: Byte,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PartialType {
+    width: Byte,
+    base_id: usize,
+    addr_mode: AddressingMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct FullType {
+    width: Byte, // width accounting for the addressing mode
+    form: TypeForm,
+    addr_mode: AddressingMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct FuncArg {
+    ident: Token,
+    type_id: usize,
+}
+
+// Proper
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Variable {
+    ident: Token,
+    type_id: usize,
+    addr_mode: AddressingMode,
+    init_expr: InitExpr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Function {
+    args: Vec<FuncArg>,
+    return_type: Option<FullType>, // none == void
 }
 
 struct SemContext {
     loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
     cur_scope_id: usize,
-    scope_inherit_bounds_id: Option<usize>,
-
-    valid_return: bool,
-    function_decl_name: Option<String>,
-    return_type_tok: Option<Token>,
-    return_type_id: Option<usize>,
-    return_type_data: Option<ExprData>,
+    // scope_inherit_bounds_id: Option<usize>, // only inherit statements from this scope onwards (e.g. function scope cuts off all external scopes)
+    fn_decl_id: Option<usize>, // for when checking a function declaration
 }
 
 pub struct Checker {
-    pub ast: AST,
-    ctx: SemContext,
     pos: (u32, u32),
-    pub types: Vec<Type>,
-    pub fn_map: HashMap<String, SemFn>,
-    vars: Vec<SemVariable>,
+    ast: Ast,
+    ctx: SemContext,
+
+    type_vec: Vec<BaseType>,
+    fn_vec: Vec<Function>,
+    var_vec: Vec<Variable>,
+    type_map: HashMap<String, usize>,
+    fn_map: HashMap<String, usize>,
     var_map: HashMap<String, usize>,
-    pub type_map: HashMap<String, usize>,
 }
 
 impl Checker {
-    pub fn check_ast(ast: AST) -> Result<Checker, String> {
-        let types = Vec::from([
-            new_base("void", 0, TypeMode::Void),
-            new_base("bool", 1, TypeMode::Bool),
-            new_base("u8", 1, TypeMode::Int { signed: false }),
-            new_base("u16", 2, TypeMode::Int { signed: false }),
-            new_base("u32", 4, TypeMode::Int { signed: false }),
-            new_base("u64", PTR_WIDTH, TypeMode::Int { signed: false }),
-            new_base("usize", PTR_WIDTH, TypeMode::Int { signed: false }),
-            new_base("i8", 1, TypeMode::Int { signed: true }),
-            new_base("i16", 2, TypeMode::Int { signed: true }),
-            new_base("i32", 4, TypeMode::Int { signed: true }),
-            new_base("i64", PTR_WIDTH, TypeMode::Int { signed: true }),
-            new_base("isize", PTR_WIDTH, TypeMode::Int { signed: true }),
-            new_base("f32", 4, TypeMode::Int { signed: true }),
-            new_base("f64", PTR_WIDTH, TypeMode::Int { signed: true }),
+    pub fn check_ast(ast: Ast) -> Result<Checker, String> {
+        let type_vec = Vec::from([
+            Self::new_base("bool", 1, TypeMode::Boolean),
+            Self::new_base("u8", 1, TypeMode::Int(false)),
+            Self::new_base("u16", 2, TypeMode::Int(false)),
+            Self::new_base("u32", 4, TypeMode::Int(false)),
+            Self::new_base("u64", PTR, TypeMode::Int(false)),
+            Self::new_base("usize", PTR, TypeMode::Int(false)),
+            Self::new_base("i8", 1, TypeMode::Int(true)),
+            Self::new_base("i16", 2, TypeMode::Int(true)),
+            Self::new_base("i32", 4, TypeMode::Int(true)),
+            Self::new_base("i64", PTR, TypeMode::Int(true)),
+            Self::new_base("isize", PTR, TypeMode::Int(true)),
+            Self::new_base("f32", 4, TypeMode::Int(true)),
+            Self::new_base("f64", PTR, TypeMode::Int(true)),
         ]);
+        let mut type_map = HashMap::with_capacity(type_vec.len());
+        for (idx, base) in type_vec.iter().enumerate() {
+            type_map.insert(base.ident.clone(), idx);
+        }
+
         let mut checker = Checker {
-            ast: AST { stmts: Vec::new() },
+            pos: (0, 0),
+            ast: Ast { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
                 cur_scope_id: 0,
-                scope_inherit_bounds_id: None,
-                valid_return: false,
-                function_decl_name: None,
-                return_type_tok: None,
-                return_type_id: None,
-                return_type_data: None,
+
+                fn_decl_id: None,
             },
-            pos: (0, 0),
-            vars: Vec::new(),
+
+            type_vec,
+            fn_vec: Vec::new(),
+            var_vec: Vec::new(),
+            type_map,
             fn_map: HashMap::new(),
             var_map: HashMap::new(),
-            types,
-            type_map: HashMap::new(),
         };
 
-        for (n, base) in checker.types.iter().enumerate() {
-            checker.type_map.insert(base.ident.clone(), n);
-        }
-
-        let mut sem_ast = AST {
+        let mut sem_ast = Ast {
             stmts: Vec::with_capacity(ast.stmts.len()),
         };
+
         for stmt in ast.stmts {
             sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
@@ -236,13 +290,15 @@ impl Checker {
         //          - argc: amount of arguments given when the program is run (cmd line!)
         //          - argv: an array of length argc+1, each pointer points to a null terminated char[]
         // Instead: use one array with a length
+
         // Checking for the Entry Point
-        match checker.fn_map.get("main") {
-            Some(func) if !func.arg_semantics.is_empty() => {
+        let fn_id = checker.fn_map.get("main");
+        match checker.fn_vec.get(*fn_id.unwrap()) {
+            Some(func) if !func.args.is_empty() => {
                 err!(
                     &checker,
                     "The 'main' function takes no arguments =>\nremove {:#?}",
-                    func.arg_semantics
+                    func.args
                 )
             }
             None => {
@@ -273,15 +329,18 @@ impl Checker {
                     );
                 }
 
-                // Validate arguments' semantics.
-                let mut arg_idents: Vec<String> = Vec::new();
-                let mut arg_semantics = Vec::new();
+                // Create arg semantics
+                // - check for duplicates
+                // - check for used names (keywords & other variables)
+                let mut args_semantics: Vec<FuncArg> = Vec::new();
                 for arg in args {
                     let arg_ident = arg.ident.as_str();
 
-                    // O(n^2) complexity.. funcs normally < ~6 params, so alright! use set otherwise
-                    // need this to create signature, so can't give most accurate err msgs..
-                    if arg_idents.contains(arg.ident.value.as_ref().unwrap()) {
+                    if args_semantics
+                        .iter()
+                        .find(|x| x.ident == arg.ident)
+                        .is_some()
+                    {
                         return err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
@@ -297,19 +356,11 @@ impl Checker {
                         );
                     }
 
-                    let type_id = self.get_type_id(arg.type_tok.as_str())?;
-                    let type_ref = self.types.get(type_id).unwrap();
-
-                    arg_semantics.push(SemVariable {
+                    let type_id = self.get_base_idx(arg.type_tok.as_str())?;
+                    args_semantics.push(FuncArg {
                         ident: arg.ident,
-                        mutable: arg.mutable,
-                        width: type_ref.width,
-                        scope_id: self.ctx.cur_scope_id + 1, // haven't incremented yet, in check_scope()
                         type_id,
-                        addr_mode: arg.addr_mode,
-                        init_expr: InitExpr::None,
                     });
-                    arg_idents.push(arg_semantics.last().unwrap().ident.as_str().to_string());
                 }
 
                 // Creates a function signature, to allow for overloading
@@ -320,8 +371,8 @@ impl Checker {
                         let mut str = String::new();
                         str += name;
                         str += "(";
-                        for (i, arg) in arg_semantics.iter().enumerate() {
-                            str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                        for (i, arg) in args_semantics.iter().enumerate() {
+                            str += self.type_vec.get(arg.type_id).unwrap().ident.as_str();
                             str += ",";
                         }
                         str.pop(); // removes extra ','
@@ -334,89 +385,60 @@ impl Checker {
                     return err!(self, "Duplicate definition of a Function: '{signature}'");
                 }
 
-                // Set shared data, for self.check_stmt()'s
-                self.ctx.function_decl_name = Some(signature.clone());
-                self.ctx.return_type_tok = return_type_tok;
-                match self.ctx.return_type_tok {
-                    Some(ref ident) => {
-                        let return_ident = ident.as_str();
-                        let return_type_id = self.get_type_id(return_ident)?;
-                        let return_type = self.types.get(return_type_id).unwrap();
-                        let return_type_mode = match &return_type.form {
-                            TypeForm::Base { type_mode } => *type_mode,
-                            TypeForm::Struct { .. } => todo!("fn return struct"),
-                            TypeForm::Union {} => todo!("fn return union"),
-                        };
-
-                        self.ctx.return_type_id = Some(return_type_id);
-                        self.ctx.return_type_data = Some(ExprData {
-                            type_mode: return_type_mode,
-                            addr_mode: return_addr_mode.unwrap(),
-                            form: ExprForm::Expr {
-                                inherited_width: return_type.width,
-                            },
-                        });
+                let return_type = match return_type_tok {
+                    Some(tok) => {
+                        let base_id = self.get_base_idx(return_type_tok.unwrap().as_str())?;
+                        Some(self.new_partial(base_id, return_addr_mode.unwrap()))
                     }
-                    None => {
-                        self.ctx.return_type_id = None;
-                        self.ctx.return_type_data = None;
-                    }
-                }
-
-                // Create lambda for custom scope check
-                let checked_scope;
-                let mut_self = self as *const Checker as *mut Checker;
-                let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
-                    debug!(self, "checking {signature}'s statements!");
-                    self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
-
-                    for arg in &arg_semantics {
-                        // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
-                        self.var_map
-                            .insert(arg.ident.as_str().to_string(), self.vars.len());
-                        self.vars.push(arg.clone());
-                    }
-
-                    let mut checked_stmts = Vec::new();
-                    for stmt in stmts {
-                        checked_stmts.push(self.check_stmt(stmt)?);
-                        debug!(self, "added {:#?}", checked_stmts.last())
-                    }
-
-                    if !self.ctx.valid_return {
-                        return err!(self, "Not all code paths return in '{signature}'");
-                    }
-                    checked_stmts.reverse();
-
-                    // removes args for me! (check_scope() that is)
-                    Ok(checked_stmts)
+                    None => None,
                 };
-                unsafe {
-                    checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
-                }
 
-                // un-set shared data.
-                self.ctx.function_decl_name = None;
-                self.ctx.scope_inherit_bounds_id = None;
-                self.fn_map.insert(
-                    signature.clone(),
-                    SemFn {
-                        signature: signature.clone(),
-                        scope: checked_scope,
-                        arg_semantics,
-                        return_type_id: self.ctx.return_type_id,
-                        return_type_data: self.ctx.return_type_data,
-                    },
-                );
+                self.fn_map.insert(signature.clone(), self.fn_vec.len());
+                self.fn_vec.push(Function {
+                    args: args_semantics,
+                    return_type,
+                });
+
+                // TODO(TOM): check function body. << check with dummy values?
+                // Create lambda for custom scope check
+                // let mut_self = self as *const Checker as *mut Checker;
+                // let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
+                //     debug!(self, "checking {signature}'s statements!");
+                //     self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
+
+                //     for arg in &args_semantics {
+                //         // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
+                //         self.var_map
+                //             .insert(arg.ident.as_str().to_string(), self.vars.len());
+                //         self.vars.push(arg.clone());
+                //     }
+
+                //     let mut checked_stmts = Vec::new();
+                //     for stmt in stmts {
+                //         checked_stmts.push(self.check_stmt(stmt)?);
+                //         debug!(self, "added {:#?}", checked_stmts.last())
+                //     }
+
+                //     if !self.ctx.valid_return {
+                //         return err!(self, "Not all code paths return in '{signature}'");
+                //     }
+                //     checked_stmts.reverse();
+
+                //     // removes args for me! (check_scope() that is)
+                //     Ok(checked_stmts)
+                // };
+
+                // unsafe {
+                //     checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
+                // }
 
                 Ok(NodeStmt::FnSemantics { signature })
             }
             _ => {
-                self.check_stmt(stmt)
-                // err!(
-                //     self,
-                //     "A Program only consists of functions, this is a {stmt:?}"
-                // )
+                err!(
+                    self,
+                    "A Program only consists of functions, this is a {stmt:?}"
+                )
             }
         }
     }
@@ -439,57 +461,41 @@ impl Checker {
                 }
 
                 let type_id = self.get_type_id(type_tok.as_str())?;
-                let var_type = self.types.get(type_id).unwrap();
+                let var_type = self.type_vec.get(type_id).unwrap();
 
                 // change byte width if its a pointer
                 let mut width = var_type.width;
                 match type_addr_mode {
                     AddressingMode::Primitive => (),
-                    AddressingMode::Pointer => width = PTR_WIDTH,
+                    AddressingMode::Pointer => width = PTR,
                     AddressingMode::Array => todo!("array byte width modifications"),
                 }
 
-                let var = SemVariable {
+                let var = Variable {
                     ident,
-                    mutable,
-                    width,
-                    scope_id: self.ctx.cur_scope_id,
                     type_id,
                     addr_mode: type_addr_mode,
                     init_expr,
                 };
+
                 // insert into registry
                 self.var_map
-                    .insert(var.ident.as_str().to_string(), self.vars.len());
-                self.vars.push(var.clone());
+                    .insert(var.ident.as_str().to_string(), self.var_vec.len());
+                self.var_vec.push(var.clone());
 
                 // check intial expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
-                    let var_data = ExprData {
-                        type_mode: {
-                            match &self.types.get(var.type_id).unwrap().form {
-                                TypeForm::Base { type_mode } => *type_mode,
-                                TypeForm::Struct { .. } => todo!(),
-                                TypeForm::Union {} => todo!(),
-                            }
-                        },
+                    let init_data = ExprData {
+                        type_id: var.type_id,
                         addr_mode: var.addr_mode,
-                        form: ExprForm::Variable {
-                            ptr: self.new_nonnull(&var)?,
-                        },
                     };
-                    self.check_type_equivalence(&var_data, &checked)?;
+                    self.check_type_equivalence(&init_data, &checked)?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
             }
-            NodeStmt::FnDecl { .. } => {
-                return err!(
-                    self,
-                    "Functions cannot be nested, they're top level statements"
-                )
-            }
+
             NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
                 err!(self, "return not expected outside a function declaration.")
             }
@@ -652,6 +658,12 @@ impl Checker {
             | NodeStmt::ReturnSemantics { .. } => {
                 err!(self, "Found {stmt:#?}.. shouldn't have.")
             }
+            NodeStmt::FnDecl { .. } => {
+                return err!(
+                    self,
+                    "Functions cannot be nested, they're top level statements"
+                )
+            }
         }
     }
 
@@ -734,22 +746,20 @@ impl Checker {
                 // logical    bool, bool => bool
                 // arithmetic int,  int  => int
                 let op_flags = op.get_flags();
-                let width = self.get_width(&ldata.form);
+
                 match op_flags {
                     _ if op_flags.contains(TokenFlags::CMP) => Ok(ExprData {
+                        ptr: None,
+                        width: ldata.width,
                         type_mode: TypeMode::Bool,
                         addr_mode: AddressingMode::Primitive,
-                        form: ExprForm::Expr {
-                            inherited_width: width,
-                        },
                     }),
                     _ if op_flags.contains(TokenFlags::LOG) => match ldata.type_mode {
                         TypeMode::Bool => Ok(ExprData {
+                            ptr: None,
                             type_mode: TypeMode::Bool,
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Expr {
-                                inherited_width: width,
-                            },
+                            width: ldata.width,
                         }),
                         _ => {
                             err!(
@@ -762,11 +772,10 @@ impl Checker {
                         match ldata.type_mode {
                             TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
                                 Ok(ExprData {
+                                    ptr: None,
+                                    width: ldata.width,
                                     type_mode: ldata.type_mode,
                                     addr_mode: ldata.addr_mode,
-                                    form: ExprForm::Expr {
-                                        inherited_width: width,
-                                    },
                                 })
                             }
                             _ => {
@@ -789,10 +798,11 @@ impl Checker {
                 // 'Bit Not'   primitive => primitive
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
-                let inherited_width = match checked.form {
-                    ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
-                    ExprForm::Expr { inherited_width } => inherited_width,
-                };
+
+                // let inherited_width = match checked.form {
+                //     ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
+                //     ExprForm::Expr { inherited_width } => inherited_width,
+                // };
                 match op {
                     TokenKind::Tilde => match checked.addr_mode  {
                         AddressingMode::Primitive => Ok(checked),
@@ -801,44 +811,45 @@ impl Checker {
                     TokenKind::Sub => match checked.type_mode {
                         TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
                             Ok(ExprData {
+                                ptr: None,
+                                width: checked.width,
                                 type_mode: TypeMode::Int { signed },
                                 addr_mode: AddressingMode::Primitive,
-                                form: ExprForm::Expr { inherited_width },
                             })
                         }
                         TypeMode::IntLit => Ok(ExprData {
+                            ptr: None,
+                            width: checked.width,
                             type_mode: TypeMode::Int { signed: true },
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Expr { inherited_width },
                         }),
                         _ => err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}"),
                     },
                     TokenKind::CmpNot => match checked.type_mode {
                         TypeMode::Bool => Ok(ExprData {
+                            ptr: None,
+                            width: checked.width,
                             type_mode: TypeMode::Bool,
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Expr { inherited_width },
                         }),
                         _ => err!(self, "'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
                     },
                     TokenKind::Ampersand => match checked.addr_mode {
-                        AddressingMode::Primitive => match checked.form {
-                            ExprForm::Variable { .. } => Ok(ExprData { // TODO(TOM): use variable's ptr?
-                                type_mode: checked.type_mode,
-                                addr_mode: AddressingMode::Pointer,
-                                form: ExprForm::Expr {
-                                    inherited_width: PTR_WIDTH,
-                                },
-                            }),
-                            _ => err!(self, "'&' unary operator requires expr to be a memory address."),
-                        },
+                        AddressingMode::Primitive if checked.ptr.is_some() =>
+                            Ok(ExprData {
+                                        ptr: None, // TODO(TOM): use variable's ptr?
+                                        width: PTR,
+                                        type_mode: checked.type_mode,
+                                        addr_mode: AddressingMode::Pointer,
+                                    }),
                         _ => err!(self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"),
                     },
                     TokenKind::Ptr => match checked.addr_mode {
                         AddressingMode::Pointer => Ok(ExprData {
+                            ptr: None,
+                            width: checked.width, // TODO(TOM): not sure about this?
                             type_mode: checked.type_mode,
                             addr_mode: AddressingMode::Primitive,
-                            form: ExprForm::Expr { inherited_width }, // TODO(TOM): not sure about this?
                         }),
                         _ => err!(self, "'^' unary operator requires expr to be a pointer =>\n{checked:#?}"),
                     },
@@ -855,9 +866,10 @@ impl Checker {
                 self.update_pos(tok.pos);
 
                 Ok(ExprData {
+                    ptr: None,
+                    width: 0,
                     type_mode: TypeMode::IntLit,
                     addr_mode: AddressingMode::Primitive,
-                    form: ExprForm::Expr { inherited_width: 0 },
                 })
             }
             NodeTerm::Ident(tok) => {
@@ -866,13 +878,12 @@ impl Checker {
                 let var = self.get_var(tok.as_str())?;
                 match &self.types.get(var.type_id).unwrap().form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
+                        ptr: Some(self.new_nonnull(var)?),
+                        width: var.width,
                         type_mode: *type_mode,
                         addr_mode: var.addr_mode,
-                        form: ExprForm::Variable {
-                            ptr: self.new_nonnull(var)?,
-                        },
                     }),
-                    TypeForm::Struct { member_ids } => {
+                    TypeForm::Struct {} => {
                         todo!("check_term Ident Struct")
                     }
                     TypeForm::Union {} => todo!("check_term Ident Union"),
@@ -883,13 +894,12 @@ impl Checker {
                 let type_ref = self.types.get(*self.type_map.get("bool").unwrap()).unwrap();
                 match &type_ref.form {
                     TypeForm::Base { type_mode } => Ok(ExprData {
+                        ptr: None,
+                        width: type_ref.width,
                         type_mode: *type_mode,
                         addr_mode: AddressingMode::Primitive,
-                        form: ExprForm::Expr {
-                            inherited_width: type_ref.width,
-                        },
                     }),
-                    TypeForm::Struct { member_ids } => todo!("check_term boolean struct"),
+                    TypeForm::Struct {} => todo!("check_term boolean struct"),
                     TypeForm::Union {} => todo!("check_term boolean union"),
                 }
             }
@@ -913,23 +923,29 @@ impl Checker {
                     args_data.push(self.check_expr(arg)?);
                 }
 
-                //
-                // construct a function signature!!
-                let signature = match ident.as_str() {
-                    "main" => "main".to_owned(),
-                    name @ _ => {
-                        let mut str = String::new();
-                        str += name;
-                        str += "(";
-                        for (i, arg) in args_data.iter().enumerate() {
-                            // ExprData => Type
-                            // str += self.types.get(arg.type_id).unwrap().ident.as_str();
-                            str += ",";
-                        }
-                        str.pop(); // removes extra ','
-                        str + ")"
-                    }
-                };
+                // https://en.wikipedia.org/wiki/Type_inference
+                // https://en.wikipedia.org/wiki/Hindley%E2%80%93Milner_type_system
+
+                // need to perform type inference on "args_data"
+                // to get the names of the types
+                // then to construct a function signature
+                // then to check if that exists.
+
+                // let signature = match ident.as_str() {
+                //     "main" => "main".to_owned(),
+                //     name @ _ => {
+                //         let mut str = String::new();
+                //         str += name;
+                //         str += "(";
+                //         for (i, arg) in args_data.iter().enumerate() {
+                //             // ExprData => Type
+                //             // str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                //             str += ",";
+                //         }
+                //         str.pop(); // removes extra ','
+                //         str + ")"
+                //     }
+                // };
 
                 // iterate over fn_map
                 // compare to attempted fncall
@@ -970,7 +986,8 @@ impl Checker {
                 //     );
                 // }
 
-                Ok(fn_ref.return_type_data.unwrap())
+                // Ok(fn_ref.return_type_data.unwrap())
+                todo!("")
             }
         }
     }
@@ -996,12 +1013,11 @@ impl Checker {
         self.check_type_mode(assigner.type_mode, assignee.type_mode, &msg)?;
 
         // Check for Type Narrowing
-        let assigner_width = self.get_width(&assigner.form);
-        let assignee_width = self.get_width(&assignee.form);
-        if assigner_width < assignee_width {
+        if assigner.width < assignee.width {
             return err!(
                 self,
-                "Illegal Type Narrowing, Assignee({assignee_width}) < Assigner({assigner_width}) =>\n{assigner:#?}\n.. {assignee:#?}"
+                "Illegal Type Narrowing, Assignee({}) < Assigner({}) =>\n{assigner:#?}\n.. {assignee:#?}",
+                assignee.width, assigner.width
             );
         }
         Ok(())
@@ -1010,11 +1026,10 @@ impl Checker {
     fn get_exprdata(&self, var: &SemVariable) -> Result<ExprData, String> {
         match &self.types.get(var.type_id).unwrap().form {
             TypeForm::Base { type_mode } => Ok(ExprData {
+                ptr: Some(self.new_nonnull(var)?),
+                width: var.width,
                 type_mode: *type_mode,
                 addr_mode: var.addr_mode,
-                form: ExprForm::Variable {
-                    ptr: self.new_nonnull(var)?,
-                },
             }),
             TypeForm::Struct { .. } => {
                 todo!("Struct type mode")
@@ -1119,24 +1134,17 @@ impl Checker {
         }
     }
 
-    fn get_type_id(&self, ident: &str) -> Result<usize, String> {
+    fn get_base_idx(&self, ident: &str) -> Result<usize, String> {
         match self.type_map.get(ident) {
             Some(id) => Ok(*id),
             None => err!(self, "Type '{ident}' not found"),
         }
     }
 
-    fn get_width(&self, form: &ExprForm) -> usize {
-        match form {
-            ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
-            ExprForm::Expr { inherited_width } => *inherited_width,
-        }
-    }
-
-    fn add_type(&mut self, new_type: Type) {
+    fn add_base(&mut self, new_base: BaseType) {
         self.type_map
-            .insert(new_type.ident.clone(), self.types.len());
-        self.types.push(new_type);
+            .insert(new_base.ident.clone(), self.type_vec.len());
+        self.type_vec.push(new_base);
     }
 
     fn update_pos(&self, pos: (u32, u32)) {
@@ -1146,8 +1154,8 @@ impl Checker {
         }
     }
 
-    fn new_nonnull(&self, reference: &SemVariable) -> Result<NonNull<SemVariable>, String> {
-        match NonNull::new(reference as *const SemVariable as *mut SemVariable) {
+    fn new_nonnull(&self, reference: &Variable) -> Result<NonNull<Variable>, String> {
+        match NonNull::new(reference as *const Variable as *mut Variable) {
             Some(ptr) => Ok(ptr),
             None => err!(
                 self,
@@ -1155,12 +1163,44 @@ impl Checker {
             ),
         }
     }
-}
 
-fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> Type {
-    Type {
-        ident: ident.to_string(),
-        width,
-        form: TypeForm::Base { type_mode },
+    fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> BaseType {
+        BaseType {
+            ident: ident.to_string(),
+            width,
+        }
+    }
+
+    fn new_partial(&self, base_id: usize, addr_mode: AddressingMode) -> PartialType {
+        let base_width = self.type_vec.get(base_id).unwrap().width;
+        let width = match addr_mode {
+            AddressingMode::Primitive => base_width,
+            AddressingMode::Pointer => PTR,
+            AddressingMode::Array => todo!("array byte width modifications"),
+        };
+        PartialType {
+            width,
+            base_id,
+            addr_mode,
+        }
+    }
+
+    fn new_full(form: TypeForm, addr_mode: AddressingMode) -> FullType {
+        // TODO(TOM): struct,union width calculations
+        let width = match form {
+            TypeForm::Base(ref base) => match addr_mode {
+                AddressingMode::Primitive => base.width,
+                AddressingMode::Pointer => PTR,
+                AddressingMode::Array => todo!("array byte width modifications"),
+            },
+            TypeForm::Struct(_) => todo!("struct width calculation"),
+            TypeForm::Union(_) => todo!("union width calculation"),
+        };
+
+        FullType {
+            width,
+            form,
+            addr_mode,
+        }
     }
 }

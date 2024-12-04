@@ -16,8 +16,8 @@ use parse::*;
 mod semantic;
 use semantic::*;
 
-mod code_gen;
-use code_gen::Generator;
+// mod code_gen;
+// use code_gen::Generator;
 
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
@@ -29,16 +29,16 @@ fn main() {
     // print_tokens(&tokens);
     let ast = parse(tokens);
     // println!("\n\n{ast:#?}\n\n");
-    let gen_data = semantic_check(ast);
-    println!("\n\n{:#?}\n\n", gen_data.ast);
-    code_gen(gen_data, file_name);
+    // let gen_data = semantic_check(ast);
+    // println!("\n\n{:#?}\n\n", gen_data.ast);
+    // code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn parse(tokens: VecDeque<Token>) -> AST {
+fn parse(tokens: VecDeque<Token>) -> Ast {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
@@ -47,7 +47,7 @@ fn parse(tokens: VecDeque<Token>) -> AST {
         // Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
-
+/*
 fn semantic_check(ast: AST) -> Checker {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
     match semantic::Checker::check_ast(ast.clone()) {
@@ -79,6 +79,7 @@ fn code_gen(data: Checker, file_name: String) {
         Err(e) => panic!("\n{e}\n"),
     };
 }
+*/
 
 /*----------------------------------------------------------------------------------------
 ---- Misc --------------------------------------------------------------------------------
