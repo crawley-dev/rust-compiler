@@ -1,5 +1,6 @@
+fn example0() {
+    let ans: i32;
+}
+
 /*
 exit(69) */ // //;
-
-let ans: i32 = 20;
-exit(20);

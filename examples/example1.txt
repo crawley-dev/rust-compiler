@@ -1,7 +1,7 @@
-let mut dwa: u32 = 5;
-dwa += 5;
-dwa += (5* 10 + 3 - 5) + 1 -  5;
-
-//let y: ^usize;
-//let x: u32 = (10 - 2) * 3 + 5 / (3 + 2);
-//exit(x);
+fn example1() {
+    let a: i32 = 0;
+    let b: i64 = 10 + 5;
+    let x: u32 = (10 - 2) * 3 + 5 / (3 + 2);
+    let mut y: i32 = 20;
+    y += 10;    
+}

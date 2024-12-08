@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 const LOG_DEBUG_INFO: bool = false;
 const MSG: &'static str = "PARSE";
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub struct Arg {
     pub mutable: bool,
     pub ident: Token,
@@ -19,24 +19,37 @@ pub struct Arg {
     pub addr_mode: AddressingMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub enum InitExpr {
     Some(NodeExpr),
     None,
     Deferred, // trust me bro, it exists.
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub struct NodeScope {
     pub stmts: Vec<NodeStmt>,
     pub inherits_stmts: bool,
 }
 
+#[derive(Clone)]
 pub struct Ast {
     pub stmts: Vec<NodeStmt>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// TODO(TOM): impl this
+// pub enum NodeTopLevel {
+//     FnDecl {
+//         ident: Token,
+//         args: Vec<Arg>,
+//         scope: NodeScope,
+//         return_type_tok: Option<Token>,
+//         return_addr_mode: Option<AddressingMode>,
+//     },
+// }
+// pub enum SemNodeTopLevel
+
+#[derive(Debug, Clone)]
 pub enum NodeStmt {
     FnDecl {
         ident: Token,
@@ -77,7 +90,7 @@ pub enum NodeStmt {
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(Variable),
     FnSemantics {
-        signature: String,
+        id: usize,
     },
     // ReturnSemantics {
     //     expr: Option<ExprData>,
@@ -133,13 +146,12 @@ impl Parser {
     fn parse_top_level(&mut self) -> Result<NodeStmt, String> {
         match self.peek(0) {
             Some(tok) if tok.kind != TokenKind::Fn => {
-                return self.parse_stmt();
-                // err!(
-                //     self,
-                //     "A Program only consists of functions, this is =>\n{tok:#?}"
-                // )
+                err!(
+                    self,
+                    "A Program only consists of functions, this is =>\n{tok:#?}"
+                )
             }
-            Some(_) => (),
+            Some(_) => Ok(()), // fn code is below!
             None => return err!(self, "No token to parse"),
         };
 
@@ -173,7 +185,7 @@ impl Parser {
             return_type_tok = Some(tok);
             return_addr_mode = Some(addr_mode);
         }
-        let scope = self.parse_scope()?;
+        let scope = self.parse_scope(false)?;
 
         Ok(NodeStmt::FnDecl {
             ident,
@@ -216,7 +228,7 @@ impl Parser {
             TokenKind::If => {
                 self.expect(TokenKind::If)?;
                 let condition = self.parse_expr(0)?;
-                let scope = self.parse_scope()?;
+                let scope = self.parse_scope(true)?;
 
                 let mut branches = Vec::new();
                 loop {
@@ -225,11 +237,11 @@ impl Parser {
                     } else if self.expect(TokenKind::If).is_ok() {
                         branches.push(NodeStmt::ElseIf {
                             condition: self.parse_expr(0)?,
-                            scope: self.parse_scope()?,
+                            scope: self.parse_scope(true)?,
                         });
                         continue;
                     }
-                    branches.push(NodeStmt::Else(self.parse_scope()?));
+                    branches.push(NodeStmt::Else(self.parse_scope(true)?));
                     break;
                 }
 
@@ -255,7 +267,7 @@ impl Parser {
             TokenKind::While => {
                 self.expect(TokenKind::While)?;
                 let condition = self.parse_expr(0)?;
-                let scope = self.parse_scope()?;
+                let scope = self.parse_scope(true)?;
                 NodeStmt::While { condition, scope }
             }
             TokenKind::Ident => {
@@ -293,7 +305,7 @@ impl Parser {
                 self.expect(TokenKind::Break)?;
                 NodeStmt::Break
             }
-            TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope()?),
+            TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope(true)?),
             _ => return err!(self, "Invalid Statement =>\n{tok:#?}"),
         };
 
@@ -311,7 +323,7 @@ impl Parser {
         }
     }
 
-    fn parse_scope(&mut self) -> Result<NodeScope, String> {
+    fn parse_scope(&mut self, inherits_stmts: bool) -> Result<NodeScope, String> {
         // consumes statements until a closebrace is found.
         self.expect(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
@@ -321,7 +333,7 @@ impl Parser {
 
         Ok(NodeScope {
             stmts,
-            inherits_stmts: true,
+            inherits_stmts,
         })
     }
 
@@ -476,5 +488,14 @@ impl Parser {
     fn expect(&mut self, kind: TokenKind) -> Result<Token, String> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
+    }
+}
+
+impl std::fmt::Debug for Ast {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for stmt in &self.stmts {
+            writeln!(f, "{stmt:#?},")?;
+        }
+        Ok(())
     }
 }

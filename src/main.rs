@@ -28,9 +28,7 @@ fn main() {
     let tokens = Lexer::new(contents).tokenize();
     // print_tokens(&tokens);
     let ast = parse(tokens);
-    // println!("\n\n{ast:#?}\n\n");
-    // let gen_data = semantic_check(ast);
-    // println!("\n\n{:#?}\n\n", gen_data.ast);
+    let gen_data = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 
@@ -43,20 +41,24 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
     let mut parser = Parser::new(tokens.clone());
     match parser.parse_ast() {
         Ok(ast) => ast,
-        Err(e) => panic!("\n{e}\n"),
-        // Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
-    }
-}
-/*
-fn semantic_check(ast: AST) -> Checker {
-    // TODO(TOM): REMOVE CLONE AFTER DEBUG
-    match semantic::Checker::check_ast(ast.clone()) {
-        Ok(data) => data,
-        Err(e) => panic!("\n{e}\n"),
-        // Err(e) => panic!("{ast:#?}\n\n{e}\n"),
+        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
     }
 }
 
+fn semantic_check(ast: Ast) -> Checker {
+    // TODO(TOM): REMOVE CLONE AFTER DEBUG
+    match semantic::Checker::check_ast(ast.clone()) {
+        Ok(data) => {
+            println!("\n{data:#?}\n");
+            data
+        }
+        Err(e) => {
+            panic!("\n{ast:#?}\n{e}\n")
+        }
+    }
+}
+
+/*
 fn code_gen(data: Checker, file_name: String) {
     let file_path = format!("./output/{}.asm", file_name);
     let mut generator = Generator::new(data);
@@ -128,13 +130,16 @@ fn print_tokens(tokens: &VecDeque<Token>) {
 
 fn get_file_name() -> String {
     let args: String = env::args().skip(1).take(1).collect();
-    let file_name = args.split('.').take(1).collect::<String>();
-    let extension = args.split('.').skip(1).take(1).collect::<String>();
     if args.is_empty() {
         panic!("[COMPILER] No file path given!\n");
-    } else if extension != "txt" {
-        panic!("[COMPILER] Invalid file extension, '.txt' only\n")
     }
+
+    let file_name = args.split('.').take(1).collect::<String>();
+    // TODO(TOM): re-enable after testing
+    // let extension = args.split('.').skip(1).take(1).collect::<String>();
+    // else if extension != "txt" {
+    //     panic!("[COMPILER] Invalid file extension, '.txt' only\n")
+    // }
     file_name
 }
 

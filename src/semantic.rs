@@ -62,9 +62,9 @@
       *  CURRENT IMPLEMENTATION:
      **/
 
-     - TypeBase: a starting point for a type, e.g. char or u32
+     - TypeBase: a starting point for a type, e.g. char or u32. this is the generic form of a type.
      - PartialType: represents an expression, has characteristics of a type but not the full type
-     - FullType: a complete type, represents a variable.
+     - FullType: A complete type e.g: '[]u32'. They are personalised to a specific use case, NOT general!!
 */
 
 use crate::{
@@ -72,7 +72,9 @@ use crate::{
     lex::{Token, TokenFlags, TokenKind},
     parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm},
 };
+use educe::Educe;
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
     ops::Add,
     ptr::NonNull,
@@ -151,110 +153,142 @@ pub struct SemFn {
 }
     */
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy)]
 pub enum AddressingMode {
     Primitive,
     Pointer,
     Array,
+    // None, // For zero width "marker types", e.g. void
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy)]
 enum TypeMode {
     Boolean,
     Int(bool), // sign
+               // None, // for void
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum TypeForm {
-    Base(BaseType),
-    Struct(Vec<FullType>),
-    Union(Vec<FullType>),
-}
-
-// TODO(TOM): redo: a base type needs to have a form, because you can create define a union or struct
-// what makes a fulltype special?
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
+#[derive(Debug, Clone)]
 struct BaseType {
     ident: String,
+    mode: TypeMode,
     width: Byte,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PartialType {
-    width: Byte,
-    base_id: usize,
-    addr_mode: AddressingMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 struct FullType {
     width: Byte, // width accounting for the addressing mode
-    form: TypeForm,
+    type_id: usize,
     addr_mode: AddressingMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct FuncArg {
-    ident: Token,
-    type_id: usize,
+// TODO(TOM): make this generic over the type, e.g. a partial base, or a partial struct?
+#[derive(Debug, Clone)]
+enum Type<T> {
+    Primitive(T),
+    // TODO(TOM): does this need a typemode, its mode is kinda itself.. a struct??
+    Struct {
+        ident: Token,
+        members: Vec<T>,
+        width: Byte,
+    },
+    Union {
+        ident: Token,
+        members: Vec<T>,
+        width: Byte,
+    },
 }
 
-// Proper
+// An expression is evaluated based on:
+// TypeMode: what operations can be performed
+// AddressingMode: how is it represented in memory, if at all
+// Width: to know how big the result should be: MAX(op1.width, op2.width)
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// how am I going to get types from these?
+// I need to understand and inherit the types of concrete values
+#[derive(Debug, Clone)]
+struct ExprSem {
+    type_mode: TypeMode,
+    addr_mode: AddressingMode,
+    width: Byte,
+}
+
+// region: Final Data Types
+#[derive(Debug, Clone)]
 pub struct Variable {
     ident: Token,
     type_id: usize,
     addr_mode: AddressingMode,
     init_expr: InitExpr,
+    scope_id: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub struct Function {
-    args: Vec<FuncArg>,
-    return_type: Option<FullType>, // none == void
+    ident: Token,
+    signature: String,
+    args: Vec<Type<FullType>>,
+    scope: NodeScope,
+    return_type_id: Option<usize>, // none == void
 }
 
+#[derive(Debug)]
+struct FuncContext {
+    valid_return: bool,
+}
+#[derive(Debug)]
 struct SemContext {
-    loop_count: isize, // not usize to get useful error messages in debug build, instead of oob error
-    cur_scope_id: usize,
-    // scope_inherit_bounds_id: Option<usize>, // only inherit statements from this scope onwards (e.g. function scope cuts off all external scopes)
-    fn_decl_id: Option<usize>, // for when checking a function declaration
+    loop_count: isize, // usize means I can get useful error messages in debug build, instead of oob error
+    scope_depth: usize, // how many scopes we are deep! 0 --> infinity
+    inherit_bounds: Vec<usize>, // a stack for storing function call scopes, don't inherit values past these!
+    func: Option<FuncContext>, // fn_decl_id: Option<usize>,  // for when checking a function declaration
 }
 
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct Checker {
-    pos: (u32, u32),
-    ast: Ast,
+    pub pos: (u32, u32),
+    pub ast: Ast,
     ctx: SemContext,
 
-    type_vec: Vec<BaseType>,
-    fn_vec: Vec<Function>,
+    // var_vec does NOT permanently store variables, stores current scope's variables. (on stack)
+    #[educe(Debug(ignore))]
+    type_vec: Vec<Type<BaseType>>,
+    pub fn_vec: Vec<Function>,
+    #[educe(Debug(ignore))]
     var_vec: Vec<Variable>,
-    type_map: HashMap<String, usize>,
-    fn_map: HashMap<String, usize>,
-    var_map: HashMap<String, usize>,
+    #[educe(Debug(ignore))]
+    pub type_map: HashMap<String, usize>,
+    pub fn_map: HashMap<String, usize>,
+    #[educe(Debug(ignore))]
+    pub var_map: HashMap<String, usize>,
 }
+// endregion
 
 impl Checker {
     pub fn check_ast(ast: Ast) -> Result<Checker, String> {
         let type_vec = Vec::from([
-            Self::new_base("bool", 1, TypeMode::Boolean),
-            Self::new_base("u8", 1, TypeMode::Int(false)),
-            Self::new_base("u16", 2, TypeMode::Int(false)),
-            Self::new_base("u32", 4, TypeMode::Int(false)),
-            Self::new_base("u64", PTR, TypeMode::Int(false)),
-            Self::new_base("usize", PTR, TypeMode::Int(false)),
-            Self::new_base("i8", 1, TypeMode::Int(true)),
-            Self::new_base("i16", 2, TypeMode::Int(true)),
-            Self::new_base("i32", 4, TypeMode::Int(true)),
-            Self::new_base("i64", PTR, TypeMode::Int(true)),
-            Self::new_base("isize", PTR, TypeMode::Int(true)),
-            Self::new_base("f32", 4, TypeMode::Int(true)),
-            Self::new_base("f64", PTR, TypeMode::Int(true)),
+            Self::new_prim("bool", 1, TypeMode::Boolean),
+            Self::new_prim("u8", 1, TypeMode::Int(false)),
+            Self::new_prim("u16", 2, TypeMode::Int(false)),
+            Self::new_prim("u32", 4, TypeMode::Int(false)),
+            Self::new_prim("u64", PTR, TypeMode::Int(false)),
+            Self::new_prim("usize", PTR, TypeMode::Int(false)),
+            Self::new_prim("i8", 1, TypeMode::Int(true)),
+            Self::new_prim("i16", 2, TypeMode::Int(true)),
+            Self::new_prim("i32", 4, TypeMode::Int(true)),
+            Self::new_prim("i64", PTR, TypeMode::Int(true)),
+            Self::new_prim("isize", PTR, TypeMode::Int(true)),
+            Self::new_prim("f32", 4, TypeMode::Int(true)),
+            Self::new_prim("f64", PTR, TypeMode::Int(true)),
         ]);
         let mut type_map = HashMap::with_capacity(type_vec.len());
         for (idx, base) in type_vec.iter().enumerate() {
-            type_map.insert(base.ident.clone(), idx);
+            match base {
+                Type::Primitive(base) => type_map.insert(base.ident.clone(), idx),
+                _ => todo!("type_map for non-primitive types"),
+            };
         }
 
         let mut checker = Checker {
@@ -262,9 +296,9 @@ impl Checker {
             ast: Ast { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
-                cur_scope_id: 0,
-
-                fn_decl_id: None,
+                scope_depth: 0,
+                inherit_bounds: Vec::new(),
+                func: None,
             },
 
             type_vec,
@@ -292,23 +326,32 @@ impl Checker {
         // Instead: use one array with a length
 
         // Checking for the Entry Point
-        let fn_id = checker.fn_map.get("main");
-        match checker.fn_vec.get(*fn_id.unwrap()) {
-            Some(func) if !func.args.is_empty() => {
-                err!(
-                    &checker,
-                    "The 'main' function takes no arguments =>\nremove {:#?}",
-                    func.args
-                )
-            }
-            None => {
-                err!(
-                    &checker,
-                    "No entry point for the program found. Add a 'main' function."
-                )
-            }
-            _ => Ok(checker),
-        }
+        // let fn_id = match checker.fn_map.get("main") {
+        //     Some(id) => id,
+        //     None => {
+        //         return err!(
+        //             &checker,
+        //             "No entry point for the program found. Add a 'main' function."
+        //         )
+        //     }
+        // };
+        // match checker.fn_vec.get(*fn_id) {
+        //     Some(func) if !func.args.is_empty() => {
+        //         err!(
+        //             &checker,
+        //             "The 'main' function takes no arguments =>\nremove {:#?}",
+        //             func.args
+        //         )
+        //     }
+        //     None => {
+        //         err!(
+        //             &checker,
+        //             "No entry point for the program found. Add a 'main' function."
+        //         )
+        //     }
+        //     _ => Ok(checker),
+        // }
+        Ok(checker)
     }
 
     fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
@@ -332,13 +375,14 @@ impl Checker {
                 // Create arg semantics
                 // - check for duplicates
                 // - check for used names (keywords & other variables)
-                let mut args_semantics: Vec<FuncArg> = Vec::new();
-                for arg in args {
+                let mut args_semantics: Vec<Type<FullType>> = Vec::new();
+                for arg in &args {
                     let arg_ident = arg.ident.as_str();
 
                     if args_semantics
                         .iter()
-                        .find(|x| x.ident == arg.ident)
+                        .map(|x| self.get_full_ident(x))
+                        .find(|x| *x == arg_ident)
                         .is_some()
                     {
                         return err!(
@@ -355,27 +399,24 @@ impl Checker {
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
-
-                    let type_id = self.get_base_idx(arg.type_tok.as_str())?;
-                    args_semantics.push(FuncArg {
-                        ident: arg.ident,
-                        type_id,
-                    });
+                    let base_id = *self.type_map.get(arg.type_tok.as_str()).unwrap();
+                    args_semantics.push(self.new_full(base_id, arg.addr_mode));
                 }
 
-                // Creates a function signature, to allow for overloading
-                // e.g plus5(i32,i32)
+                // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
                 let signature = match ident.as_str() {
-                    "main" => "main".to_owned(),
+                    "main" => "main".to_owned(), // NOTE(TOM): main is a special case, no overloading
                     name @ _ => {
                         let mut str = String::new();
                         str += name;
                         str += "(";
                         for (i, arg) in args_semantics.iter().enumerate() {
-                            str += self.type_vec.get(arg.type_id).unwrap().ident.as_str();
+                            str += self.get_full_ident(arg);
                             str += ",";
                         }
-                        str.pop(); // removes extra ','
+                        if !args_semantics.is_empty() {
+                            str.pop(); // removes extra ','
+                        }
                         str + ")"
                     }
                 };
@@ -385,54 +426,66 @@ impl Checker {
                     return err!(self, "Duplicate definition of a Function: '{signature}'");
                 }
 
-                let return_type = match return_type_tok {
-                    Some(tok) => {
-                        let base_id = self.get_base_idx(return_type_tok.unwrap().as_str())?;
-                        Some(self.new_partial(base_id, return_addr_mode.unwrap()))
-                    }
+                let return_type_id = match return_type_tok {
+                    Some(tok) => Some(*self.type_map.get(tok.as_str()).unwrap()),
                     None => None,
                 };
 
+                // Create lambda for custom scope check
+                let mut checked_scope;
+                unsafe {
+                    let mut_self = self as *mut Self;
+                    checked_scope = (*mut_self).check_scope(
+                        scope,
+                        Some(|stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
+                            debug!(self, "checking {signature}'s statements!");
+
+                            let mut checked_stmts = Vec::with_capacity(stmts.len());
+
+                            // add each arg as a variable for use in the function
+                            for (arg, parse) in args_semantics.iter().zip(args.iter()) {
+                                let arg_node = NodeStmt::VarDecl {
+                                    init_expr: InitExpr::None,
+                                    ident: parse.ident.clone(),
+                                    type_tok: parse.type_tok.clone(),
+                                    type_addr_mode: parse.addr_mode,
+                                    mutable: parse.mutable,
+                                };
+                                checked_stmts.push(self.check_stmt(arg_node)?);
+                                debug!(self, "added\n{:#?}", checked_stmts.last());
+                            }
+
+                            for stmt in stmts {
+                                checked_stmts.push(self.check_stmt(stmt)?);
+                                debug!(self, "added\n{:#?}", checked_stmts.last())
+                            }
+
+                            match self.ctx.func {
+                                Some(ref func) if !func.valid_return => {
+                                    return err!(self, "Not all code paths return in '{signature}'")
+                                }
+                                _ => (),
+                            }
+                            // checked_stmts.reverse();
+
+                            // removes args for me! (check_scope() that is)
+                            Ok(checked_stmts)
+                        }),
+                    )?;
+                }
+
                 self.fn_map.insert(signature.clone(), self.fn_vec.len());
                 self.fn_vec.push(Function {
+                    ident,
+                    signature,
+                    scope: checked_scope,
                     args: args_semantics,
-                    return_type,
+                    return_type_id,
                 });
 
-                // TODO(TOM): check function body. << check with dummy values?
-                // Create lambda for custom scope check
-                // let mut_self = self as *const Checker as *mut Checker;
-                // let lambda = |stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
-                //     debug!(self, "checking {signature}'s statements!");
-                //     self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
-
-                //     for arg in &args_semantics {
-                //         // var_map insertion first as vars.len() is 1 larger, but negated by 0-indexing!
-                //         self.var_map
-                //             .insert(arg.ident.as_str().to_string(), self.vars.len());
-                //         self.vars.push(arg.clone());
-                //     }
-
-                //     let mut checked_stmts = Vec::new();
-                //     for stmt in stmts {
-                //         checked_stmts.push(self.check_stmt(stmt)?);
-                //         debug!(self, "added {:#?}", checked_stmts.last())
-                //     }
-
-                //     if !self.ctx.valid_return {
-                //         return err!(self, "Not all code paths return in '{signature}'");
-                //     }
-                //     checked_stmts.reverse();
-
-                //     // removes args for me! (check_scope() that is)
-                //     Ok(checked_stmts)
-                // };
-
-                // unsafe {
-                //     checked_scope = (*mut_self).check_scope(scope, Some(lambda))?;
-                // }
-
-                Ok(NodeStmt::FnSemantics { signature })
+                Ok(NodeStmt::FnSemantics {
+                    id: self.fn_vec.len() - 1,
+                })
             }
             _ => {
                 err!(
@@ -460,25 +513,31 @@ impl Checker {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = self.get_type_id(type_tok.as_str())?;
-                let var_type = self.type_vec.get(type_id).unwrap();
-
-                // change byte width if its a pointer
-                let mut width = var_type.width;
-                match type_addr_mode {
-                    AddressingMode::Primitive => (),
-                    AddressingMode::Pointer => width = PTR,
+                let type_id = *self.type_map.get(type_tok.as_str()).unwrap();
+                let base_type = self.type_vec.get(type_id).unwrap();
+                let type_width = match type_addr_mode {
+                    AddressingMode::Primitive => Self::get_base_width(base_type),
+                    AddressingMode::Pointer => PTR,
                     AddressingMode::Array => todo!("array byte width modifications"),
-                }
+                };
+                let var_type = match base_type {
+                    Type::Primitive(base) => Type::Primitive(FullType {
+                        width: base.width,
+                        type_id,
+                        addr_mode: type_addr_mode,
+                    }),
+                    Type::Struct { .. } => todo!("struct type"),
+                    Type::Union { .. } => todo!("union type"),
+                };
 
                 let var = Variable {
                     ident,
                     type_id,
                     addr_mode: type_addr_mode,
                     init_expr,
+                    scope_id: self.ctx.scope_depth,
                 };
-
-                // insert into registry
+                // insert variable into registry
                 self.var_map
                     .insert(var.ident.as_str().to_string(), self.var_vec.len());
                 self.var_vec.push(var.clone());
@@ -486,16 +545,18 @@ impl Checker {
                 // check intial expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
                     let checked = self.check_expr(expr)?;
-                    let init_data = ExprData {
-                        type_id: var.type_id,
-                        addr_mode: var.addr_mode,
+
+                    let init_data = ExprSem {
+                        type_mode: Self::get_base_mode(base_type),
+                        addr_mode: type_addr_mode,
+                        width: type_width,
                     };
                     self.check_type_equivalence(&init_data, &checked)?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
             }
-
+            /*
             NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
                 err!(self, "return not expected outside a function declaration.")
             }
@@ -652,19 +713,30 @@ impl Checker {
                     return err!(self, "Not inside a loop! cannot break");
                 }
                 Ok(stmt)
-            }
-            NodeStmt::VarSemantics { .. }
-            | NodeStmt::FnSemantics { .. }
-            | NodeStmt::ReturnSemantics { .. } => {
-                err!(self, "Found {stmt:#?}.. shouldn't have.")
-            }
+            } */
             NodeStmt::FnDecl { .. } => {
                 return err!(
                     self,
                     "Functions cannot be nested, they're top level statements"
                 )
             }
+            _ => {
+                // | NodeStmt::ReturnSemantics { .. } => {
+                err!(self, "Found {stmt:#?}.. shouldn't have.")
+            }
         }
+    }
+
+    fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem, String> {
+        todo!("check_expr")
+    }
+
+    fn check_term(&self, term: &NodeTerm) -> Result<ExprSem, String> {
+        todo!("check_term")
+    }
+
+    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<(), String> {
+        todo!("check_type_equivalence")
     }
 
     // 1. checks all stmts in scope
@@ -673,10 +745,10 @@ impl Checker {
     where
         F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
     {
-        self.ctx.cur_scope_id += 1;
+        self.ctx.scope_depth += 1;
         let does_inherit = scope.inherits_stmts;
         if !does_inherit {
-            self.ctx.scope_inherit_bounds_id = Some(self.ctx.cur_scope_id);
+            self.ctx.inherit_bounds.push(self.ctx.scope_depth)
         }
 
         let stmts = match func {
@@ -690,13 +762,13 @@ impl Checker {
             }
         };
 
-        self.ctx.cur_scope_id -= 1;
+        self.ctx.scope_depth -= 1;
         loop {
-            match self.vars.last() {
-                Some(var) if var.scope_id <= self.ctx.cur_scope_id => break,
+            match self.var_vec.last() {
+                Some(var) if var.scope_id <= self.ctx.scope_depth => break,
                 Some(var) => {
                     // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
-                    let var = self.vars.pop().unwrap(); // assign for borrow checkers sake!
+                    let var = self.var_vec.pop().unwrap();
                     self.var_map.remove(var.ident.as_str());
                 }
                 None => break,
@@ -717,6 +789,7 @@ impl Checker {
         )
     }
 
+    /*
     fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
         match expr {
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
@@ -931,21 +1004,21 @@ impl Checker {
                 // then to construct a function signature
                 // then to check if that exists.
 
-                // let signature = match ident.as_str() {
-                //     "main" => "main".to_owned(),
-                //     name @ _ => {
-                //         let mut str = String::new();
-                //         str += name;
-                //         str += "(";
-                //         for (i, arg) in args_data.iter().enumerate() {
-                //             // ExprData => Type
-                //             // str += self.types.get(arg.type_id).unwrap().ident.as_str();
-                //             str += ",";
-                //         }
-                //         str.pop(); // removes extra ','
-                //         str + ")"
-                //     }
-                // };
+                let signature = match ident.as_str() {
+                    "main" => "main".to_owned(),
+                    name @ _ => {
+                        let mut str = String::new();
+                        str += name;
+                        str += "(";
+                        for (i, arg) in args_data.iter().enumerate() {
+                            // ExprData => Type
+                            // str += self.types.get(arg.type_id).unwrap().ident.as_str();
+                            str += ",";
+                        }
+                        str.pop(); // removes extra ','
+                        str + ")"
+                    }
+                };
 
                 // iterate over fn_map
                 // compare to attempted fncall
@@ -1134,17 +1207,12 @@ impl Checker {
         }
     }
 
-    fn get_base_idx(&self, ident: &str) -> Result<usize, String> {
-        match self.type_map.get(ident) {
-            Some(id) => Ok(*id),
-            None => err!(self, "Type '{ident}' not found"),
-        }
-    }
+    */
 
-    fn add_base(&mut self, new_base: BaseType) {
+    fn add_type(&mut self, new_base: BaseType) {
         self.type_map
             .insert(new_base.ident.clone(), self.type_vec.len());
-        self.type_vec.push(new_base);
+        self.type_vec.push(Type::Primitive(new_base));
     }
 
     fn update_pos(&self, pos: (u32, u32)) {
@@ -1164,43 +1232,93 @@ impl Checker {
         }
     }
 
-    fn new_base(ident: &str, width: usize, type_mode: TypeMode) -> BaseType {
-        BaseType {
+    fn new_prim(ident: &str, width: usize, mode: TypeMode) -> Type<BaseType> {
+        Type::Primitive(BaseType {
             ident: ident.to_string(),
+            mode,
             width,
+        })
+    }
+
+    // base type width depends solely on form
+    fn get_base_width(inp_type: &Type<BaseType>) -> usize {
+        match inp_type {
+            Type::Primitive(base) => base.width,
+            Type::Struct { .. } => todo!("struct width calculation"),
+            Type::Union { .. } => todo!("union width calculation"),
         }
     }
 
-    fn new_partial(&self, base_id: usize, addr_mode: AddressingMode) -> PartialType {
-        let base_width = self.type_vec.get(base_id).unwrap().width;
-        let width = match addr_mode {
-            AddressingMode::Primitive => base_width,
-            AddressingMode::Pointer => PTR,
-            AddressingMode::Array => todo!("array byte width modifications"),
-        };
-        PartialType {
-            width,
-            base_id,
-            addr_mode,
+    fn get_base_mode(inp_type: &Type<BaseType>) -> TypeMode {
+        match inp_type {
+            Type::Primitive(base) => base.mode,
+            Type::Struct { .. } => todo!("struct mode calculation"),
+            Type::Union { .. } => todo!("union mode calculation"),
         }
     }
 
-    fn new_full(form: TypeForm, addr_mode: AddressingMode) -> FullType {
-        // TODO(TOM): struct,union width calculations
-        let width = match form {
-            TypeForm::Base(ref base) => match addr_mode {
-                AddressingMode::Primitive => base.width,
-                AddressingMode::Pointer => PTR,
-                AddressingMode::Array => todo!("array byte width modifications"),
-            },
-            TypeForm::Struct(_) => todo!("struct width calculation"),
-            TypeForm::Union(_) => todo!("union width calculation"),
-        };
-
-        FullType {
-            width,
-            form,
-            addr_mode,
+    fn get_base_ident(inp_type: &Type<BaseType>) -> &str {
+        match inp_type {
+            Type::Primitive(base) => base.ident.as_str(),
+            Type::Struct { .. } => todo!("struct ident calculation"),
+            Type::Union { .. } => todo!("union ident calculation"),
         }
     }
+
+    fn get_full_ident(&self, inp_type: &Type<FullType>) -> &str {
+        match inp_type {
+            Type::Primitive(full) => {
+                let base = self.type_vec.get(full.type_id).unwrap();
+                Self::get_base_ident(base)
+            }
+            Type::Struct { .. } => todo!("struct ident calculation"),
+            Type::Union { .. } => todo!("union ident calculation"),
+        }
+    }
+
+    fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
+        let base = self.type_vec.get(base_id).unwrap();
+        match base {
+            Type::Primitive(base) => Type::Primitive(FullType {
+                width: base.width,
+                type_id: base_id,
+                addr_mode,
+            }),
+            Type::Struct { .. } => todo!("struct full type"),
+            Type::Union { .. } => todo!("union full type"),
+        }
+    }
+
+    // fn new_partial(&self, base_id: usize, addr_mode: AddressingMode) -> PartialType {
+    //     let base_width = self.type_vec.get(base_id).unwrap().width;
+    //     let width = match addr_mode {
+    //         AddressingMode::Primitive => base_width,
+    //         AddressingMode::Pointer => PTR,
+    //         AddressingMode::Array => todo!("array byte width modifications"),
+    //     };
+    //     PartialType {
+    //         width,
+    //         base_id,
+    //         addr_mode,
+    //     }
+    // }
+
+    // fn new_full(form: TypeForm, addr_mode: AddressingMode) -> Type<FullType> {
+    //     // TODO(TOM): struct,union width calculations
+    //     let width = match form {
+    //         TypeForm::Base(ref base) => match addr_mode {
+    //             AddressingMode::Primitive => base.width,
+    //             AddressingMode::Pointer => PTR,
+    //             AddressingMode::Array => todo!("array byte width modifications"),
+    //         },
+    //         TypeForm::Struct(_) => todo!("struct width calculation"),
+    //         TypeForm::Union(_) => todo!("union width calculation"),
+    //     };
+
+    //     Type::FullType {
+    //         width,
+    //         form,
+    //         addr_mode,
+    //     }
+    // s}
 }
