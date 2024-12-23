@@ -56,15 +56,6 @@
  ✅ Cpp Style Function overriding:
      - match function uniqueness based on its "signature" (name + argument types).
      - e.g func123(int,bool) != func123(int). UNIQUE!
-
-
-     /**
-      *  CURRENT IMPLEMENTATION:
-     **/
-
-     - TypeBase: a starting point for a type, e.g. char or u32. this is the generic form of a type.
-     - PartialType: represents an expression, has characteristics of a type but not the full type
-     - FullType: A complete type e.g: '[]u32'. They are personalised to a specific use case, NOT general!!
 */
 
 use crate::{
@@ -153,7 +144,7 @@ pub struct SemFn {
 }
     */
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
     Primitive,
     Pointer,
@@ -165,7 +156,15 @@ pub enum AddressingMode {
 enum TypeMode {
     Boolean,
     Int(bool), // sign
-               // None, // for void
+    Void,
+    Struct,
+    Union,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExprForm {
+    Variable,
+    Literal,
 }
 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
@@ -209,6 +208,7 @@ enum Type<T> {
 // I need to understand and inherit the types of concrete values
 #[derive(Debug, Clone)]
 struct ExprSem {
+    form: ExprForm,
     type_mode: TypeMode,
     addr_mode: AddressingMode,
     width: Byte,
@@ -218,8 +218,7 @@ struct ExprSem {
 #[derive(Debug, Clone)]
 pub struct Variable {
     ident: Token,
-    type_id: usize,
-    addr_mode: AddressingMode,
+    var_type: Type<FullType>,
     init_expr: InitExpr,
     scope_id: usize,
 }
@@ -365,12 +364,6 @@ impl Checker {
             } => {
                 // check for name collisions
                 let fn_ident = ident.as_str();
-                if self.type_map.contains_key(fn_ident) {
-                    return err!(
-                        self,
-                        "Illegal Function name, Types are reserved: '{fn_ident}'"
-                    );
-                }
 
                 // Create arg semantics
                 // - check for duplicates
@@ -424,6 +417,11 @@ impl Checker {
                 // check for name collisions with signature.
                 if self.fn_map.contains_key(signature.as_str()) {
                     return err!(self, "Duplicate definition of a Function: '{signature}'");
+                } else if self.type_map.contains_key(fn_ident) {
+                    return err!(
+                        self,
+                        "Illegal Function name, Types are reserved: '{fn_ident}'"
+                    );
                 }
 
                 let return_type_id = match return_type_tok {
@@ -496,6 +494,60 @@ impl Checker {
         }
     }
 
+    // region: Scope
+    fn check_scope<F>(
+        &mut self,
+        scope: NodeScope,
+        special_checks: Option<F>,
+    ) -> Result<NodeScope, String>
+    where
+        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
+    {
+        self.ctx.scope_depth += 1;
+        let does_inherit = scope.inherits_stmts;
+        if !does_inherit {
+            self.ctx.inherit_bounds.push(self.ctx.scope_depth)
+        }
+
+        let stmts = match special_checks {
+            Some(mut lambda) => lambda(scope.stmts)?,
+            None => {
+                let mut stmts = Vec::new();
+                for stmt in scope.stmts {
+                    stmts.push(self.check_stmt(stmt)?);
+                }
+                stmts
+            }
+        };
+
+        self.ctx.scope_depth -= 1;
+        loop {
+            match self.var_vec.last() {
+                Some(var) if var.scope_id <= self.ctx.scope_depth => break,
+                Some(var) => {
+                    // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
+                    let var = self.var_vec.pop().unwrap();
+                    self.var_map.remove(var.ident.as_str());
+                }
+                None => break,
+            }
+        }
+
+        Ok(NodeScope {
+            stmts,
+            inherits_stmts: does_inherit,
+        })
+    }
+
+    // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
+    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
+        self.check_scope(
+            scope,
+            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>>,
+        )
+    }
+    // endregion
+
     fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
         match stmt {
             NodeStmt::VarDecl {
@@ -513,27 +565,12 @@ impl Checker {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let type_id = *self.type_map.get(type_tok.as_str()).unwrap();
-                let base_type = self.type_vec.get(type_id).unwrap();
-                let type_width = match type_addr_mode {
-                    AddressingMode::Primitive => Self::get_base_width(base_type),
-                    AddressingMode::Pointer => PTR,
-                    AddressingMode::Array => todo!("array byte width modifications"),
-                };
-                let var_type = match base_type {
-                    Type::Primitive(base) => Type::Primitive(FullType {
-                        width: base.width,
-                        type_id,
-                        addr_mode: type_addr_mode,
-                    }),
-                    Type::Struct { .. } => todo!("struct type"),
-                    Type::Union { .. } => todo!("union type"),
-                };
+                let base_id = *self.type_map.get(type_tok.as_str()).unwrap();
+                let var_type = self.new_full(base_id, type_addr_mode);
 
                 let var = Variable {
                     ident,
-                    type_id,
-                    addr_mode: type_addr_mode,
+                    var_type,
                     init_expr,
                     scope_id: self.ctx.scope_depth,
                 };
@@ -544,14 +581,15 @@ impl Checker {
 
                 // check intial expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
-                    let checked = self.check_expr(expr)?;
+                    let init_expr = self.check_expr(expr)?;
 
-                    let init_data = ExprSem {
-                        type_mode: Self::get_base_mode(base_type),
+                    let expected = ExprSem {
+                        form: ExprForm::Literal,
+                        type_mode: self.get_full_mode(&var.var_type),
                         addr_mode: type_addr_mode,
-                        width: type_width,
+                        width: self.get_full_width(&var.var_type),
                     };
-                    self.check_type_equivalence(&init_data, &checked)?;
+                    self.check_type_equivalence(&init_expr, &expected)?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
@@ -728,65 +766,68 @@ impl Checker {
     }
 
     fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem, String> {
-        todo!("check_expr")
+        match expr {
+            NodeExpr::BinaryExpr { op, lhs, rhs } => todo!("check_expr binary"),
+            NodeExpr::UnaryExpr { op, operand } => todo!("check_expr unary"),
+            NodeExpr::Term(term) => self.check_term(term),
+        }
     }
 
     fn check_term(&self, term: &NodeTerm) -> Result<ExprSem, String> {
-        todo!("check_term")
+        match term {
+            NodeTerm::True | NodeTerm::False => Ok(ExprSem {
+                form: ExprForm::Literal,
+                type_mode: TypeMode::Boolean,
+                addr_mode: AddressingMode::Primitive,
+                width: 1,
+            }),
+            NodeTerm::Ident(token) => todo!(), // a varaible
+            NodeTerm::IntLit(token) => Ok(ExprSem {
+                form: ExprForm::Literal,
+                type_mode: TypeMode::Int(false),
+                addr_mode: AddressingMode::Primitive,
+                width: 0,
+            }),
+            NodeTerm::FnCall { ident, args } => todo!("check_term fncall"),
+        }
     }
 
     fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<(), String> {
-        todo!("check_type_equivalence")
-    }
-
-    // 1. checks all stmts in scope
-    // 2. once scope has ended, removes all variables confined to that scopes
-    fn check_scope<F>(&mut self, scope: NodeScope, func: Option<F>) -> Result<NodeScope, String>
-    where
-        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
-    {
-        self.ctx.scope_depth += 1;
-        let does_inherit = scope.inherits_stmts;
-        if !does_inherit {
-            self.ctx.inherit_bounds.push(self.ctx.scope_depth)
+        if a.addr_mode != b.addr_mode {
+            return err!(
+                self,
+                "Expr of different AddrMode! {a:?} vs {b:?}, {a:#?}\n.. {b:#?}",
+                a = a.addr_mode,
+                b = b.addr_mode
+            );
         }
 
-        let stmts = match func {
-            Some(mut lambda) => lambda(scope.stmts)?,
-            None => {
-                let mut stmts = Vec::new();
-                for stmt in scope.stmts {
-                    stmts.push(self.check_stmt(stmt)?);
-                }
-                stmts
-            }
-        };
-
-        self.ctx.scope_depth -= 1;
-        loop {
-            match self.var_vec.last() {
-                Some(var) if var.scope_id <= self.ctx.scope_depth => break,
-                Some(var) => {
-                    // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
-                    let var = self.var_vec.pop().unwrap();
-                    self.var_map.remove(var.ident.as_str());
-                }
-                None => break,
-            }
+        if a.width < b.width {
+            return err!(
+                self,
+                "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
+                a.width,
+                b.width
+            );
         }
 
-        Ok(NodeScope {
-            stmts,
-            inherits_stmts: does_inherit,
-        })
-    }
-
-    // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
-    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
-        self.check_scope(
-            scope,
-            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>>,
-        )
+        match (a.type_mode, b.type_mode) {
+            (TypeMode::Boolean, TypeMode::Boolean) => Ok(()),
+            (TypeMode::Int(_), TypeMode::Int(_))
+                if a.form == ExprForm::Literal || b.form == ExprForm::Literal =>
+            {
+                Ok(())
+            }
+            (TypeMode::Int(a_signed), TypeMode::Int(b_signed)) if a_signed == b_signed => Ok(()),
+            _ => {
+                return err!(
+                    self,
+                    "TypeMode mismatch: {a:?} != {b:?} .. {a:#?}\n.. {b:#?}",
+                    a = a.type_mode,
+                    b = b.type_mode
+                )
+            }
+        }
     }
 
     /*
@@ -1276,6 +1317,28 @@ impl Checker {
         }
     }
 
+    fn get_full_mode(&self, inp_type: &Type<FullType>) -> TypeMode {
+        match inp_type {
+            Type::Primitive(full) => {
+                let base = self.type_vec.get(full.type_id).unwrap();
+                Self::get_base_mode(base)
+            }
+            Type::Struct { .. } => todo!("struct mode calculation"),
+            Type::Union { .. } => todo!("union mode calculation"),
+        }
+    }
+
+    fn get_full_width(&self, inp_type: &Type<FullType>) -> usize {
+        match inp_type {
+            Type::Primitive(full) => {
+                let base = self.type_vec.get(full.type_id).unwrap();
+                Self::get_base_width(base)
+            }
+            Type::Struct { .. } => todo!("struct width calculation"),
+            Type::Union { .. } => todo!("union width calculation"),
+        }
+    }
+
     fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
         let base = self.type_vec.get(base_id).unwrap();
         match base {
@@ -1288,37 +1351,4 @@ impl Checker {
             Type::Union { .. } => todo!("union full type"),
         }
     }
-
-    // fn new_partial(&self, base_id: usize, addr_mode: AddressingMode) -> PartialType {
-    //     let base_width = self.type_vec.get(base_id).unwrap().width;
-    //     let width = match addr_mode {
-    //         AddressingMode::Primitive => base_width,
-    //         AddressingMode::Pointer => PTR,
-    //         AddressingMode::Array => todo!("array byte width modifications"),
-    //     };
-    //     PartialType {
-    //         width,
-    //         base_id,
-    //         addr_mode,
-    //     }
-    // }
-
-    // fn new_full(form: TypeForm, addr_mode: AddressingMode) -> Type<FullType> {
-    //     // TODO(TOM): struct,union width calculations
-    //     let width = match form {
-    //         TypeForm::Base(ref base) => match addr_mode {
-    //             AddressingMode::Primitive => base.width,
-    //             AddressingMode::Pointer => PTR,
-    //             AddressingMode::Array => todo!("array byte width modifications"),
-    //         },
-    //         TypeForm::Struct(_) => todo!("struct width calculation"),
-    //         TypeForm::Union(_) => todo!("union width calculation"),
-    //     };
-
-    //     Type::FullType {
-    //         width,
-    //         form,
-    //         addr_mode,
-    //     }
-    // s}
 }
