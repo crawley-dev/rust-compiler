@@ -31,7 +31,7 @@ pub enum TokenKind {
     Mod,       // "%"
     Ampersand, // "&" BitAnd, Address-of
     Bar,       // "|" BitOr
-    Tilde,     // "~" BitXor, Ones Complement
+    Tilde,     // "~" BitXor
     AndNot,    // "&~"
     Shl,       // "<<"
     Shr,       // ">>"
@@ -54,7 +54,7 @@ pub enum TokenKind {
     CmpAnd, // "&&"
     CmpOr,  // "||"
     CmpEq,  // "=="
-    CmpNot, // "!"
+    Not,    // "!" BitNot and CmpNot
     NotEq,  // "!="
     Lt,     // "<"
     Gt,     // ">"
@@ -126,15 +126,15 @@ impl TokenKind {
             TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
             TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
 
-            TokenKind::CmpNot => TokenFlags::LOG | TokenFlags::UNARY, // "!"
-            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,   // "&&"
-            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,    // "||"
-            TokenKind::CmpEq => TokenFlags::CMP,                      // "=="
-            TokenKind::NotEq => TokenFlags::CMP,                      // "!="
-            TokenKind::Lt => TokenFlags::CMP,                         // "<"
-            TokenKind::Gt => TokenFlags::CMP,                         // ">"
-            TokenKind::LtEq => TokenFlags::CMP,                       // "<="
-            TokenKind::GtEq => TokenFlags::CMP,                       // ">="
+            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
+            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,                  // "&&"
+            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,                   // "||"
+            TokenKind::CmpEq => TokenFlags::CMP,                                     // "=="
+            TokenKind::NotEq => TokenFlags::CMP,                                     // "!="
+            TokenKind::Lt => TokenFlags::CMP,                                        // "<"
+            TokenKind::Gt => TokenFlags::CMP,                                        // ">"
+            TokenKind::LtEq => TokenFlags::CMP,                                      // "<="
+            TokenKind::GtEq => TokenFlags::CMP,                                      // ">="
 
             _ => TokenFlags::empty(),
         }
@@ -252,7 +252,7 @@ impl Lexer {
             ("/*", TokenKind::OpenMultiComment),
             ("*/", TokenKind::CloseMultiComment),
             // Operators
-            ("!", TokenKind::CmpNot),
+            ("!", TokenKind::Not),
             ("^", TokenKind::Ptr),
             ("=", TokenKind::Eq),
             ("+", TokenKind::Add),
