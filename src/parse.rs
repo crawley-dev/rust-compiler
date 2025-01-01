@@ -464,18 +464,19 @@ impl Parser {
         let mut addr_mode = AddressingMode::Primitive;
         let mut depth: u32 = 0;
         if self.expect(TokenKind::Ptr).is_ok() {
-            addr_mode = AddressingMode::Pointer;
             depth += 1;
             while self.expect(TokenKind::Ptr).is_ok() {
                 depth += 1;
             }
+            addr_mode = AddressingMode::Pointer(depth);
         } else if self.expect(TokenKind::Array).is_ok() {
-            addr_mode = AddressingMode::Array;
             depth += 1;
             while self.expect(TokenKind::Array).is_ok() {
                 depth += 1;
             }
+            addr_mode = AddressingMode::Array(depth);
         }
+
         let type_tok = self.expect(TokenKind::Ident)?;
         Ok(ParseType {
             type_tok,

@@ -1,5 +1,6 @@
 fn example0() {
-    let ans: ^^i32;
+    let var: i32 = 5;
+    let ans: ^i32 = &var;
 }
 
 /*

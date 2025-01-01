@@ -47,15 +47,18 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
 
 fn semantic_check(ast: Ast) -> Checker {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
-    match semantic::Checker::check_ast(ast.clone()) {
-        Ok(data) => {
-            println!("\n{data:#?}\n");
-            data
-        }
-        Err(e) => {
-            panic!("\n{ast:#?}\n{e}\n")
-        }
-    }
+    // match semantic::Checker::check_ast(ast.clone()) {
+    //     Ok(data) => {
+    //         println!("\n{data:#?}\n");
+    //         data
+    //     }
+    //     Err(e) => {
+    //         panic!("\n{ast:#?}\n{e}\n")
+    //     }
+    // }
+    let data = semantic::Checker::check_ast(ast);
+    println!("\n{data:#?}\n");
+    data
 }
 
 /*

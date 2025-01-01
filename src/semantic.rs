@@ -147,8 +147,8 @@ pub struct SemFn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
     Primitive,
-    Pointer,
-    Array,
+    Pointer(u32), // stores "depth"
+    Array(u32),   // stores "depth"
     // None, // For zero width "marker types", e.g. void
 }
 
@@ -266,7 +266,7 @@ pub struct Checker {
 // endregion
 
 impl Checker {
-    pub fn check_ast(ast: Ast) -> Result<Checker, String> {
+    pub fn check_ast(ast: Ast) -> Checker {
         let type_vec = Vec::from([
             Self::new_prim("bool", 1, TypeMode::Boolean),
             Self::new_prim("u8", 1, TypeMode::Int(false)),
@@ -313,7 +313,14 @@ impl Checker {
         };
 
         for stmt in ast.stmts {
-            sem_ast.stmts.push(checker.check_top_level(stmt)?);
+            let stmt = match checker.check_top_level(stmt) {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    panic!("\n{sem_ast:#?}\n{e}\n")
+                }
+            };
+
+            sem_ast.stmts.push(stmt);
         }
         checker.ast = sem_ast;
 
@@ -350,7 +357,7 @@ impl Checker {
         //     }
         //     _ => Ok(checker),
         // }
-        Ok(checker)
+        checker
     }
 
     fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
@@ -770,13 +777,40 @@ impl Checker {
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
 
-
                 match checked.addr_mode {
-                    AddressingMode::Array => {
+                    AddressingMode::Array(depth) => {
                         return err!(self, "Cannot perform unary operations on an array")
                     }
-                    AddressingMode::Pointer => {
-                        todo!("unary operations on pointers");
+                    AddressingMode::Pointer(depth) => {
+                        match *op {
+                            TokenKind::Ptr => {
+                                if depth == 1 {
+                                    return Ok(ExprSem {
+                                        form: ExprForm::Literal,
+                                        type_mode: checked.type_mode,
+                                        addr_mode: AddressingMode::Primitive,
+                                        // width: checked.width,
+                                        // calculate width of type it was pointing to, e.g. bool == 1.
+                                        // because currently checked.width == 8 (ptr)
+                                        // not ideal, should have this information saved?
+                                        width: match checked.type_mode {
+                                            TypeMode::Boolean => 1,
+                                            TypeMode::Int(_) => 8, // will be shrunk to match caller.
+                                            _ => todo!("width calculation for type"),
+                                        }
+                                    });
+                                } else {
+                                    return Ok(ExprSem {
+                                        form: ExprForm::Literal,
+                                        type_mode: checked.type_mode,
+                                        addr_mode: AddressingMode::Pointer(depth - 1),
+                                        width: checked.width,
+                                    });
+                                }
+                            },
+                            
+                            _ => err!(self, "Invalid Unary Operator: {op:?}..\n{checked:#?}"),
+                        }
                     }
                     AddressingMode::Primitive => {
                         let checked_force_lit = ExprSem{ form: ExprForm::Literal, ..checked };  
@@ -798,14 +832,13 @@ impl Checker {
 
                             TokenKind::Ampersand if checked.form != ExprForm::Variable => err!(self, "AddressOf expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
-                                form: ExprForm::Variable, // TODO(TOM): could be recursive e.g. **ptr
+                                form: ExprForm::Literal, // TODO(TOM): could be recursive e.g. **ptr
                                 type_mode: checked.type_mode,
-                                addr_mode: AddressingMode::Pointer,
+                                addr_mode: AddressingMode::Pointer(1),
                                 width: PTR,
                             }),
 
-                            TokenKind::Ptr => todo!("Ptr Deref"),
-                            _ => err!("Invalid Unary Operator: {op:?}"),
+                            _ => err!("Invalid Unary Operator: {op:?}..\n{checked:#?}"),
                         }
                     }
                 }
@@ -826,7 +859,23 @@ impl Checker {
             }),
             NodeTerm::Ident(token) => {
                 self.update_pos(token.pos);
-                todo!()
+                // todo!()
+                // get the variable from the map
+                // get the type from the variable
+                // return the type
+                let var = self.var_vec.get(*self.var_map.get(token.as_str()).unwrap()).unwrap();
+                let addr_mode = match &var.var_type {
+                    Type::Primitive(full_type) => full_type.addr_mode,
+                    Type::Struct { ident, members, width } => todo!("struct semantics"),
+                    Type::Union { ident, members, width } => todo!("union semantics"),
+                };
+
+                Ok(ExprSem {
+                    form: ExprForm::Variable,
+                    addr_mode,
+                    type_mode: self.get_full_mode(&var.var_type),
+                    width: self.get_full_width(&var.var_type),
+                })
             }
             NodeTerm::IntLit(token) => {
                 self.update_pos(token.pos);
