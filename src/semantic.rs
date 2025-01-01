@@ -61,7 +61,7 @@
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
-    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm},
+    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, Arg,
 };
 use educe::Educe;
 use std::{
@@ -359,8 +359,7 @@ impl Checker {
                 ident,
                 args,
                 scope,
-                return_type_tok,
-                return_addr_mode,
+                return_type
             } => {
                 // check for name collisions
                 let fn_ident = ident.as_str();
@@ -392,8 +391,8 @@ impl Checker {
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
-                    let base_id = *self.type_map.get(arg.type_tok.as_str()).unwrap();
-                    args_semantics.push(self.new_full(base_id, arg.addr_mode));
+                    let base_id = *self.type_map.get(arg.parse_type.type_tok.as_str()).unwrap();
+                    args_semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
                 }
 
                 // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
@@ -424,8 +423,8 @@ impl Checker {
                     );
                 }
 
-                let return_type_id = match return_type_tok {
-                    Some(tok) => Some(*self.type_map.get(tok.as_str()).unwrap()),
+                let return_type_id = match return_type {
+                    Some(parse_type) => Some(*self.type_map.get(parse_type.type_tok.as_str()).unwrap()),
                     None => None,
                 };
 
@@ -444,10 +443,11 @@ impl Checker {
                             for (arg, parse) in args_semantics.iter().zip(args.iter()) {
                                 let arg_node = NodeStmt::VarDecl {
                                     init_expr: InitExpr::None,
-                                    ident: parse.ident.clone(),
-                                    type_tok: parse.type_tok.clone(),
-                                    type_addr_mode: parse.addr_mode,
-                                    mutable: parse.mutable,
+                                    arg: Arg {
+                                        ident: parse.ident.clone(),
+                                        mutable: parse.mutable,
+                                        parse_type: parse.parse_type.clone(),
+                                    }
                                 };
                                 checked_stmts.push(self.check_stmt(arg_node)?);
                                 debug!(self, "added\n{:#?}", checked_stmts.last());
@@ -552,24 +552,21 @@ impl Checker {
         match stmt {
             NodeStmt::VarDecl {
                 init_expr,
-                ident,
-                type_tok,
-                type_addr_mode,
-                mutable,
+                arg
             } => {
                 // check for name collisions
-                let str = ident.as_str();
+                let str = arg.ident.as_str();
                 if self.var_map.contains_key(str) {
                     return err!(self, "Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
                     return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let base_id = *self.type_map.get(type_tok.as_str()).unwrap();
-                let var_type = self.new_full(base_id, type_addr_mode);
+                let base_id = *self.type_map.get(arg.parse_type.type_tok.as_str()).unwrap();
+                let var_type = self.new_full(base_id, arg.parse_type.addr_mode);
 
                 let var = Variable {
-                    ident,
+                    ident: arg.ident,
                     var_type,
                     init_expr,
                     scope_id: self.ctx.scope_depth,
@@ -586,7 +583,7 @@ impl Checker {
                     let expected = ExprSem {
                         form: ExprForm::Literal,
                         type_mode: self.get_full_mode(&var.var_type),
-                        addr_mode: type_addr_mode,
+                        addr_mode: arg.parse_type.addr_mode,
                         width: self.get_full_width(&var.var_type),
                     };
                     self.check_type_equivalence(&init_expr, &expected)?;
@@ -773,29 +770,44 @@ impl Checker {
                 // 'Addr of'   var => ptr
                 // 'Ptr Deref' ptr => var
 
-                match *op {
-                    TokenKind::Sub
-                        if checked.form != ExprForm::Literal // If its a literal, it can be coerced to signed
-                            || checked.type_mode != TypeMode::Int(true) =>
-                    // must be signed as not a literal
-                    {
-                        return err!(
-                            self,
-                            "Unary Subtraction expects a signed integer, found {checked:#?}"
-                        )
-                    }
-                    TokenKind::Sub => Ok(ExprSem {
-                        form: ExprForm::Literal, // do I allow { (a: u32 + 5) + -5 } if a + 5 coerces to u32 var, cannot negate 5
-                        width: checked.width,
-                        type_mode: checked.type_mode,
-                        addr_mode: checked.addr_mode,
-                    }),
 
-                    TokenKind::NotEq => todo!("Cmp Not"),
-                    TokenKind::Not => todo!("Bit Not"),
-                    TokenKind::Ampersand => todo!("Addr of"),
-                    TokenKind::Ptr => todo!("Ptr Deref"),
-                    _ => err!("Invalid Unary Operator: {op:?}"),
+                match checked.addr_mode {
+                    AddressingMode::Array => {
+                        return err!(self, "Cannot perform unary operations on an array")
+                    }
+                    AddressingMode::Pointer => {
+                        todo!("unary operations on pointers");
+                    }
+                    AddressingMode::Primitive => {
+                        let checked_force_lit = ExprSem{ form: ExprForm::Literal, ..checked };  
+                        match *op {
+                            TokenKind::Sub
+                            // If its a literal, it can be coerced to signed
+                            // must be signed as not a literal
+                                if checked.form != ExprForm::Literal 
+                                    || checked.type_mode != TypeMode::Int(true) =>
+                                 err!(
+                                    self,
+                                    "UnarySub expects a signed integer, found {checked:#?}"
+                                ),
+                            TokenKind::Sub => Ok(checked_force_lit),
+
+                            // TODO(TOM): bitwise not on signed integers?
+                            TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!(self, "Not expects a boolean or unsigned integer, found {checked:#?}"), 
+                            TokenKind::Not => Ok(checked_force_lit),
+
+                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!(self, "AddressOf expects a variable, found {checked:#?}"),
+                            TokenKind::Ampersand => Ok(ExprSem {
+                                form: ExprForm::Variable, // TODO(TOM): could be recursive e.g. **ptr
+                                type_mode: checked.type_mode,
+                                addr_mode: AddressingMode::Pointer,
+                                width: PTR,
+                            }),
+
+                            TokenKind::Ptr => todo!("Ptr Deref"),
+                            _ => err!("Invalid Unary Operator: {op:?}"),
+                        }
+                    }
                 }
             }
             NodeExpr::Term(term) => self.check_term(term),

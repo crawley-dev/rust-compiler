@@ -13,10 +13,16 @@ const MSG: &'static str = "PARSE";
 
 #[derive(Debug, Clone)]
 pub struct Arg {
-    pub mutable: bool,
     pub ident: Token,
+    pub mutable: bool,
+    pub parse_type: ParseType,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseType {
     pub type_tok: Token,
     pub addr_mode: AddressingMode,
+    pub depth: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -55,15 +61,13 @@ pub enum NodeStmt {
         ident: Token,
         args: Vec<Arg>,
         scope: NodeScope,
-        return_type_tok: Option<Token>,
-        return_addr_mode: Option<AddressingMode>,
+        return_type: Option<ParseType>,
+        // return_type_tok: Option<Token>,
+        // return_addr_mode: Option<AddressingMode>,
     },
     VarDecl {
         init_expr: InitExpr,
-        ident: Token,
-        type_tok: Token,
-        type_addr_mode: AddressingMode,
-        mutable: bool,
+        arg: Arg,
     },
     If {
         condition: NodeExpr,
@@ -159,6 +163,7 @@ impl Parser {
         let ident = self.expect(TokenKind::Ident)?;
         self.expect(TokenKind::OpenParen)?;
 
+        // parsing function arguments
         let mut args = Vec::new();
         while self.token_equals(TokenKind::CloseParen, 0).is_err() {
             if args.len() > 0 {
@@ -168,31 +173,34 @@ impl Parser {
             let mutable = self.expect(TokenKind::Mut).is_ok();
             let ident = self.expect(TokenKind::Ident)?;
             self.expect(TokenKind::Colon)?;
-            let (type_tok, addr_mode) = self.parse_type()?;
+            let parse_type = self.parse_type()?;
             args.push(Arg {
-                mutable,
                 ident,
-                type_tok,
-                addr_mode,
+                mutable,
+                parse_type,
             });
         }
         self.expect(TokenKind::CloseParen)?;
 
-        let mut return_type_tok = None;
-        let mut return_addr_mode = None;
-        if self.expect(TokenKind::Arrow).is_ok() {
-            let (tok, addr_mode) = self.parse_type()?;
-            return_type_tok = Some(tok);
-            return_addr_mode = Some(addr_mode);
-        }
+        // parse function return type
+        let return_type = match self.expect(TokenKind::Arrow) {
+            Ok(_) => Some(self.parse_type()?),
+            Err(_) => None,
+        };
+        // let mut return_type_tok = None;
+        // let mut return_addr_mode = None;
+        // if self.expect(TokenKind::Arrow).is_ok() {
+        //     let (tok, addr_mode, type_depth) = self.parse_type()?;
+        //     return_type_tok = Some(tok);
+        //     return_addr_mode = Some(addr_mode);
+        // }
         let scope = self.parse_scope(false)?;
 
         Ok(NodeStmt::FnDecl {
             ident,
             args,
             scope,
-            return_type_tok,
-            return_addr_mode,
+            return_type,
         })
     }
 
@@ -210,7 +218,7 @@ impl Parser {
                 let ident = self.expect(TokenKind::Ident)?;
 
                 self.expect(TokenKind::Colon)?;
-                let (type_tok, type_addr_mode) = self.parse_type()?;
+                let parse_type = self.parse_type()?;
 
                 let init_expr = match self.expect(TokenKind::Eq) {
                     Ok(_) => InitExpr::Some(self.parse_expr(0)?),
@@ -219,10 +227,15 @@ impl Parser {
 
                 NodeStmt::VarDecl {
                     init_expr,
-                    ident,
-                    type_tok,
-                    type_addr_mode,
-                    mutable,
+                    arg: Arg {
+                        ident,
+                        mutable,
+                        parse_type,
+                    }, // ident,
+                       // type_tok,
+                       // type_addr_mode,
+                       // type_depth,
+                       // mutable,
                 }
             }
             TokenKind::If => {
@@ -447,15 +460,28 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<(Token, AddressingMode), String> {
+    fn parse_type(&mut self) -> Result<ParseType, String> {
         let mut addr_mode = AddressingMode::Primitive;
+        let mut depth: u32 = 0;
         if self.expect(TokenKind::Ptr).is_ok() {
             addr_mode = AddressingMode::Pointer;
+            depth += 1;
+            while self.expect(TokenKind::Ptr).is_ok() {
+                depth += 1;
+            }
         } else if self.expect(TokenKind::Array).is_ok() {
             addr_mode = AddressingMode::Array;
+            depth += 1;
+            while self.expect(TokenKind::Array).is_ok() {
+                depth += 1;
+            }
         }
-        let type_ident = self.expect(TokenKind::Ident)?;
-        Ok((type_ident, addr_mode))
+        let type_tok = self.expect(TokenKind::Ident)?;
+        Ok(ParseType {
+            type_tok,
+            addr_mode,
+            depth,
+        })
     }
 
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<(), String> {

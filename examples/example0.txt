@@ -1,5 +1,5 @@
 fn example0() {
-    let ans: i32;
+    let ans: ^^i32;
 }
 
 /*
