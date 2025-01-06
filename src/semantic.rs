@@ -61,8 +61,9 @@
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
-    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, Arg,
+    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm, Arg},
 };
+use anyhow::{Context, Result};
 use educe::Educe;
 use std::{
     any::Any,
@@ -74,82 +75,14 @@ use std::{
 pub type Byte = usize;
 const PTR: Byte = 8;
 const LOG_DEBUG_INFO: bool = true;
-const MSG: &'static str = "SEMANTIC";
-
-/*
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum AddressingMode {
-    Primitive,
-    Pointer,
-    Array,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TypeMode {
-    Bool,
-    IntLit,
-    Int { signed: bool },
-    Float { signed: bool },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TypeForm {
-    Base { type_mode: TypeMode },
-    Struct, // Struct: a group of types, stores type id, not type.
-    Union,  // Union: a group of types that share the same storage, with an ID to track.
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Type {
-    pub width: Byte,
-    pub ident: String,
-    pub form: TypeForm,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExprData {
-    pub ptr: Option<NonNull<SemVariable>>,
-    pub width: Byte,
-    pub form: TypeForm,
-    pub addr_mode: AddressingMode,
-}
-// endregion
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum InitExpr {
-    Some(NodeExpr),
-    None,
-    Deferred,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SemVariable {
-    pub ident: Token,
-    pub mutable: bool,
-    pub width: Byte,
-    pub type_id: usize,
-    pub scope_id: usize,
-    pub addr_mode: AddressingMode,
-    pub init_expr: InitExpr,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SemFn {
-    pub ident: Token,
-    pub signature: String,
-    pub scope: NodeScope,
-    pub arg_semantics: Vec<SemVariable>, // treat like semantic variables ??
-    pub return_type_id: Option<usize>,
-    // pub return_type_data: Option<ExprData>,
-}
-    */
+const MSG: &str = "SEMANTIC";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
     Primitive,
     Pointer(u32), // stores "depth"
     Array(u32),   // stores "depth"
-    // None, // For zero width "marker types", e.g. void
+                  // None, // For zero width "marker types", e.g. void
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,8 +96,9 @@ enum TypeMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExprForm {
-    Variable,
-    Literal,
+    Variable, // a variable, allows for addr of etc
+    Compound, // a compound expression, e.g. a + b, has less coercion than a literal
+    Literal, // has some freedoms as its a literal!
 }
 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
@@ -313,13 +247,12 @@ impl Checker {
         };
 
         for stmt in ast.stmts {
-            let stmt = match checker.check_top_level(stmt) {
+             let stmt = match checker.check_top_level(stmt) {
                 Ok(stmt) => stmt,
                 Err(e) => {
                     panic!("\n{sem_ast:#?}\n{e}\n")
                 }
             };
-
             sem_ast.stmts.push(stmt);
         }
         checker.ast = sem_ast;
@@ -360,13 +293,14 @@ impl Checker {
         checker
     }
 
-    fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    // fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    fn check_top_level(&mut self, stmt: NodeStmt) -> anyhow::Result<NodeStmt> {
         match stmt {
             NodeStmt::FnDecl {
                 ident,
                 args,
                 scope,
-                return_type
+                return_type,
             } => {
                 // check for name collisions
                 let fn_ident = ident.as_str();
@@ -403,6 +337,7 @@ impl Checker {
                 }
 
                 // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
+
                 let signature = match ident.as_str() {
                     "main" => "main".to_owned(), // NOTE(TOM): main is a special case, no overloading
                     name @ _ => {
@@ -431,7 +366,9 @@ impl Checker {
                 }
 
                 let return_type_id = match return_type {
-                    Some(parse_type) => Some(*self.type_map.get(parse_type.type_tok.as_str()).unwrap()),
+                    Some(parse_type) => {
+                        Some(*self.type_map.get(parse_type.type_tok.as_str()).unwrap())
+                    }
                     None => None,
                 };
 
@@ -454,7 +391,7 @@ impl Checker {
                                         ident: parse.ident.clone(),
                                         mutable: parse.mutable,
                                         parse_type: parse.parse_type.clone(),
-                                    }
+                                    },
                                 };
                                 checked_stmts.push(self.check_stmt(arg_node)?);
                                 debug!(self, "added\n{:#?}", checked_stmts.last());
@@ -492,12 +429,10 @@ impl Checker {
                     id: self.fn_vec.len() - 1,
                 })
             }
-            _ => {
-                err!(
-                    self,
-                    "A Program only consists of functions, this is a {stmt:?}"
-                )
-            }
+            _ => err!(
+                self,
+                "A Program only consists of functions, this is a {stmt:?}"
+            ),
         }
     }
 
@@ -506,7 +441,8 @@ impl Checker {
         &mut self,
         scope: NodeScope,
         special_checks: Option<F>,
-    ) -> Result<NodeScope, String>
+    // ) -> Result<NodeScope, String>
+    ) -> anyhow::Result<NodeScope>
     where
         F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
     {
@@ -547,7 +483,8 @@ impl Checker {
     }
 
     // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
-    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
+    // fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
+    fn check_scope_default(&mut self, scope: NodeScope) -> anyhow::Result<NodeScope> {
         self.check_scope(
             scope,
             None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>>,
@@ -555,12 +492,10 @@ impl Checker {
     }
     // endregion
 
-    fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    // fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
+    fn check_stmt(&mut self, stmt: NodeStmt) -> anyhow::Result<NodeStmt> {
         match stmt {
-            NodeStmt::VarDecl {
-                init_expr,
-                arg
-            } => {
+            NodeStmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
                 let str = arg.ident.as_str();
                 if self.var_map.contains_key(str) {
@@ -588,7 +523,7 @@ impl Checker {
                     let init_expr = self.check_expr(expr)?;
 
                     let expected = ExprSem {
-                        form: ExprForm::Literal,
+                        form: ExprForm::Compound,
                         type_mode: self.get_full_mode(&var.var_type),
                         addr_mode: arg.parse_type.addr_mode,
                         width: self.get_full_width(&var.var_type),
@@ -757,35 +692,110 @@ impl Checker {
                 Ok(stmt)
             } */
             NodeStmt::FnDecl { .. } => {
-                return err!(
-                    self,
-                    "Functions cannot be nested, they're top level statements"
-                )
+                err!(self, "Functions cannot be nested, they're top level statements")
             }
             _ => err!(self, "Found {stmt:#?}.. shouldn't have."),
         }
     }
 
-    fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem, String> {
+    // fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem, String> {
+    fn check_expr(&self, expr: &NodeExpr) -> anyhow::Result<ExprSem> {
         match expr {
-            NodeExpr::BinaryExpr { op, lhs, rhs } => todo!("check_expr binary"),
-            NodeExpr::UnaryExpr { op, operand } => {
-                let checked = self.check_expr(&**operand)?;
-                // 'Unary sub' signed int or lit => signed int literal
-                // 'Cmp Not'   bool => bool
-                // 'Bit Not'   primitive => primitive
-                // 'Addr of'   var => ptr
-                // 'Ptr Deref' ptr => var
+            NodeExpr::Term(term) => self.check_term(term),
+            NodeExpr::BinaryExpr { op, lhs, rhs } => {
+                let lhs_checked = self.check_expr(lhs)?;
+                let rhs_checekd = self.check_expr(rhs)?;
+                self.check_type_equivalence(&lhs_checked, &rhs_checekd)?;
 
+                match lhs_checked.addr_mode {
+                    // can check lhs or rhs, doesn't matter, they are equal
+                    AddressingMode::Array(depth) => {
+                        err!(
+                            self,
+                            "[ARR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                        )
+                    }
+                    AddressingMode::Pointer(depth) => {
+                        err!(
+                            self,
+                            "[PTR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                        )
+                    }
+                    AddressingMode::Primitive => {
+                        // 'CMP'   => T, T       => bool
+                        // 'LOG'   => bool, bool => bool
+                        // 'Arith' => int, int   => int
+                        match *op {
+                            _ if op.has_flags(TokenFlags::CMP) => {
+                                Ok(ExprSem {
+                                    form: ExprForm::Literal,
+                                    type_mode: TypeMode::Boolean,
+                                    addr_mode: AddressingMode::Primitive,
+                                    width: 1,
+                                })
+                            }
+
+                            _ if op.has_flags(TokenFlags::LOG) => {
+                                match lhs_checked.type_mode { 
+                                    TypeMode::Boolean => { 
+                                        Ok(ExprSem {
+                                            form: ExprForm::Literal,
+                                            type_mode: TypeMode::Boolean,
+                                            addr_mode: AddressingMode::Primitive,
+                                            width: 1,
+                                        })
+                                    }
+                                    _ => err!("logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                }
+                            }
+
+                            _ if op.has_flags(TokenFlags::ARITH) => {
+                                match lhs_checked.type_mode {
+                                    TypeMode::Int(_) => Ok(ExprSem {
+                                        form: ExprForm::Literal,
+                                        type_mode: lhs_checked.type_mode,
+                                        addr_mode: AddressingMode::Primitive,
+                                        width: lhs_checked.width,
+                                    }),
+                                    _ => err!("Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                }
+                            }
+                            
+                            _ if op.has_flags(TokenFlags::BIT) => {
+                                match lhs_checked.type_mode {
+                                    TypeMode::Int(_) => Ok(ExprSem {
+                                        form: ExprForm::Literal,
+                                        type_mode: lhs_checked.type_mode,
+                                        addr_mode: AddressingMode::Primitive,
+                                        width: lhs_checked.width,
+                                    }),
+                                    _ => err!("Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                }
+                            }
+
+                            _ => err!(self, "[PRM] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
+                        }
+                    }
+                }
+            }
+            // unary operators tend to be very unqiue, so they are individually matched.
+            NodeExpr::UnaryExpr { op, operand } => {
+                let checked = self.check_expr(operand)?;
+                
+                // 'Unary sub' signed int or lit => signed int literal
+                // 'Cmp Not'   bool              => bool
+                // 'Bit Not'   primitive         => primitive
+                // 'Addr of'   var               => ptr
+                // 'Ptr Deref' ptr               => var
                 match checked.addr_mode {
                     AddressingMode::Array(depth) => {
-                        return err!(self, "Cannot perform unary operations on an array")
+                        err!("[ARR] Invalid Unary Expression: {op:?}\n{checked:#?}")
                     }
                     AddressingMode::Pointer(depth) => {
                         match *op {
                             TokenKind::Ptr => {
                                 if depth == 1 {
-                                    return Ok(ExprSem {
+                                    Ok(ExprSem {
                                         form: ExprForm::Literal,
                                         type_mode: checked.type_mode,
                                         addr_mode: AddressingMode::Primitive,
@@ -796,58 +806,73 @@ impl Checker {
                                         width: match checked.type_mode {
                                             TypeMode::Boolean => 1,
                                             TypeMode::Int(_) => 8, // will be shrunk to match caller.
-                                            _ => todo!("width calculation for type"),
-                                        }
-                                    });
+                                            _ => return todo!("width calculation for type"),
+                                        },
+                                    })
                                 } else {
-                                    return Ok(ExprSem {
+                                    Ok(ExprSem {
                                         form: ExprForm::Literal,
                                         type_mode: checked.type_mode,
                                         addr_mode: AddressingMode::Pointer(depth - 1),
                                         width: checked.width,
-                                    });
+                                    })
                                 }
-                            },
-                            
-                            _ => err!(self, "Invalid Unary Operator: {op:?}..\n{checked:#?}"),
+                            }
+
+                            _ => err!(
+                                self,
+                                "[PTR] Invalid Unary Expression: {op:?}..\n{checked:#?}"
+                            ),
                         }
                     }
                     AddressingMode::Primitive => {
-                        let checked_force_lit = ExprSem{ form: ExprForm::Literal, ..checked };  
                         match *op {
-                            TokenKind::Sub
-                            // If its a literal, it can be coerced to signed
-                            // must be signed as not a literal
-                                if checked.form != ExprForm::Literal 
-                                    || checked.type_mode != TypeMode::Int(true) =>
-                                 err!(
-                                    self,
-                                    "UnarySub expects a signed integer, found {checked:#?}"
-                                ),
-                            TokenKind::Sub => Ok(checked_force_lit),
-
+                            TokenKind::Sub => match checked.type_mode {
+                                TypeMode::Int(true) => Ok(ExprSem {
+                                    form: ExprForm::Compound,
+                                    ..checked
+                                }),
+                                TypeMode::Int(false) if checked.form == ExprForm::Literal => Ok(ExprSem {
+                                    form: ExprForm::Compound,
+                                    type_mode: TypeMode::Int(true),
+                                    addr_mode: AddressingMode::Primitive,
+                                    width: checked.width,
+                                }),
+                                _ => err!(self, "UnarySub expects a signed integer, found {checked:#?}")
+                            }
+                            // TokenKind::Sub
+                            // // If its a literal, it can be coerced to signed
+                            // // must be signed as not a literal
+                            // if checked.form != ExprForm::Literal 
+                            //     && checked.type_mode != TypeMode::Int(true) =>
+                            // err!(self,"UnarySub expects a signed integer, found {checked:#?}"),
+                            // TokenKind::Sub => Ok(checked_force_lit),
+                            
                             // TODO(TOM): bitwise not on signed integers?
                             TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!(self, "Not expects a boolean or unsigned integer, found {checked:#?}"), 
-                            TokenKind::Not => Ok(checked_force_lit),
+                            TokenKind::Not => Ok(ExprSem {
+                                form: ExprForm::Compound,
+                                ..checked
+                            }),
 
                             TokenKind::Ampersand if checked.form != ExprForm::Variable => err!(self, "AddressOf expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
-                                form: ExprForm::Literal, // TODO(TOM): could be recursive e.g. **ptr
+                                form: ExprForm::Compound,
                                 type_mode: checked.type_mode,
                                 addr_mode: AddressingMode::Pointer(1),
                                 width: PTR,
                             }),
 
-                            _ => err!("Invalid Unary Operator: {op:?}..\n{checked:#?}"),
+                            _ => err!("Invalid Unary Expression on Primitive: {op:?}..\n{checked:#?}"),
                         }
                     }
                 }
             }
-            NodeExpr::Term(term) => self.check_term(term),
         }
     }
 
-    fn check_term(&self, term: &NodeTerm) -> Result<ExprSem, String> {
+    // fn check_term(&self, term: &NodeTerm) -> Result<ExprSem, String> {
+    fn check_term(&self, term: &NodeTerm) -> anyhow::Result<ExprSem> {
         // TODO(TOM): NodeTerm really should unconditionally contain a position,
         //  >> detach pos from token and give it to the node itself
         match term {
@@ -859,15 +884,22 @@ impl Checker {
             }),
             NodeTerm::Ident(token) => {
                 self.update_pos(token.pos);
-                // todo!()
-                // get the variable from the map
-                // get the type from the variable
-                // return the type
-                let var = self.var_vec.get(*self.var_map.get(token.as_str()).unwrap()).unwrap();
+                let var = self
+                    .var_vec
+                    .get(*self.var_map.get(token.as_str()).unwrap())
+                    .unwrap();
                 let addr_mode = match &var.var_type {
                     Type::Primitive(full_type) => full_type.addr_mode,
-                    Type::Struct { ident, members, width } => todo!("struct semantics"),
-                    Type::Union { ident, members, width } => todo!("union semantics"),
+                    Type::Struct {
+                        ident,
+                        members,
+                        width,
+                    } => todo!("struct semantics"),
+                    Type::Union {
+                        ident,
+                        members,
+                        width,
+                    } => todo!("union semantics"),
                 };
 
                 Ok(ExprSem {
@@ -893,7 +925,8 @@ impl Checker {
         }
     }
 
-    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<(), String> {
+    // fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<(), String> {
+    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<()> {
         debug!(self, "checking type equivalence\n{a:#?}\n{b:#?}");
 
         if a.addr_mode != b.addr_mode {
@@ -920,9 +953,9 @@ impl Checker {
         match (a.type_mode, b.type_mode) {
             (TypeMode::Boolean, TypeMode::Boolean) => Ok(()),
             (TypeMode::Int(_), TypeMode::Int(_)) if literal_expr => Ok(()),
-            (TypeMode::Int(a_signed), TypeMode::Int(b_signed)) if a_signed == b_signed => Ok(()),
+            (TypeMode::Int(a_sign), TypeMode::Int(b_sign)) if a_sign == b_sign => Ok(()),
             _ => {
-                return err!(
+                err!(
                     self,
                     "TypeMode mismatch: {a:?} != {b:?} .. {a:#?}\n.. {b:#?}",
                     a = a.type_mode,
@@ -932,7 +965,7 @@ impl Checker {
         }
     }
 
-    // region: Minor
+    // region: Small_Components
 
     fn add_type(&mut self, new_base: BaseType) {
         self.type_map

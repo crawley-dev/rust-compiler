@@ -9,7 +9,7 @@ use crate::{
 use std::collections::VecDeque;
 
 const LOG_DEBUG_INFO: bool = false;
-const MSG: &'static str = "PARSE";
+const MSG: &str = "PARSE";
 
 #[derive(Debug, Clone)]
 pub struct Arg {
@@ -141,7 +141,7 @@ impl Parser {
 
     pub fn parse_ast(&mut self) -> Result<Ast, String> {
         let mut ast: Ast = Ast { stmts: Vec::new() };
-        while let Some(_) = self.peek(0) {
+        while self.peek(0).is_some() {
             ast.stmts.push(self.parse_top_level()?);
         }
         Ok(ast)
@@ -166,7 +166,7 @@ impl Parser {
         // parsing function arguments
         let mut args = Vec::new();
         while self.token_equals(TokenKind::CloseParen, 0).is_err() {
-            if args.len() > 0 {
+            if !args.is_empty() {
                 self.expect(TokenKind::Comma)?;
             }
 

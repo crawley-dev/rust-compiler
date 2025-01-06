@@ -4,7 +4,7 @@ use core::fmt;
 use std::collections::{HashMap, VecDeque};
 
 const LOG_DEBUG_INFO: bool = false;
-const MSG: &'static str = "LEX";
+const MSG: &str = "LEX";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
@@ -98,7 +98,7 @@ bitflags! {
 }
 
 impl TokenKind {
-    pub fn get_flags(&self) -> TokenFlags {
+    pub fn get_flags(self) -> TokenFlags {
         match self {
             TokenKind::Ptr => TokenFlags::UNARY,                     // "^"
             TokenKind::Eq => TokenFlags::ASSIGN,                     // "="
@@ -144,6 +144,10 @@ impl TokenKind {
         self.get_flags().contains(flags)
     }
 
+    pub fn has_some_flags(&self, flags: TokenFlags) -> bool {
+        self.get_flags().intersects(flags)
+    }
+
     // Precedence hierarchy: higher = done first
     // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
     // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
@@ -177,7 +181,7 @@ impl TokenKind {
         }
     }
 
-    pub fn assign_to_arithmetic(&self) -> Result<TokenKind, String> {
+    pub fn assign_to_arithmetic(&self) -> anyhow::Result<TokenKind> {
         match self {
             TokenKind::AddEq => Ok(TokenKind::Add),
             TokenKind::SubEq => Ok(TokenKind::Sub),
@@ -306,8 +310,7 @@ impl Lexer {
             pos: (0, 0),
             input: input
                 .iter()
-                .map(|x| x.chars())
-                .flatten()
+                .flat_map(|x| x.chars())
                 .map(|x| x as u8)
                 .collect(),
             reg,
@@ -340,12 +343,7 @@ impl Lexer {
         let mut buf = Vec::new();
         let mut buf_kind = BufKind::Illegal;
 
-        loop {
-            let next_char = match self.peek(0) {
-                Some(char) => char,
-                None => break,
-            };
-
+        while let Some(next_char) = self.peek(0) {
             // the order of these match statements matter!
             let char_type = match next_char {
                 b'\n' => BufKind::NewLine,
@@ -359,14 +357,14 @@ impl Lexer {
                 b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
                 b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
                 _ => {
-                    let err_msg: Result<bool, String> = err!("unknown char found {next_char}");
+                    let err_msg = err!("unknown char found {next_char}");
                     panic!("{err_msg:?}");
                 }
             };
 
             // buf_kind not set, set it.
             if buf.is_empty() {
-                buf_kind = char_type.clone();
+                buf_kind = char_type;
             } else if char_type != buf_kind {
                 break;
             }
@@ -381,14 +379,14 @@ impl Lexer {
     //  - trying to modify state in next_token causes bugs.
     //      .. because after creating a token, the next char may not be "next_char" due to a reduce
     //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
-    fn create_tok(&mut self, buf_kind: BufKind, buf: &Vec<u8>) -> Option<Token> {
+    fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;
             self.pos.0 += 1;
             return None;
         }
 
-        let buf_str: String = buf.into_iter().map(|x| *x as char).collect();
+        let buf_str: String = buf.iter().map(|x| *x as char).collect();
         debug!(
             self,
             "buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx
@@ -415,7 +413,7 @@ impl Lexer {
     fn match_word(&self, buf_str: String) -> Option<Token> {
         match self.reg.get(buf_str.as_str()) {
             Some(kind) => Some(Token {
-                kind: kind.clone(),
+                kind: *kind,
                 value: None,
                 pos: (self.pos.0, self.pos.1),
             }),

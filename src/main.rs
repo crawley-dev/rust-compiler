@@ -1,8 +1,15 @@
 #![allow(unused)]
+#![warn(clippy::all)]
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+#![warn(clippy::cargo)]
+#![warn(clippy::complexity)]
+#![warn(clippy::perf)]
+#![warn(clippy::style)]
 use std::{
     cmp::max,
     collections::VecDeque,
-    env, fs,
+    fs,
     io::{BufRead, BufReader, Write},
 };
 mod macros;
@@ -20,7 +27,10 @@ use semantic::*;
 // use code_gen::Generator;
 
 fn main() {
-    env::set_var("RUST_BACKTRACE", "1");
+    // env_logger::init();
+    // std::env::set_var("RUST_BACKTRACE", "1");
+    std::env::set_var("RUST_LOG", "rust-compiler=info");
+
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
     // println!("\n\n{:#?}\n\n", contents);
@@ -132,10 +142,8 @@ fn print_tokens(tokens: &VecDeque<Token>) {
 }
 
 fn get_file_name() -> String {
-    let args: String = env::args().skip(1).take(1).collect();
-    if args.is_empty() {
-        panic!("[COMPILER] No file path given!\n");
-    }
+    let args: String = std::env::args().skip(1).take(1).collect();
+    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
 
     let file_name = args.split('.').take(1).collect::<String>();
     // TODO(TOM): re-enable after testing
