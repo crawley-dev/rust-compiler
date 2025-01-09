@@ -11,11 +11,11 @@ use std::{
     cmp::max,
     collections::VecDeque,
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
+    panic::PanicHookInfo,
 };
 
 mod utils;
-use utils::*;
 
 mod lex;
 use lex::*;
@@ -32,23 +32,8 @@ use semantic::*;
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LIB_BACKTRACE", "1");
-    std::panic::set_hook(Box::new(|panic_info| {
-        let panic_banner =
-            match text_to_ascii_art::to_art(">Error!<".to_string(), "standard", 8, 0, 0) {
-                Ok(art) => art,
-                Err(e) => format!("[COMPILER] Error: {e}"),
-            };
-        let location = panic_info.location().unwrap();
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-            s
-        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-            s.as_str()
-        } else {
-            "Unknown error message type"
-        };
-        println!("\n{panic_banner}\n{message}");
-    }));
 
+    // Print Banner
     match text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => println!("{}", art),
         Err(e) => println!("[COMPILER] Error: {e}"),
@@ -56,7 +41,21 @@ fn main() {
 
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
-    let tokens = lex(contents);
+    let contents: &'static Vec<String> = Box::leak(Box::new(contents));
+
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // avoids cloning by making the strings static
+        let static_contents: &'static [&'static str] = Box::leak(
+            contents
+                .iter()
+                .map(|s| &**s as &'static str)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        error_handling(panic_info, static_contents);
+    }));
+
+    let tokens = lex(contents.iter().map(|x| x.as_str()).collect());
     let ast = parse(tokens);
     let gen_data = semantic_check(ast);
     // code_gen(gen_data, file_name);
@@ -66,34 +65,36 @@ fn main() {
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn lex(contents: Vec<String>) -> VecDeque<Token> {
-    set_prefix(LogPrefix::Lexical);
+fn lex(contents: Vec<&str>) -> VecDeque<Token> {
+    utils::set_prefix(utils::LogPrefix::Lexical);
 
     let tokens = Lexer::new(contents).tokenize();
 
-    if do_log() {
+    if utils::do_log() {
         print_tokens(&tokens);
     }
     tokens
 }
 
 fn parse(tokens: VecDeque<Token>) -> Ast {
-    set_prefix(LogPrefix::Parse);
+    utils::set_prefix(utils::LogPrefix::Parse);
 
     let ast = Parser::parse_ast(tokens);
 
-    if do_log() {
+    if utils::do_log() {
         println!("\n{:#?}\n", ast);
     }
-
     ast
 }
 
 fn semantic_check(ast: Ast) -> Checker {
-    set_prefix(LogPrefix::Semantic);
+    utils::set_prefix(utils::LogPrefix::Semantic);
 
     let checked = Checker::check_ast(ast);
-    println!("\n{:#?}\n", checked);
+
+    if utils::do_log() {
+        println!("\n{:#?}\n", checked);
+    }
     checked
 }
 
@@ -122,6 +123,36 @@ fn code_gen(data: Checker, file_name: String) {
 }
 */
 
+fn error_handling(panic_info: &PanicHookInfo<'_>, file_contents: &'static [&'static str]) {
+    let panic_banner = match text_to_ascii_art::to_art(">Error!<".to_string(), "standard", 8, 0, 0)
+    {
+        Ok(art) => art,
+        Err(e) => format!("[COMPILER] Error: {e}"),
+    };
+
+    let erroring_code = match file_contents.get(utils::get_pos().1 as usize) {
+        Some(line) => {
+            // remove newline char && whitespace before first char
+            line.trim_start().trim_end()
+        }
+        None => "unknown location (´。＿。｀)",
+    };
+
+    let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+        s
+    } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "Unknown error message type"
+    };
+
+    println!(
+        "\n{panic_banner}\n\
+         \nError Occurred at: '{erroring_code}'\
+         \n{message}",
+    );
+}
+
 /*----------------------------------------------------------------------------------------
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
@@ -129,7 +160,7 @@ fn code_gen(data: Checker, file_name: String) {
 fn print_tokens(tokens: &VecDeque<Token>) {
     fn fmt_123(tok: &Token) -> String {
         match &tok.value {
-            Some(val) => match tok.as_str() {
+            Some(_) => match tok.as_str() {
                 "" => format!("{:?}", tok.kind),
                 val @ _ => match tok.kind {
                     TokenKind::Ident => format!("{:?}('{val}')", tok.kind),

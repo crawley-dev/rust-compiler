@@ -63,12 +63,10 @@ use crate::{
     lex::{Token, TokenFlags, TokenKind},
     parse::{Arg, Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, utils,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use educe::Educe;
 use std::{
-    any::Any,
-    collections::{HashMap, HashSet},
-    ops::Add,
+    collections::{HashMap},
     ptr::NonNull,
 };
 
@@ -500,6 +498,7 @@ impl Checker {
                     init_expr,
                     scope_id: self.ctx.scope_depth,
                 };
+
                 // insert variable into registry
                 self.var_map
                     .insert(var.ident.as_str().to_string(), self.var_vec.len());
@@ -523,11 +522,6 @@ impl Checker {
                             );
                         }
                     }
-                    // self.check_type_equivalence(&expected, &init_expr)
-                    // .context(format!("Invalid init expr for {}\
-                    //         expected: {expected:#?}\
-                    //         found: found: {init_expr:#?}\n", var.ident.as_str()
-                    //     ))?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
@@ -707,12 +701,12 @@ impl Checker {
 
                 match lhs_checked.addr_mode {
                     // can check lhs or rhs, doesn't matter, they are equal
-                    AddressingMode::Array(depth) => {
+                    AddressingMode::Array(_) => {
                         err!(
                             "[ARR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
-                    AddressingMode::Pointer(depth) => {
+                    AddressingMode::Pointer(_) => {
                         err!(
                             "[PTR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
@@ -784,7 +778,7 @@ impl Checker {
                 // 'Addr of'   var               => ptr
                 // 'Ptr Deref' ptr               => var
                 match checked.addr_mode {
-                    AddressingMode::Array(depth) => {
+                    AddressingMode::Array(_) => {
                         err!("[ARR] Invalid Unary Expression: {op:?}\n{checked:#?}")
                     }
                     AddressingMode::Pointer(depth) => {
@@ -802,7 +796,7 @@ impl Checker {
                                         width: match checked.type_mode {
                                             TypeMode::Boolean => 1,
                                             TypeMode::Int(_) => 8, // will be shrunk to match caller.
-                                            _ => return todo!("width calculation for type"),
+                                            _ => todo!("width calculation for type"),
                                         },
                                     })
                                 } else {
@@ -814,7 +808,6 @@ impl Checker {
                                     })
                                 }
                             }
-
                             _ => err!(
                                 "[PTR] Invalid Unary Expression: {op:?}..\n{checked:#?}"
                             ),
@@ -1024,8 +1017,11 @@ impl Checker {
     fn get_full_width(&self, inp_type: &Type<FullType>) -> usize {
         match inp_type {
             Type::Primitive(full) => {
-                let base = self.type_vec.get(full.type_id).unwrap();
-                Self::get_base_width(base)
+                match full.addr_mode {
+                    AddressingMode::Primitive => full.width,
+                    AddressingMode::Pointer(_) => PTR,
+                    AddressingMode::Array(_) => todo!("array width calculation"),
+                }
             }
             Type::Struct { .. } => todo!("struct width calculation"),
             Type::Union { .. } => todo!("union width calculation"),

@@ -1,8 +1,7 @@
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    do_logging: [false, false, false, false],
+    do_logging: [false, true, false, false],
     current_prefix: LogPrefix::Lexical,
-    file_name: String::new(),
     file_pos: (0, 0),
 };
 
@@ -18,48 +17,25 @@ struct Logger {
     log_prefixes: [&'static str; 4],
     do_logging: [bool; 4],
     current_prefix: LogPrefix,
-    file_name: String,
     file_pos: (u32, u32),
 }
 
 pub fn add_pos(delta: (u32, u32)) {
     unsafe {
-        let pos = LOGGER.file_pos;
         LOGGER.file_pos.0 += delta.0;
         LOGGER.file_pos.1 += delta.1;
-
-        // if do_log() {
-        //     println!(
-        //         "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
-        //         pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
-        //     );
-        // }
     }
 }
 
 pub fn sub_pos(delta: (u32, u32)) {
     unsafe {
-        let pos = LOGGER.file_pos;
         LOGGER.file_pos.0 -= delta.0;
         LOGGER.file_pos.1 -= delta.1;
-
-        // if do_log() {
-        //     println!(
-        //         "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
-        //         pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
-        //     );
-        // }
     }
 }
 
 pub fn set_pos(new_pos: (u32, u32)) {
     unsafe {
-        // if do_log() {
-        //     println!(
-        //         "[INFO] Setting position to: (col: {}, row: {})\n",
-        //         new_pos.1, new_pos.0
-        //     );
-        // }
         LOGGER.file_pos = new_pos;
     }
 }

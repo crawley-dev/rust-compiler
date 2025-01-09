@@ -1,7 +1,7 @@
 use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::{AddressingMode, Function, Variable},
+    semantic::{AddressingMode, Variable},
     utils,
 };
 use anyhow::Result;
@@ -18,7 +18,6 @@ pub struct Arg {
 pub struct ParseType {
     pub type_tok: Token,
     pub addr_mode: AddressingMode,
-    pub depth: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +37,12 @@ pub struct NodeScope {
 pub struct Ast {
     pub stmts: Vec<NodeStmt>,
 }
+
+// pub struct Node<T> {
+//     pub node: T,
+//     pub pos: (u32, u32),
+//     pub end: (u32, u32),
+// }
 
 // TODO(TOM): impl this
 // pub enum NodeTopLevel {
@@ -143,15 +148,13 @@ impl Parser {
     }
 
     fn parse_top_level(&mut self) -> Result<NodeStmt> {
-        match self.peek(0) {
-            Some(tok) if tok.kind != TokenKind::Fn => {
-                err!("A Program only consists of functions, this is =>\n{tok:#?}")
-            }
-            Some(_) => Ok(()), // fn code is below!
-            None => return err!("No token to parse"),
-        };
+        if !self.expect(TokenKind::Fn).is_ok() {
+            return err!(
+                "A Program only consists of functions, this is =>\n{:#?}",
+                self.peek(0)
+            );
+        }
 
-        self.expect(TokenKind::Fn)?;
         let ident = self.expect(TokenKind::Ident)?;
         self.expect(TokenKind::OpenParen)?;
 
@@ -179,13 +182,6 @@ impl Parser {
             Ok(_) => Some(self.parse_type()?),
             Err(_) => None,
         };
-        // let mut return_type_tok = None;
-        // let mut return_addr_mode = None;
-        // if self.expect(TokenKind::Arrow).is_ok() {
-        //     let (tok, addr_mode, type_depth) = self.parse_type()?;
-        //     return_type_tok = Some(tok);
-        //     return_addr_mode = Some(addr_mode);
-        // }
         let scope = self.parse_scope(false)?;
 
         Ok(NodeStmt::FnDecl {
@@ -440,27 +436,31 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParseType> {
-        let mut addr_mode = AddressingMode::Primitive;
+        // let mut addr_mode = AddressingMode::Primitive;
         let mut depth: u32 = 0;
-        if self.expect(TokenKind::Ptr).is_ok() {
-            depth += 1;
-            while self.expect(TokenKind::Ptr).is_ok() {
+        let addr_mode = match self.peek(0) {
+            Some(tok) if tok.kind == TokenKind::Ptr => {
                 depth += 1;
+                while self.expect(TokenKind::Ptr).is_ok() {
+                    depth += 1;
+                }
+                AddressingMode::Pointer(depth)
             }
-            addr_mode = AddressingMode::Pointer(depth);
-        } else if self.expect(TokenKind::Array).is_ok() {
-            depth += 1;
-            while self.expect(TokenKind::Array).is_ok() {
+            Some(tok) if tok.kind == TokenKind::Array => {
                 depth += 1;
+                while self.expect(TokenKind::Array).is_ok() {
+                    depth += 1;
+                }
+                AddressingMode::Array(depth)
             }
-            addr_mode = AddressingMode::Array(depth);
-        }
+            Some(_) => AddressingMode::Primitive,
+            None => return err!("No token to parse"),
+        };
 
         let type_tok = self.expect(TokenKind::Ident)?;
         Ok(ParseType {
             type_tok,
             addr_mode,
-            depth,
         })
     }
 

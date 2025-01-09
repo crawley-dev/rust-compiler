@@ -239,7 +239,7 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(input: Vec<String>) -> Lexer {
+    pub fn new(input: Vec<&str>) -> Lexer {
         let reg: HashMap<&'static str, TokenKind> = HashMap::from([
             // Generic Symbols
             (",", TokenKind::Comma),
