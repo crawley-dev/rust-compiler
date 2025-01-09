@@ -1,10 +1,8 @@
-use crate::{debug, err};
+use crate::{debug, err, utils};
+use anyhow::Result;
 use bitflags::bitflags;
 use core::fmt;
 use std::collections::{HashMap, VecDeque};
-
-const LOG_DEBUG_INFO: bool = false;
-const MSG: &str = "LEX";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
@@ -181,7 +179,7 @@ impl TokenKind {
         }
     }
 
-    pub fn assign_to_arithmetic(&self) -> anyhow::Result<TokenKind> {
+    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
         match self {
             TokenKind::AddEq => Ok(TokenKind::Add),
             TokenKind::SubEq => Ok(TokenKind::Sub),
@@ -234,7 +232,6 @@ impl Token {
 
 pub struct Lexer {
     idx: usize,
-    pos: (u32, u32),
     input: Vec<u8>,
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
@@ -307,7 +304,6 @@ impl Lexer {
         ]);
         Lexer {
             idx: 0,
-            pos: (0, 0),
             input: input
                 .iter()
                 .flat_map(|x| x.chars())
@@ -330,7 +326,7 @@ impl Lexer {
                     _ if self.is_multicomment => (),
                     _ => {
                         tokens.push_back(tok);
-                        debug!(self, "new tok: {:?}", tokens.back().as_ref().unwrap());
+                        debug!("new tok: {:?}", tokens.back().as_ref().unwrap());
                     }
                 },
                 None => continue,
@@ -357,7 +353,7 @@ impl Lexer {
                 b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
                 b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
                 _ => {
-                    let err_msg = err!("unknown char found {next_char}");
+                    let err_msg: Result<bool> = err!("unknown char found {next_char}"); // result T can be anything.
                     panic!("{err_msg:?}");
                 }
             };
@@ -382,22 +378,18 @@ impl Lexer {
     fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;
-            self.pos.0 += 1;
+            utils::add_pos((1, 0));
             return None;
         }
 
         let buf_str: String = buf.iter().map(|x| *x as char).collect();
-        debug!(
-            self,
-            "buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx
-        );
+        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
 
         match buf_kind {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                self.pos.1 += buf.len() as u32;
-                self.pos.0 = 0;
+                utils::set_pos((0, utils::get_pos().1 + 1));
                 None
             }
             BufKind::Word => self.match_word(buf_str),
@@ -405,22 +397,23 @@ impl Lexer {
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
                 value: Some(buf_str),
-                pos: (self.pos.0, self.pos.1),
+                pos: Self::calc_token_start(buf.len()),
             }),
         }
     }
 
     fn match_word(&self, buf_str: String) -> Option<Token> {
+        let buf_len = buf_str.len();
         match self.reg.get(buf_str.as_str()) {
             Some(kind) => Some(Token {
                 kind: *kind,
                 value: None,
-                pos: (self.pos.0, self.pos.1),
+                pos: Self::calc_token_start(buf_len),
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
                 value: Some(buf_str),
-                pos: (self.pos.0, self.pos.1),
+                pos: Self::calc_token_start(buf_len),
             }),
         }
     }
@@ -429,21 +422,23 @@ impl Lexer {
         while !buf_str.is_empty() {
             match self.reg.get(buf_str.as_str()) {
                 Some(kind) => {
+                    // early return if the symbol
                     return Some(Token {
                         kind: *kind,
                         value: None,
-                        pos: (self.pos.0, self.pos.1),
+                        pos: Self::calc_token_start(buf_str.len()),
                     });
                 }
                 None => {
                     buf_str.pop();
                     self.idx -= 1;
-                    debug!(self, "reduce {} | new pos: {}", buf_str, self.idx);
+                    utils::sub_pos((1, 0));
+                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
                 }
             }
         }
         self.idx += 1;
-        self.pos.0 += 1;
+        utils::add_pos((1, 0));
         None
     }
 
@@ -454,15 +449,20 @@ impl Lexer {
     fn consume(&mut self) -> u8 {
         let i = self.idx;
         self.idx += 1;
-        self.pos.0 += 1;
+        utils::add_pos((1, 0));
 
         let char = self.input.get(i).copied().unwrap();
         if char == b'\n' {
-            debug!(self, "consuming '{}'", r"\n");
+            debug!("consuming '{}'", r"\n");
         } else {
-            debug!(self, "consuming '{}'", char as char);
+            debug!("consuming '{}'", char as char);
         }
         char
+    }
+
+    fn calc_token_start(len: usize) -> (u32, u32) {
+        let pos = utils::get_pos();
+        (pos.0 - len as u32, pos.1)
     }
 }
 

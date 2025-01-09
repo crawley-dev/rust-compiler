@@ -61,7 +61,7 @@
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
-    parse::{Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm, Arg},
+    parse::{Arg, Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, utils,
 };
 use anyhow::{Context, Result};
 use educe::Educe;
@@ -74,8 +74,6 @@ use std::{
 
 pub type Byte = usize;
 const PTR: Byte = 8;
-const LOG_DEBUG_INFO: bool = true;
-const MSG: &str = "SEMANTIC";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
@@ -181,7 +179,6 @@ struct SemContext {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct Checker {
-    pub pos: (u32, u32),
     pub ast: Ast,
     ctx: SemContext,
 
@@ -225,7 +222,6 @@ impl Checker {
         }
 
         let mut checker = Checker {
-            pos: (0, 0),
             ast: Ast { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
@@ -250,10 +246,11 @@ impl Checker {
              let stmt = match checker.check_top_level(stmt) {
                 Ok(stmt) => stmt,
                 Err(e) => {
-                    panic!("\n{sem_ast:#?}\n{e}\n")
+                    panic!("\n\nTop Error: {e}Backtrace:\n{}\n{sem_ast:#?}", e.backtrace())
                 }
             };
             sem_ast.stmts.push(stmt);
+            // sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
         checker.ast = sem_ast;
 
@@ -293,8 +290,7 @@ impl Checker {
         checker
     }
 
-    // fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
-    fn check_top_level(&mut self, stmt: NodeStmt) -> anyhow::Result<NodeStmt> {
+    fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt> {
         match stmt {
             NodeStmt::FnDecl {
                 ident,
@@ -323,12 +319,10 @@ impl Checker {
                         );
                     } else if self.var_map.contains_key(arg_ident) {
                         return err!(
-                            self,
                             "Argument name in use: {arg_ident} in function: {fn_ident}"
                         );
                     } else if self.type_map.contains_key(arg_ident) {
                         return err!(
-                            self,
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
@@ -357,10 +351,9 @@ impl Checker {
 
                 // check for name collisions with signature.
                 if self.fn_map.contains_key(signature.as_str()) {
-                    return err!(self, "Duplicate definition of a Function: '{signature}'");
+                    return err!("Duplicate definition of a Function: '{signature}'");
                 } else if self.type_map.contains_key(fn_ident) {
                     return err!(
-                        self,
                         "Illegal Function name, Types are reserved: '{fn_ident}'"
                     );
                 }
@@ -378,8 +371,8 @@ impl Checker {
                     let mut_self = self as *mut Self;
                     checked_scope = (*mut_self).check_scope(
                         scope,
-                        Some(|stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>, String> {
-                            debug!(self, "checking {signature}'s statements!");
+                        Some(|stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>> {
+                            debug!("checking {signature}'s statements!");
 
                             let mut checked_stmts = Vec::with_capacity(stmts.len());
 
@@ -394,21 +387,20 @@ impl Checker {
                                     },
                                 };
                                 checked_stmts.push(self.check_stmt(arg_node)?);
-                                debug!(self, "added\n{:#?}", checked_stmts.last());
+                                debug!("added\n{:#?}", checked_stmts.last());
                             }
 
                             for stmt in stmts {
                                 checked_stmts.push(self.check_stmt(stmt)?);
-                                debug!(self, "added\n{:#?}", checked_stmts.last())
+                                debug!("added\n{:#?}", checked_stmts.last())
                             }
 
                             match self.ctx.func {
                                 Some(ref func) if !func.valid_return => {
-                                    return err!(self, "Not all code paths return in '{signature}'")
+                                    return err!("Not all code paths return in '{signature}'")
                                 }
                                 _ => (),
                             }
-                            // checked_stmts.reverse();
 
                             // removes args for me! (check_scope() that is)
                             Ok(checked_stmts)
@@ -430,7 +422,6 @@ impl Checker {
                 })
             }
             _ => err!(
-                self,
                 "A Program only consists of functions, this is a {stmt:?}"
             ),
         }
@@ -441,10 +432,9 @@ impl Checker {
         &mut self,
         scope: NodeScope,
         special_checks: Option<F>,
-    // ) -> Result<NodeScope, String>
-    ) -> anyhow::Result<NodeScope>
+    ) -> Result<NodeScope>
     where
-        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>,
+        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>>,
     {
         self.ctx.scope_depth += 1;
         let does_inherit = scope.inherits_stmts;
@@ -483,25 +473,23 @@ impl Checker {
     }
 
     // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
-    // fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope, String> {
-    fn check_scope_default(&mut self, scope: NodeScope) -> anyhow::Result<NodeScope> {
+    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope> {
         self.check_scope(
             scope,
-            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>, String>>,
+            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>>>,
         )
     }
     // endregion
 
-    // fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt, String> {
-    fn check_stmt(&mut self, stmt: NodeStmt) -> anyhow::Result<NodeStmt> {
+    fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt> {
         match stmt {
             NodeStmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
                 let str = arg.ident.as_str();
                 if self.var_map.contains_key(str) {
-                    return err!(self, "Duplicate definition of a Variable: '{str}'");
+                    return err!("Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
-                    return err!(self, "Illegal Variable name, Types are reserved: '{str}'");
+                    return err!("Illegal Variable name, Types are reserved: '{str}'");
                 }
 
                 let base_id = *self.type_map.get(arg.parse_type.type_tok.as_str()).unwrap();
@@ -528,7 +516,7 @@ impl Checker {
                         addr_mode: arg.parse_type.addr_mode,
                         width: self.get_full_width(&var.var_type),
                     };
-                    self.check_type_equivalence(&init_expr, &expected)?;
+                    self.check_type_equivalence(&expected, &init_expr).context(format!("Invalid init expr for {var:#?}\n"))?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
@@ -692,14 +680,13 @@ impl Checker {
                 Ok(stmt)
             } */
             NodeStmt::FnDecl { .. } => {
-                err!(self, "Functions cannot be nested, they're top level statements")
+                err!("Functions cannot be nested, they're top level statements")
             }
-            _ => err!(self, "Found {stmt:#?}.. shouldn't have."),
+            _ => err!("Found {stmt:#?}.. shouldn't have."),
         }
     }
 
-    // fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem, String> {
-    fn check_expr(&self, expr: &NodeExpr) -> anyhow::Result<ExprSem> {
+    fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem> {
         match expr {
             NodeExpr::Term(term) => self.check_term(term),
             NodeExpr::BinaryExpr { op, lhs, rhs } => {
@@ -711,13 +698,11 @@ impl Checker {
                     // can check lhs or rhs, doesn't matter, they are equal
                     AddressingMode::Array(depth) => {
                         err!(
-                            self,
                             "[ARR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
                     AddressingMode::Pointer(depth) => {
                         err!(
-                            self,
                             "[PTR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
@@ -773,7 +758,7 @@ impl Checker {
                                 }
                             }
 
-                            _ => err!(self, "[PRM] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
+                            _ => err!("[PRM] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
                         }
                     }
                 }
@@ -820,7 +805,6 @@ impl Checker {
                             }
 
                             _ => err!(
-                                self,
                                 "[PTR] Invalid Unary Expression: {op:?}..\n{checked:#?}"
                             ),
                         }
@@ -838,24 +822,17 @@ impl Checker {
                                     addr_mode: AddressingMode::Primitive,
                                     width: checked.width,
                                 }),
-                                _ => err!(self, "UnarySub expects a signed integer, found {checked:#?}")
+                                _ => err!("UnarySub expects a signed integer, found {checked:#?}")
                             }
-                            // TokenKind::Sub
-                            // // If its a literal, it can be coerced to signed
-                            // // must be signed as not a literal
-                            // if checked.form != ExprForm::Literal 
-                            //     && checked.type_mode != TypeMode::Int(true) =>
-                            // err!(self,"UnarySub expects a signed integer, found {checked:#?}"),
-                            // TokenKind::Sub => Ok(checked_force_lit),
-                            
+                           
                             // TODO(TOM): bitwise not on signed integers?
-                            TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!(self, "Not expects a boolean or unsigned integer, found {checked:#?}"), 
+                            TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!("Not expects a boolean or unsigned integer, found {checked:#?}"), 
                             TokenKind::Not => Ok(ExprSem {
                                 form: ExprForm::Compound,
                                 ..checked
                             }),
 
-                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!(self, "AddressOf expects a variable, found {checked:#?}"),
+                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("AddressOf expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
                                 form: ExprForm::Compound,
                                 type_mode: checked.type_mode,
@@ -871,8 +848,7 @@ impl Checker {
         }
     }
 
-    // fn check_term(&self, term: &NodeTerm) -> Result<ExprSem, String> {
-    fn check_term(&self, term: &NodeTerm) -> anyhow::Result<ExprSem> {
+    fn check_term(&self, term: &NodeTerm) -> Result<ExprSem> {
         // TODO(TOM): NodeTerm really should unconditionally contain a position,
         //  >> detach pos from token and give it to the node itself
         match term {
@@ -883,7 +859,7 @@ impl Checker {
                 width: 1,
             }),
             NodeTerm::Ident(token) => {
-                self.update_pos(token.pos);
+                utils::set_pos(token.pos);
                 let var = self
                     .var_vec
                     .get(*self.var_map.get(token.as_str()).unwrap())
@@ -910,7 +886,7 @@ impl Checker {
                 })
             }
             NodeTerm::IntLit(token) => {
-                self.update_pos(token.pos);
+                utils::set_pos(token.pos);
                 Ok(ExprSem {
                     form: ExprForm::Literal,
                     type_mode: TypeMode::Int(false),
@@ -919,19 +895,18 @@ impl Checker {
                 })
             }
             NodeTerm::FnCall { ident, args } => {
-                self.update_pos(ident.pos);
+                utils::set_pos(ident.pos);
+                
                 todo!("check_term fncall")
             }
         }
     }
 
-    // fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<(), String> {
     fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<()> {
-        debug!(self, "checking type equivalence\n{a:#?}\n{b:#?}");
+        debug!("checking type equivalence {a:#?}\n{b:#?}");
 
         if a.addr_mode != b.addr_mode {
             return err!(
-                self,
                 "Expr of different AddrMode! {a:?} vs {b:?}, {a:#?}\n.. {b:#?}",
                 a = a.addr_mode,
                 b = b.addr_mode
@@ -943,7 +918,6 @@ impl Checker {
         // cannot assign something bigger than the 'container'
         if !literal_expr && a.width < b.width {
             return err!(
-                self,
                 "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
                 a.width,
                 b.width
@@ -956,10 +930,9 @@ impl Checker {
             (TypeMode::Int(a_sign), TypeMode::Int(b_sign)) if a_sign == b_sign => Ok(()),
             _ => {
                 err!(
-                    self,
-                    "TypeMode mismatch: {a:?} != {b:?} .. {a:#?}\n.. {b:#?}",
-                    a = a.type_mode,
-                    b = b.type_mode
+                    "TypeMode mismatch: {:?} != {:?} ..\n{a:#?}\n.. {b:#?}",
+                    a.type_mode,
+                    b.type_mode
                 )
             }
         }
@@ -973,18 +946,10 @@ impl Checker {
         self.type_vec.push(Type::Primitive(new_base));
     }
 
-    fn update_pos(&self, pos: (u32, u32)) {
-        unsafe {
-            let mut_self = self as *const Checker as *mut Checker;
-            (*mut_self).pos = pos;
-        }
-    }
-
-    fn new_nonnull(&self, reference: &Variable) -> Result<NonNull<Variable>, String> {
+    fn new_nonnull(&self, reference: &Variable) -> Result<NonNull<Variable>> {
         match NonNull::new(reference as *const Variable as *mut Variable) {
             Some(ptr) => Ok(ptr),
             None => err!(
-                self,
                 "Found nullptr when creating 'ExprData'\n{reference:#?}"
             ),
         }
@@ -1219,7 +1184,7 @@ fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
 fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
     match term {
         NodeTerm::IntLit(tok) => {
-            self.update_pos(tok.pos);
+            self.set_pos(tok.pos);
 
             Ok(ExprData {
                 ptr: None,
@@ -1229,7 +1194,7 @@ fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
             })
         }
         NodeTerm::Ident(tok) => {
-            self.update_pos(tok.pos);
+            self.set_pos(tok.pos);
 
             let var = self.get_var(tok.as_str())?;
             match &self.types.get(var.type_id).unwrap().form {
@@ -1260,7 +1225,7 @@ fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
             }
         }
         NodeTerm::FnCall { ident, args } => {
-            self.update_pos(ident.pos);
+            self.set_pos(ident.pos);
 
             // check fn of that name exists
             // iterating over hash map aswell! bad!!!

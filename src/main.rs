@@ -12,7 +12,8 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
 };
-mod macros;
+mod utils;
+use utils::*;
 
 mod lex;
 use lex::*;
@@ -27,18 +28,19 @@ use semantic::*;
 // use code_gen::Generator;
 
 fn main() {
-    // env_logger::init();
-    // std::env::set_var("RUST_BACKTRACE", "1");
-    std::env::set_var("RUST_LOG", "rust-compiler=info");
+    std::env::set_var("RUST_BACKTRACE", "1");
+    std::env::set_var("RUST_LIB_BACKTRACE", "1");
+
+    match text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0) {
+        Ok(art) => println!("{}", art),
+        Err(e) => println!("[COMPILER] Error: {e}"),
+    }
 
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
-    // println!("\n\n{:#?}\n\n", contents);
-
-    let tokens = Lexer::new(contents).tokenize();
-    // print_tokens(&tokens);
-    let ast = parse(tokens);
-    let gen_data = semantic_check(ast);
+    let tokens = lex(contents);
+    // let ast = parse(tokens);
+    // let gen_data = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 
@@ -46,29 +48,36 @@ fn main() {
 ---- Stuff -------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
+fn lex(contents: Vec<String>) -> VecDeque<Token> {
+    set_prefix(LogPrefix::Lexical);
+
+    if do_log() {
+        println!("\n\n{:#?}\n\n", contents);
+    }
+
+    let tokens = Lexer::new(contents).tokenize();
+
+    if do_log() {
+        print_tokens(&tokens);
+    }
+    tokens
+}
+
 fn parse(tokens: VecDeque<Token>) -> Ast {
     // TODO(TOM): REMOVE CLONE AFTER DEBUG
-    let mut parser = Parser::new(tokens.clone());
-    match parser.parse_ast() {
-        Ok(ast) => ast,
-        Err(e) => panic!("{tokens:#?}\n\n{e}\n"),
-    }
+    set_prefix(LogPrefix::Parser);
+
+    let ast = Parser::parse_ast(tokens.clone());
+    println!("\n{:#?}\n", ast);
+    ast
 }
 
 fn semantic_check(ast: Ast) -> Checker {
-    // TODO(TOM): REMOVE CLONE AFTER DEBUG
-    // match semantic::Checker::check_ast(ast.clone()) {
-    //     Ok(data) => {
-    //         println!("\n{data:#?}\n");
-    //         data
-    //     }
-    //     Err(e) => {
-    //         panic!("\n{ast:#?}\n{e}\n")
-    //     }
-    // }
-    let data = semantic::Checker::check_ast(ast);
-    println!("\n{data:#?}\n");
-    data
+    set_prefix(LogPrefix::Semantic);
+
+    let checked = Checker::check_ast(ast);
+    println!("\n{:#?}\n", checked);
+    checked
 }
 
 /*
@@ -102,17 +111,15 @@ fn code_gen(data: Checker, file_name: String) {
 
 fn print_tokens(tokens: &VecDeque<Token>) {
     fn fmt_123(tok: &Token) -> String {
-        match tok.as_str() {
-            // Some(val) => match tok.kind {
-            //     TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
-            //     _ => format!("{:?}({val})", tok.kind),
-            // },
-            // None => format!("{:?}", tok.kind),
-            "" => format!("{:?}", tok.kind),
-            val @ _ => match tok.kind {
-                TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
-                _ => format!("{:?}({val})", tok.kind),
+        match &tok.value {
+            Some(val) => match tok.as_str() {
+                "" => format!("{:?}", tok.kind),
+                val @ _ => match tok.kind {
+                    TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
+                    _ => format!("{:?}({val})", tok.kind),
+                },
             },
+            None => format!("{:?}", tok.kind),
         }
     }
 
@@ -136,7 +143,7 @@ fn print_tokens(tokens: &VecDeque<Token>) {
         let y_str = format!("{y:?}", y = tok.pos.1);
         let y_whitespace = " ".repeat(y_max_len - y_str.len());
         println!(
-            "Token {{ {val_str}{val_whitespace} | {x_whitespace}{x_str}, {y_str}{y_whitespace} }}"
+            "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}"
         )
     }
 }
