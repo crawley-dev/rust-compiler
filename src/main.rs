@@ -6,12 +6,14 @@
 #![warn(clippy::complexity)]
 #![warn(clippy::perf)]
 #![warn(clippy::style)]
+use anyhow::Result;
 use std::{
     cmp::max,
     collections::VecDeque,
     fs,
     io::{BufRead, BufReader, Write},
 };
+
 mod utils;
 use utils::*;
 
@@ -30,6 +32,22 @@ use semantic::*;
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LIB_BACKTRACE", "1");
+    std::panic::set_hook(Box::new(|panic_info| {
+        let panic_banner =
+            match text_to_ascii_art::to_art(">Error!<".to_string(), "standard", 8, 0, 0) {
+                Ok(art) => art,
+                Err(e) => format!("[COMPILER] Error: {e}"),
+            };
+        let location = panic_info.location().unwrap();
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "Unknown error message type"
+        };
+        println!("\n{panic_banner}\n{message}");
+    }));
 
     match text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => println!("{}", art),
@@ -39,8 +57,8 @@ fn main() {
     let file_name = get_file_name();
     let contents = get_file_contents(&file_name);
     let tokens = lex(contents);
-    // let ast = parse(tokens);
-    // let gen_data = semantic_check(ast);
+    let ast = parse(tokens);
+    let gen_data = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 
@@ -51,10 +69,6 @@ fn main() {
 fn lex(contents: Vec<String>) -> VecDeque<Token> {
     set_prefix(LogPrefix::Lexical);
 
-    if do_log() {
-        println!("\n\n{:#?}\n\n", contents);
-    }
-
     let tokens = Lexer::new(contents).tokenize();
 
     if do_log() {
@@ -64,11 +78,14 @@ fn lex(contents: Vec<String>) -> VecDeque<Token> {
 }
 
 fn parse(tokens: VecDeque<Token>) -> Ast {
-    // TODO(TOM): REMOVE CLONE AFTER DEBUG
-    set_prefix(LogPrefix::Parser);
+    set_prefix(LogPrefix::Parse);
 
-    let ast = Parser::parse_ast(tokens.clone());
-    println!("\n{:#?}\n", ast);
+    let ast = Parser::parse_ast(tokens);
+
+    if do_log() {
+        println!("\n{:#?}\n", ast);
+    }
+
     ast
 }
 

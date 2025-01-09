@@ -1,6 +1,6 @@
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    do_logging: [true, false, true, true],
+    do_logging: [false, false, false, false],
     current_prefix: LogPrefix::Lexical,
     file_name: String::new(),
     file_pos: (0, 0),
@@ -9,7 +9,7 @@ static mut LOGGER: Logger = Logger {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogPrefix {
     Lexical,
-    Parser,
+    Parse,
     Semantic,
     CodeGen,
 }
@@ -28,12 +28,12 @@ pub fn add_pos(delta: (u32, u32)) {
         LOGGER.file_pos.0 += delta.0;
         LOGGER.file_pos.1 += delta.1;
 
-        if do_log() {
-            println!(
-                "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
-                pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
-            );
-        }
+        // if do_log() {
+        //     println!(
+        //         "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
+        //         pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
+        //     );
+        // }
     }
 }
 
@@ -43,23 +43,23 @@ pub fn sub_pos(delta: (u32, u32)) {
         LOGGER.file_pos.0 -= delta.0;
         LOGGER.file_pos.1 -= delta.1;
 
-        if do_log() {
-            println!(
-                "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
-                pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
-            );
-        }
+        // if do_log() {
+        //     println!(
+        //         "[INFO] pos update (col: {}, row: {}) => (col: {}, row: {})\n",
+        //         pos.1, pos.0, LOGGER.file_pos.1, LOGGER.file_pos.0
+        //     );
+        // }
     }
 }
 
 pub fn set_pos(new_pos: (u32, u32)) {
     unsafe {
-        if do_log() {
-            println!(
-                "[INFO] Setting position to: (col: {}, row: {})\n",
-                new_pos.1, new_pos.0
-            );
-        }
+        // if do_log() {
+        //     println!(
+        //         "[INFO] Setting position to: (col: {}, row: {})\n",
+        //         new_pos.1, new_pos.0
+        //     );
+        // }
         LOGGER.file_pos = new_pos;
     }
 }
@@ -68,6 +68,38 @@ pub fn set_prefix(new_prefix: LogPrefix) {
     unsafe {
         LOGGER.current_prefix = new_prefix;
         set_pos((0, 0));
+        if do_log() {
+            match new_prefix {
+                LogPrefix::Lexical => {
+                    println!(
+                        "\n{}\n",
+                        text_to_ascii_art::to_art(">Lexical<".to_string(), "standard", 8, 0, 0)
+                            .unwrap()
+                    )
+                }
+                LogPrefix::Parse => {
+                    println!(
+                        "\n{}\n",
+                        text_to_ascii_art::to_art(">Parse<".to_string(), "standard", 8, 0, 0)
+                            .unwrap()
+                    )
+                }
+                LogPrefix::Semantic => {
+                    println!(
+                        "\n{}\n",
+                        text_to_ascii_art::to_art(">Semantic<".to_string(), "standard", 8, 0, 0)
+                            .unwrap()
+                    )
+                }
+                LogPrefix::CodeGen => {
+                    println!(
+                        "\n{}\n",
+                        text_to_ascii_art::to_art(">CodeGen<".to_string(), "standard", 8, 0, 0)
+                            .unwrap()
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -89,8 +121,8 @@ macro_rules! debug {
         if crate::utils::do_log() {
             println!("[DBG_{} | (col: {}, row: {})] {}",
                 crate::utils::get_prefix(),
-                crate::utils::get_pos().1 /*+ 1*/,
-                crate::utils::get_pos().0 /*+ 1*/,
+                crate::utils::get_pos().1 + 1,
+                crate::utils::get_pos().0 + 1,
                 format!($msg)
             )
         }
@@ -100,8 +132,8 @@ macro_rules! debug {
             println!(
                 "[DBG_{} | (col: {}, row: {})] {}",
                 crate::utils::get_prefix(),
-                crate::utils::get_pos().1 /*+ 1*/,
-                crate::utils::get_pos().0 /*+ 1*/,
+                crate::utils::get_pos().1 + 1,
+                crate::utils::get_pos().0 + 1,
                 format!($fmt, $($arg)+)
             )
         }
@@ -111,18 +143,18 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! err {
     ($msg:expr) => {
-        Err(anyhow::anyhow!("\n[ERR_{} | (col: {}, row: {})] {}\n",
+        Err(anyhow::anyhow!("[ERR_{} | (col: {}, row: {})] {}\n",
             crate::utils::get_prefix(),
-            crate::utils::get_pos().1 /*+ 1*/,
-            crate::utils::get_pos().0 /*+ 1*/,
+            crate::utils::get_pos().1 + 1,
+            crate::utils::get_pos().0 + 1,
             format!($msg),
         ))
     };
     ($fmt:expr, $($arg:tt)+) => {
-        Err(anyhow::anyhow!("\n[ERR_{} | (col: {}, row: {})] {}\n",
+        Err(anyhow::anyhow!("[ERR_{} | (col: {}, row: {})] {}\n",
             crate::utils::get_prefix(),
-            crate::utils::get_pos().1 /*+ 1*/,
-            crate::utils::get_pos().0 /*+ 1*/,
+            crate::utils::get_pos().1 + 1,
+            crate::utils::get_pos().0 + 1,
             format!($fmt, $($arg)+)
         ))
     };

@@ -246,11 +246,10 @@ impl Checker {
              let stmt = match checker.check_top_level(stmt) {
                 Ok(stmt) => stmt,
                 Err(e) => {
-                    panic!("\n\nTop Error: {e}Backtrace:\n{}\n{sem_ast:#?}", e.backtrace())
+                    panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
                 }
             };
             sem_ast.stmts.push(stmt);
-            // sem_ast.stmts.push(checker.check_top_level(stmt)?);
         }
         checker.ast = sem_ast;
 
@@ -516,7 +515,19 @@ impl Checker {
                         addr_mode: arg.parse_type.addr_mode,
                         width: self.get_full_width(&var.var_type),
                     };
-                    self.check_type_equivalence(&expected, &init_expr).context(format!("Invalid init expr for {var:#?}\n"))?;
+                    match self.check_type_equivalence(&expected, &init_expr) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            return err!(
+                                "Invalid init expr for variable {}\n{e}", var.ident.as_str()
+                            );
+                        }
+                    }
+                    // self.check_type_equivalence(&expected, &init_expr)
+                    // .context(format!("Invalid init expr for {}\
+                    //         expected: {expected:#?}\
+                    //         found: found: {init_expr:#?}\n", var.ident.as_str()
+                    //     ))?;
                 }
 
                 Ok(NodeStmt::VarSemantics(var))
