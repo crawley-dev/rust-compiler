@@ -1,3 +1,9 @@
+use std::{
+    fs,
+    io::{BufRead, BufReader},
+};
+
+// region: Logger
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
     do_logging: [false, true, false, false],
@@ -21,6 +27,10 @@ struct Logger {
 }
 
 pub fn add_pos(delta: (u32, u32)) {
+    // if do_log() {
+    //     println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
+    // }
+
     unsafe {
         LOGGER.file_pos.0 += delta.0;
         LOGGER.file_pos.1 += delta.1;
@@ -28,6 +38,10 @@ pub fn add_pos(delta: (u32, u32)) {
 }
 
 pub fn sub_pos(delta: (u32, u32)) {
+    // if do_log() {
+    //     println!("{:?} - {delta:?}", unsafe { LOGGER.file_pos });
+    // }
+
     unsafe {
         LOGGER.file_pos.0 -= delta.0;
         LOGGER.file_pos.1 -= delta.1;
@@ -35,6 +49,10 @@ pub fn sub_pos(delta: (u32, u32)) {
 }
 
 pub fn set_pos(new_pos: (u32, u32)) {
+    // if do_log() {
+    //     println!("{:?} -> {new_pos:?}", unsafe { LOGGER.file_pos });
+    // }
+
     unsafe {
         LOGGER.file_pos = new_pos;
     }
@@ -135,3 +153,30 @@ macro_rules! err {
         ))
     };
 }
+// endregion
+
+// region: Global File Contents
+pub static mut FILE_CONTENTS: Vec<String> = Vec::new();
+
+pub fn get_file_name() -> String {
+    let args: String = std::env::args().skip(1).take(1).collect();
+    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
+
+    let file_name = args.split('.').take(1).collect::<String>();
+    // TODO(TOM): re-enable after testing
+    // let extension = args.split('.').skip(1).take(1).collect::<String>();
+    // else if extension != "txt" {
+    //     panic!("[COMPILER] Invalid file extension, '.txt' only\n")
+    // }
+    file_name
+}
+
+pub fn get_file_contents(file_name: &str) -> Vec<String> {
+    let file = fs::File::open(format!("./examples/{file_name}.txt"))
+        .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
+    BufReader::new(file)
+        .lines()
+        .map(|line| line.unwrap() + "\n")
+        .collect()
+}
+// endregion

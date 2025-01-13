@@ -63,7 +63,7 @@ use crate::{
     lex::{Token, TokenFlags, TokenKind},
     parse::{Arg, Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, utils,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use educe::Educe;
 use std::{
     collections::{HashMap},
@@ -195,7 +195,7 @@ pub struct Checker {
 // endregion
 
 impl Checker {
-    pub fn check_ast(ast: Ast) -> Checker {
+    pub fn new() -> Checker {
         let type_vec = Vec::from([
             Self::new_prim("bool", 1, TypeMode::Boolean),
             Self::new_prim("u8", 1, TypeMode::Int(false)),
@@ -219,7 +219,7 @@ impl Checker {
             };
         }
 
-        let mut checker = Checker {
+         Self {
             ast: Ast { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
@@ -234,22 +234,26 @@ impl Checker {
             type_map,
             fn_map: HashMap::new(),
             var_map: HashMap::new(),
-        };
+        }
+    }
 
+    pub fn check_ast(mut self, ast: Ast) -> (Checker, Option<Error>) {
         let mut sem_ast = Ast {
             stmts: Vec::with_capacity(ast.stmts.len()),
         };
 
         for stmt in ast.stmts {
-             let stmt = match checker.check_top_level(stmt) {
+             let stmt = match self.check_top_level(stmt) {
                 Ok(stmt) => stmt,
                 Err(e) => {
-                    panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
+                    // panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
+                    self.ast = sem_ast;
+                    return (self, Some(e));
                 }
             };
             sem_ast.stmts.push(stmt);
         }
-        checker.ast = sem_ast;
+        self.ast = sem_ast;
 
         // TODO(TOM): for ref, cpp "main" function either:
         //      - takes no arguments, main().
@@ -284,7 +288,7 @@ impl Checker {
         //     }
         //     _ => Ok(checker),
         // }
-        checker
+        (self, None)
     }
 
     fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt> {
@@ -296,14 +300,14 @@ impl Checker {
                 return_type,
             } => {
                 // check for name collisions
-                let fn_ident = ident.as_str();
+                let fn_ident = ident.str();
 
                 // Create arg semantics
                 // - check for duplicates
                 // - check for used names (keywords & other variables)
                 let mut args_semantics: Vec<Type<FullType>> = Vec::new();
                 for arg in &args {
-                    let arg_ident = arg.ident.as_str();
+                    let arg_ident = arg.ident.str();
 
                     if args_semantics
                         .iter()
@@ -323,13 +327,13 @@ impl Checker {
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
-                    let base_id = *self.type_map.get(arg.parse_type.type_tok.as_str()).unwrap();
+                    let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
                     args_semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
                 }
 
                 // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
 
-                let signature = match ident.as_str() {
+                let signature = match ident.str() {
                     "main" => "main".to_owned(), // NOTE(TOM): main is a special case, no overloading
                     name @ _ => {
                         let mut str = String::new();
@@ -357,7 +361,7 @@ impl Checker {
 
                 let return_type_id = match return_type {
                     Some(parse_type) => {
-                        Some(*self.type_map.get(parse_type.type_tok.as_str()).unwrap())
+                        Some(*self.type_map.get(parse_type.type_tok.str()).unwrap())
                     }
                     None => None,
                 };
@@ -457,7 +461,7 @@ impl Checker {
                 Some(var) => {
                     // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
                     let var = self.var_vec.pop().unwrap();
-                    self.var_map.remove(var.ident.as_str());
+                    self.var_map.remove(var.ident.str());
                 }
                 None => break,
             }
@@ -482,14 +486,14 @@ impl Checker {
         match stmt {
             NodeStmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
-                let str = arg.ident.as_str();
+                let str = arg.ident.str();
                 if self.var_map.contains_key(str) {
                     return err!("Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
                     return err!("Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let base_id = *self.type_map.get(arg.parse_type.type_tok.as_str()).unwrap();
+                let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
                 let var_type = self.new_full(base_id, arg.parse_type.addr_mode);
 
                 let var = Variable {
@@ -501,7 +505,7 @@ impl Checker {
 
                 // insert variable into registry
                 self.var_map
-                    .insert(var.ident.as_str().to_string(), self.var_vec.len());
+                    .insert(var.ident.str().to_string(), self.var_vec.len());
                 self.var_vec.push(var.clone());
 
                 // check intial expression
@@ -518,7 +522,7 @@ impl Checker {
                         Ok(_) => (),
                         Err(e) => {
                             return err!(
-                                "Invalid init expr for variable {}\n{e}", var.ident.as_str()
+                                "Invalid init expr for variable {}\n{e}", var.ident.str()
                             );
                         }
                     }
@@ -866,7 +870,7 @@ impl Checker {
                 utils::set_pos(token.pos);
                 let var = self
                     .var_vec
-                    .get(*self.var_map.get(token.as_str()).unwrap())
+                    .get(*self.var_map.get(token.str()).unwrap())
                     .unwrap();
                 let addr_mode = match &var.var_type {
                     Type::Primitive(full_type) => full_type.addr_mode,

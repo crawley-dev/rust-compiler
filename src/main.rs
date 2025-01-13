@@ -6,7 +6,7 @@
 #![warn(clippy::complexity)]
 #![warn(clippy::perf)]
 #![warn(clippy::style)]
-use anyhow::Result;
+use anyhow::{Error, Result};
 use std::{
     cmp::max,
     collections::VecDeque,
@@ -16,6 +16,7 @@ use std::{
 };
 
 mod utils;
+use utils::FILE_CONTENTS;
 
 mod lex;
 use lex::*;
@@ -39,63 +40,86 @@ fn main() {
         Err(e) => println!("[COMPILER] Error: {e}"),
     }
 
-    let file_name = get_file_name();
-    let contents = get_file_contents(&file_name);
-    let contents: &'static Vec<String> = Box::leak(Box::new(contents));
+    let file_name = utils::get_file_name();
+    let contents_ref;
+    unsafe {
+        FILE_CONTENTS = utils::get_file_contents(&file_name);
+        contents_ref = FILE_CONTENTS
+            .iter()
+            .map(|s| &**s as &'static str)
+            .collect::<Vec<_>>();
+    }
 
-    std::panic::set_hook(Box::new(move |panic_info| {
-        // avoids cloning by making the strings static
-        let static_contents: &'static [&'static str] = Box::leak(
-            contents
-                .iter()
-                .map(|s| &**s as &'static str)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        );
-        error_handling(panic_info, static_contents);
-    }));
+    let (tokens, error) = lex(contents_ref.as_slice());
+    if let Some(e) = error {
+        let (last_tok_pos, tok_len) = match tokens.back() {
+            Some(tok) => (tok.pos, tok.len),
+            None => ((0, 0), 0),
+        };
+        handle_error(e, contents_ref.as_slice(), last_tok_pos, tok_len);
+        return;
+    }
 
-    let tokens = lex(contents.iter().map(|x| x.as_str()).collect());
-    let ast = parse(tokens);
-    let gen_data = semantic_check(ast);
+    // let (ast, error) = parse(tokens);
+    // if let Some(e) = error {
+    //     // let last_node_pos = match ast.last() {
+    //     //     Some(node) =>
+    //     //     None => 0,
+    //     // };
+    //     let last_node_pos = (0, 0);
+    //     handle_error(e, contents_ref.as_slice(), last_node_pos, 0);
+    //     return;
+    // }
+
+    // let gen_data = semantic_check(ast);
+    // if let Some(e) = error {
+    //     // let last_node_pos = match ast.last() {
+    //     //     Some(node) =>
+    //     //     None => 0,
+    //     // };
+    //     let last_node_pos = 0;
+    //     handle_error(e, contents_ref.as_slice(), last_node_pos);
+    //     return;
+    // }
+
     // code_gen(gen_data, file_name);
 }
 
 /*----------------------------------------------------------------------------------------
----- Stuff -------------------------------------------------------------------------------
+---- Stags of Compilation ----------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn lex(contents: Vec<&str>) -> VecDeque<Token> {
+fn lex(contents: &[&str]) -> (VecDeque<Token>, Option<Error>) {
     utils::set_prefix(utils::LogPrefix::Lexical);
 
-    let tokens = Lexer::new(contents).tokenize();
+    let (lexer, error) = Lexer::new(contents).tokenize();
 
     if utils::do_log() {
-        print_tokens(&tokens);
+        println!("{lexer}");
     }
-    tokens
+    (lexer.tokens, error)
 }
 
-fn parse(tokens: VecDeque<Token>) -> Ast {
+fn parse(tokens: VecDeque<Token>) -> (Ast, Option<Error>) {
     utils::set_prefix(utils::LogPrefix::Parse);
 
-    let ast = Parser::parse_ast(tokens);
+    let (ast, error) = Parser::new(tokens).parse_tokens();
 
     if utils::do_log() {
         println!("\n{:#?}\n", ast);
     }
-    ast
+    (ast, error)
 }
 
-fn semantic_check(ast: Ast) -> Checker {
+fn semantic_check(ast: Ast) -> (Checker, Option<Error>) {
     utils::set_prefix(utils::LogPrefix::Semantic);
 
-    let checked = Checker::check_ast(ast);
+    let (checked, error) = Checker::new().check_ast(ast);
 
     if utils::do_log() {
         println!("\n{:#?}\n", checked);
     }
-    checked
+    (checked, error)
 }
 
 /*
@@ -123,101 +147,38 @@ fn code_gen(data: Checker, file_name: String) {
 }
 */
 
-fn error_handling(panic_info: &PanicHookInfo<'_>, file_contents: &'static [&'static str]) {
+/*----------------------------------------------------------------------------------------
+---- Misc --------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------*/
+
+fn handle_error(error: Error, file_contents: &[&str], error_end_pos: (u32, u32), tok_len: u32) {
     let panic_banner = match text_to_ascii_art::to_art(">Error!<".to_string(), "standard", 8, 0, 0)
     {
         Ok(art) => art,
         Err(e) => format!("[COMPILER] Error: {e}"),
     };
 
-    let erroring_code = match file_contents.get(utils::get_pos().1 as usize) {
+    let erroring_code = match file_contents.get(error_end_pos.1 as usize) {
         Some(line) => {
             // remove newline char && whitespace before first char
-            line.trim_start().trim_end()
+            // line.trim_start().trim_end()
+            line.trim_end()
         }
         None => "unknown location (´。＿。｀)",
     };
 
-    let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-        s
-    } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-        s.as_str()
-    } else {
-        "Unknown error message type"
-    };
-
     println!(
         "\n{panic_banner}\n\
-         \nError Occurred at: '{erroring_code}'\
-         \n{message}",
+         \nError Occurred at:\
+         \n'{erroring_code}'\
+         \n.{dots}{error_highlight}\n\
+         \n{error}\
+         \n{backtrace}\n",
+        dots = ".".repeat(utils::get_pos().0 as usize),
+        error_highlight = "^".repeat(tok_len as usize),
+        backtrace = error.backtrace()
     );
 }
-
-/*----------------------------------------------------------------------------------------
----- Misc --------------------------------------------------------------------------------
-----------------------------------------------------------------------------------------*/
-
-fn print_tokens(tokens: &VecDeque<Token>) {
-    fn fmt_123(tok: &Token) -> String {
-        match &tok.value {
-            Some(_) => match tok.as_str() {
-                "" => format!("{:?}", tok.kind),
-                val @ _ => match tok.kind {
-                    TokenKind::Ident => format!("{:?}('{val}')", tok.kind),
-                    _ => format!("{:?}({val})", tok.kind),
-                },
-            },
-            None => format!("{:?}", tok.kind),
-        }
-    }
-
-    let mut val_max_len = 0;
-    let mut x_max_len = 0;
-    let mut y_max_len = 0;
-    for tok in tokens {
-        let val_cur_len = fmt_123(tok).len();
-        val_max_len = max(val_max_len, val_cur_len);
-
-        let (x, y) = tok.pos;
-        x_max_len = max(x_max_len, format!("{x}").len());
-        y_max_len = max(y_max_len, format!("{y}").len());
-    }
-
-    for tok in tokens {
-        let val_str = fmt_123(tok);
-        let val_whitespace = " ".repeat(val_max_len - val_str.len());
-        let x_str = format!("{x:?}", x = tok.pos.0);
-        let x_whitespace = " ".repeat(x_max_len - x_str.len());
-        let y_str = format!("{y:?}", y = tok.pos.1);
-        let y_whitespace = " ".repeat(y_max_len - y_str.len());
-        println!(
-            "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}"
-        )
-    }
-}
-
-fn get_file_name() -> String {
-    let args: String = std::env::args().skip(1).take(1).collect();
-    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
-
-    let file_name = args.split('.').take(1).collect::<String>();
-    // TODO(TOM): re-enable after testing
-    // let extension = args.split('.').skip(1).take(1).collect::<String>();
-    // else if extension != "txt" {
-    //     panic!("[COMPILER] Invalid file extension, '.txt' only\n")
-    // }
-    file_name
-}
-
-fn get_file_contents(file_name: &str) -> Vec<String> {
-    let file = fs::File::open(format!("./examples/{file_name}.txt"))
-        .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
-    BufReader::new(file)
-        .lines()
-        .map(|line| line.unwrap() + "\n")
-        .collect()
-}
-
 // UBUNTU bash script:
 // read file
 // sudo nasm -felf64 $file.asm -o $file.o

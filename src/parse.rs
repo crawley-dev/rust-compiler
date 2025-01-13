@@ -4,7 +4,7 @@ use crate::{
     semantic::{AddressingMode, Variable},
     utils,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
@@ -131,20 +131,20 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn parse_ast(input: VecDeque<Token>) -> Ast {
-        let mut parser = Parser {
-            tokens: input,
-            idx: 0,
-        };
+    pub fn new(tokens: VecDeque<Token>) -> Self {
+        Self { tokens, idx: 0 }
+    }
+
+    pub fn parse_tokens(mut self) -> (Ast, Option<Error>) {
         let mut ast: Ast = Ast { stmts: Vec::new() };
 
-        while parser.peek(0).is_some() {
-            match parser.parse_top_level() {
+        while self.peek(0).is_some() {
+            match self.parse_top_level() {
                 Ok(stmt) => ast.stmts.push(stmt),
-                Err(e) => panic!("{e}, {},\n{ast:#?}", e.backtrace()),
+                Err(e) => return (ast, Some(e)),
             };
         }
-        ast
+        (ast, None)
     }
 
     fn parse_top_level(&mut self) -> Result<NodeStmt> {

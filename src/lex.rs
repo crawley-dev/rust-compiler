@@ -1,8 +1,14 @@
-use crate::{debug, err, utils};
-use anyhow::Result;
+use crate::{
+    debug, err,
+    utils::{self, get_pos, FILE_CONTENTS},
+};
+use anyhow::{Error, Result};
 use bitflags::bitflags;
 use core::fmt;
-use std::collections::{HashMap, VecDeque};
+use std::{
+    cmp::max,
+    collections::{HashMap, VecDeque},
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
@@ -83,6 +89,278 @@ pub enum Associativity {
     Right,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BufKind {
+    Word,
+    IntLit,
+    Symbol,
+    Illegal,
+    NewLine,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Token {
+    pub kind: TokenKind,
+    // pub value: Option<String>,
+    pub pos: (u32, u32),
+    pub len: u32,
+}
+
+pub struct Lexer {
+    idx: usize,
+    input: Vec<u8>,
+    reg: HashMap<&'static str, TokenKind>,
+    is_linecomment: bool,
+    is_multicomment: bool,
+
+    pub tokens: VecDeque<Token>,
+}
+
+impl Lexer {
+    pub fn new(input: &[&str]) -> Lexer {
+        let reg: HashMap<&'static str, TokenKind> = HashMap::from([
+            // Generic Symbols
+            (",", TokenKind::Comma),
+            (":", TokenKind::Colon),
+            (";", TokenKind::SemiColon),
+            ("(", TokenKind::OpenParen),
+            (")", TokenKind::CloseParen),
+            ("{", TokenKind::OpenBrace),
+            ("}", TokenKind::CloseBrace),
+            ("//", TokenKind::LineComment),
+            ("/*", TokenKind::OpenMultiComment),
+            ("*/", TokenKind::CloseMultiComment),
+            // Operators
+            ("!", TokenKind::Not),
+            ("^", TokenKind::Ptr),
+            ("=", TokenKind::Eq),
+            ("+", TokenKind::Add),
+            ("-", TokenKind::Sub),
+            ("*", TokenKind::Mul),
+            ("/", TokenKind::Quo),
+            ("%", TokenKind::Mod),
+            ("&", TokenKind::Ampersand),
+            ("|", TokenKind::Bar),
+            ("~", TokenKind::Tilde),
+            ("&~", TokenKind::AndNot),
+            ("<<", TokenKind::Shl),
+            (">>", TokenKind::Shr),
+            ("->", TokenKind::Arrow),
+            // Combo Assign
+            ("+=", TokenKind::AddEq),
+            ("-=", TokenKind::SubEq),
+            ("*=", TokenKind::MulEq),
+            ("/=", TokenKind::QuoEq),
+            ("%=", TokenKind::ModEq),
+            ("&=", TokenKind::AndEq),
+            ("|=", TokenKind::OrEq),
+            ("~=", TokenKind::XorEq),
+            ("&~=", TokenKind::AndNotEq),
+            ("<<=", TokenKind::ShlEq),
+            (">>=", TokenKind::ShrEq),
+            // Comparison
+            ("&&", TokenKind::CmpAnd),
+            ("||", TokenKind::CmpOr),
+            ("==", TokenKind::CmpEq),
+            ("!=", TokenKind::NotEq),
+            ("<", TokenKind::Lt),
+            (">", TokenKind::Gt),
+            ("<=", TokenKind::LtEq),
+            (">=", TokenKind::GtEq),
+            // Keywords
+            ("exit", TokenKind::Exit),
+            ("let", TokenKind::Let),
+            ("fn", TokenKind::Fn),
+            ("return", TokenKind::Return),
+            ("if", TokenKind::If),
+            ("else", TokenKind::Else),
+            ("mut", TokenKind::Mut),
+            ("while", TokenKind::While),
+            ("break", TokenKind::Break),
+            ("true", TokenKind::True),
+            ("false", TokenKind::False),
+        ]);
+        Lexer {
+            idx: 0,
+            input: input
+                .iter()
+                .flat_map(|x| x.chars())
+                .map(|x| x as u8)
+                .collect(),
+            reg,
+            is_linecomment: false,
+            is_multicomment: false,
+
+            tokens: VecDeque::new(),
+        }
+    }
+
+    pub fn tokenize(mut self) -> (Lexer, Option<Error>) {
+        while self.idx < self.input.len() {
+            match self.next_token() {
+                Ok(Some(tok)) => match tok.kind {
+                    TokenKind::LineComment => self.is_linecomment = true,
+                    TokenKind::OpenMultiComment => self.is_multicomment = true,
+                    TokenKind::CloseMultiComment => self.is_multicomment = false,
+                    _ if self.is_multicomment => (),
+                    _ => {
+                        self.tokens.push_back(tok);
+                        debug!("new tok: {:?}", self.tokens.back().as_ref().unwrap());
+                    }
+                },
+                Ok(None) => continue,
+                Err(e) => return (self, Some(e)),
+            };
+        }
+        (self, None)
+    }
+
+    fn next_token(&mut self) -> Result<Option<Token>> {
+        let mut buf = Vec::new();
+        let mut buf_kind = BufKind::Illegal;
+
+        while let Some(next_char) = self.peek(0) {
+            // the order of these match statements matter!
+            let char_type = match next_char {
+                b'\n' => BufKind::NewLine,
+                _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
+                b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
+                // b'_' if buf_kind == BufKind::IntLit => {
+                //     self.consume();
+                //     continue;
+                // } // skip number spacing, e.g 1_000_000 => 1000000
+                b'0'..=b'9' => BufKind::IntLit,
+                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
+                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
+                _ => {
+                    return err!("unknown char found {next_char}"); // result T can be anything.
+                }
+            };
+
+            // buf_kind not set, set it.
+            if buf.is_empty() {
+                buf_kind = char_type;
+            } else if char_type != buf_kind {
+                break;
+            }
+
+            let ch = self.consume();
+            buf.push(ch);
+        }
+        Ok(self.create_tok(buf_kind, &buf))
+    }
+
+    // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
+    //  - trying to modify state in next_token causes bugs.
+    //      .. because after creating a token, the next char may not be "next_char" due to a reduce
+    //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
+    fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
+        if buf.is_empty() {
+            self.idx += 1;
+            utils::add_pos((1, 0));
+            return None;
+        }
+
+        let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
+        let len = buf.len() as u32;
+        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
+
+        match buf_kind {
+            BufKind::Illegal => None,
+            BufKind::NewLine => {
+                self.is_linecomment = false;
+                utils::set_pos((0, utils::get_pos().1 + 1));
+                None
+            }
+            BufKind::Word => self.match_word(&buf_str),
+            BufKind::Symbol => self.match_symbol(&buf_str),
+            BufKind::IntLit => Some(Token {
+                kind: TokenKind::IntLit,
+                pos: Self::get_pos_adjusted(len),
+                len,
+            }),
+        }
+    }
+
+    fn match_word(&self, buf_str: &str) -> Option<Token> {
+        let len = buf_str.len() as u32;
+        match self.reg.get(buf_str) {
+            Some(kind) => Some(Token {
+                kind: *kind,
+                pos: Self::get_pos_adjusted(len),
+                len,
+            }),
+            None => Some(Token {
+                kind: TokenKind::Ident,
+                pos: Self::get_pos_adjusted(len),
+                len,
+            }),
+        }
+    }
+
+    fn match_symbol(&mut self, buf_str: &str) -> Option<Token> {
+        let mut buf_len = buf_str.len();
+        let slice = &buf_str[..buf_len];
+        while buf_len > 0 {
+            match self.reg.get(slice) {
+                Some(kind) => {
+                    // early return if the symbol
+                    return Some(Token {
+                        kind: *kind,
+                        pos: utils::get_pos(),
+                        len: buf_len as u32,
+                    });
+                }
+                None => {
+                    buf_len -= 1;
+                    self.idx -= 1;
+                    utils::sub_pos((1, 0));
+                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
+                }
+            }
+        }
+        self.idx += 1;
+        utils::add_pos((1, 0));
+        None
+    }
+
+    fn peek(&self, offset: usize) -> Option<u8> {
+        self.input.get(self.idx + offset).copied()
+    }
+
+    fn consume(&mut self) -> u8 {
+        let i = self.idx;
+        self.idx += 1;
+        utils::add_pos((1, 0));
+
+        let char = self.input.get(i).copied().unwrap();
+        if char == b'\n' {
+            debug!("consuming '{}'", r"\n");
+        } else {
+            debug!("consuming '{}'", char as char);
+        }
+        char
+    }
+
+    fn get_pos_adjusted(len: u32) -> (u32, u32) {
+        let (x, y) = utils::get_pos();
+        (x - len, y)
+    }
+}
+
+impl Token {
+    pub fn str(&self) -> &str {
+        unsafe {
+            match FILE_CONTENTS.get(self.pos.1 as usize) {
+                Some(line) => {
+                    utils::set_pos(self.pos);
+                    &line[self.pos.0 as usize..(self.pos.0 + self.len) as usize]
+                }
+                None => panic!("Cannot get token str, invalid pos in: {self:#?}"),
+            }
+        }
+    }
+}
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct TokenFlags: u8 {
@@ -205,281 +483,58 @@ impl TokenKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BufKind {
-    Word,
-    IntLit,
-    Symbol,
-    Illegal,
-    NewLine,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub value: Option<String>,
-    pub pos: (u32, u32),
-}
-
-impl Token {
-    pub fn as_str(&self) -> &str {
-        match self.value {
-            Some(ref str) => str,
-            None => panic!("expected value in: {self:#?}"),
-        }
-    }
-}
-
-pub struct Lexer {
-    idx: usize,
-    input: Vec<u8>,
-    reg: HashMap<&'static str, TokenKind>,
-    is_linecomment: bool,
-    is_multicomment: bool,
-}
-
-impl Lexer {
-    pub fn new(input: Vec<&str>) -> Lexer {
-        let reg: HashMap<&'static str, TokenKind> = HashMap::from([
-            // Generic Symbols
-            (",", TokenKind::Comma),
-            (":", TokenKind::Colon),
-            (";", TokenKind::SemiColon),
-            ("(", TokenKind::OpenParen),
-            (")", TokenKind::CloseParen),
-            ("{", TokenKind::OpenBrace),
-            ("}", TokenKind::CloseBrace),
-            ("//", TokenKind::LineComment),
-            ("/*", TokenKind::OpenMultiComment),
-            ("*/", TokenKind::CloseMultiComment),
-            // Operators
-            ("!", TokenKind::Not),
-            ("^", TokenKind::Ptr),
-            ("=", TokenKind::Eq),
-            ("+", TokenKind::Add),
-            ("-", TokenKind::Sub),
-            ("*", TokenKind::Mul),
-            ("/", TokenKind::Quo),
-            ("%", TokenKind::Mod),
-            ("&", TokenKind::Ampersand),
-            ("|", TokenKind::Bar),
-            ("~", TokenKind::Tilde),
-            ("&~", TokenKind::AndNot),
-            ("<<", TokenKind::Shl),
-            (">>", TokenKind::Shr),
-            ("->", TokenKind::Arrow),
-            // Combo Assign
-            ("+=", TokenKind::AddEq),
-            ("-=", TokenKind::SubEq),
-            ("*=", TokenKind::MulEq),
-            ("/=", TokenKind::QuoEq),
-            ("%=", TokenKind::ModEq),
-            ("&=", TokenKind::AndEq),
-            ("|=", TokenKind::OrEq),
-            ("~=", TokenKind::XorEq),
-            ("&~=", TokenKind::AndNotEq),
-            ("<<=", TokenKind::ShlEq),
-            (">>=", TokenKind::ShrEq),
-            // Comparison
-            ("&&", TokenKind::CmpAnd),
-            ("||", TokenKind::CmpOr),
-            ("==", TokenKind::CmpEq),
-            ("!=", TokenKind::NotEq),
-            ("<", TokenKind::Lt),
-            (">", TokenKind::Gt),
-            ("<=", TokenKind::LtEq),
-            (">=", TokenKind::GtEq),
-            // Keywords
-            ("exit", TokenKind::Exit),
-            ("let", TokenKind::Let),
-            ("fn", TokenKind::Fn),
-            ("return", TokenKind::Return),
-            ("if", TokenKind::If),
-            ("else", TokenKind::Else),
-            ("mut", TokenKind::Mut),
-            ("while", TokenKind::While),
-            ("break", TokenKind::Break),
-            ("true", TokenKind::True),
-            ("false", TokenKind::False),
-        ]);
-        Lexer {
-            idx: 0,
-            input: input
-                .iter()
-                .flat_map(|x| x.chars())
-                .map(|x| x as u8)
-                .collect(),
-            reg,
-            is_linecomment: false,
-            is_multicomment: false,
-        }
-    }
-
-    pub fn tokenize(&mut self) -> VecDeque<Token> {
-        let mut tokens = VecDeque::new();
-        while self.idx < self.input.len() {
-            match self.next_token() {
-                Some(tok) => match tok.kind {
-                    TokenKind::LineComment => self.is_linecomment = true,
-                    TokenKind::OpenMultiComment => self.is_multicomment = true,
-                    TokenKind::CloseMultiComment => self.is_multicomment = false,
-                    _ if self.is_multicomment => (),
-                    _ => {
-                        tokens.push_back(tok);
-                        debug!("new tok: {:?}", tokens.back().as_ref().unwrap());
-                    }
-                },
-                None => continue,
-            };
-        }
-        tokens
-    }
-
-    fn next_token(&mut self) -> Option<Token> {
-        let mut buf = Vec::new();
-        let mut buf_kind = BufKind::Illegal;
-
-        while let Some(next_char) = self.peek(0) {
-            // the order of these match statements matter!
-            let char_type = match next_char {
-                b'\n' => BufKind::NewLine,
-                _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
-                b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
-                // b'_' if buf_kind == BufKind::IntLit => {
-                //     self.consume();
-                //     continue;
-                // } // skip number spacing, e.g 1_000_000 => 1000000
-                b'0'..=b'9' => BufKind::IntLit,
-                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
-                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
-                _ => {
-                    let err_msg: Result<bool> = err!("unknown char found {next_char}"); // result T can be anything.
-                    panic!("{err_msg:?}");
-                }
-            };
-
-            // buf_kind not set, set it.
-            if buf.is_empty() {
-                buf_kind = char_type;
-            } else if char_type != buf_kind {
-                break;
-            }
-
-            let ch = self.consume();
-            buf.push(ch);
-        }
-        self.create_tok(buf_kind, &buf)
-    }
-
-    // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
-    //  - trying to modify state in next_token causes bugs.
-    //      .. because after creating a token, the next char may not be "next_char" due to a reduce
-    //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
-    fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
-        if buf.is_empty() {
-            self.idx += 1;
-            utils::add_pos((1, 0));
-            return None;
-        }
-
-        let buf_str: String = buf.iter().map(|x| *x as char).collect();
-        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
-
-        match buf_kind {
-            BufKind::Illegal => None,
-            BufKind::NewLine => {
-                self.is_linecomment = false;
-                utils::set_pos((0, utils::get_pos().1 + 1));
-                None
-            }
-            BufKind::Word => self.match_word(buf_str),
-            BufKind::Symbol => self.match_symbol(buf_str),
-            BufKind::IntLit => Some(Token {
-                kind: TokenKind::IntLit,
-                value: Some(buf_str),
-                pos: Self::calc_token_start(buf.len()),
-            }),
-        }
-    }
-
-    fn match_word(&self, buf_str: String) -> Option<Token> {
-        let buf_len = buf_str.len();
-        match self.reg.get(buf_str.as_str()) {
-            Some(kind) => Some(Token {
-                kind: *kind,
-                value: None,
-                pos: Self::calc_token_start(buf_len),
-            }),
-            None => Some(Token {
-                kind: TokenKind::Ident,
-                value: Some(buf_str),
-                pos: Self::calc_token_start(buf_len),
-            }),
-        }
-    }
-
-    fn match_symbol(&mut self, mut buf_str: String) -> Option<Token> {
-        while !buf_str.is_empty() {
-            match self.reg.get(buf_str.as_str()) {
-                Some(kind) => {
-                    // early return if the symbol
-                    return Some(Token {
-                        kind: *kind,
-                        value: None,
-                        pos: Self::calc_token_start(buf_str.len()),
-                    });
-                }
-                None => {
-                    buf_str.pop();
-                    self.idx -= 1;
-                    utils::sub_pos((1, 0));
-                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
-                }
-            }
-        }
-        self.idx += 1;
-        utils::add_pos((1, 0));
-        None
-    }
-
-    fn peek(&self, offset: usize) -> Option<u8> {
-        self.input.get(self.idx + offset).copied()
-    }
-
-    fn consume(&mut self) -> u8 {
-        let i = self.idx;
-        self.idx += 1;
-        utils::add_pos((1, 0));
-
-        let char = self.input.get(i).copied().unwrap();
-        if char == b'\n' {
-            debug!("consuming '{}'", r"\n");
-        } else {
-            debug!("consuming '{}'", char as char);
-        }
-        char
-    }
-
-    fn calc_token_start(len: usize) -> (u32, u32) {
-        let pos = utils::get_pos();
-        (pos.0 - len as u32, pos.1)
-    }
-}
-
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
             writeln!(f, "Token {{")?;
             writeln!(f, "    kind: {:?}", self.kind)?;
-            writeln!(f, "    value: {:?}", self.value)?;
             writeln!(f, "    pos: ({}, {})", self.pos.1 + 1, self.pos.0 + 1)?;
+            writeln!(f, "    len: {}", self.len)?;
             write!(f, "}}")
         } else {
             f.debug_struct("Token")
                 .field("kind", &self.kind)
-                .field("value", &self.value)
                 .field("pos", &self.pos)
+                .field("len", &self.len)
                 .finish()
         }
+    }
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind {
+            TokenKind::Ident | TokenKind::IntLit => write!(f, "{:?}({})", self.kind, self.str()),
+            _ => write!(f, "{:?}", self.kind),
+        }
+    }
+}
+
+impl fmt::Display for Lexer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut val_max_len = 0;
+        let mut x_max_len = 0;
+        let mut y_max_len = 0;
+        for tok in &self.tokens {
+            let val_cur_len = format!("{tok}").len();
+            val_max_len = max(val_max_len, val_cur_len);
+
+            let (x, y) = tok.pos;
+            x_max_len = max(x_max_len, format!("{x}").len());
+            y_max_len = max(y_max_len, format!("{y}").len());
+        }
+
+        for tok in &self.tokens {
+            let val_str = format!("{tok}");
+            let val_whitespace = " ".repeat(val_max_len - val_str.len());
+            let x_str = format!("{x:?}", x = tok.pos.0);
+            let x_whitespace = " ".repeat(x_max_len - x_str.len());
+            let y_str = format!("{y:?}", y = tok.pos.1);
+            let y_whitespace = " ".repeat(y_max_len - y_str.len());
+            write!(f,
+                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}\n"
+            )?
+        }
+        Ok(())
     }
 }
