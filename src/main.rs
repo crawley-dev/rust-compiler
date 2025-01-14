@@ -16,7 +16,7 @@ use std::{
 };
 
 mod utils;
-use utils::FILE_CONTENTS;
+use utils::{pos, Contents, LogPrefix, Logger, Pos};
 
 mod lex;
 use lex::*;
@@ -37,39 +37,41 @@ fn main() {
     // Print Banner
     match text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => println!("{}", art),
-        Err(e) => println!("[COMPILER] Error: {e}"),
+        Err(e) => {
+            println!("[COMPILER] Error: {e}");
+            return;
+        }
     }
 
-    let file_name = utils::get_file_name();
-    let contents_ref;
-    unsafe {
-        FILE_CONTENTS = utils::get_file_contents(&file_name);
-        contents_ref = FILE_CONTENTS
-            .iter()
-            .map(|s| &**s as &'static str)
-            .collect::<Vec<_>>();
-    }
+    // Get file name
+    Contents::init();
 
-    let (tokens, error) = lex(contents_ref.as_slice());
+    let (tokens, error) = lex(Contents::get_contents_ref());
     if let Some(e) = error {
         let (last_tok_pos, tok_len) = match tokens.back() {
-            Some(tok) => (tok.pos, tok.len),
-            None => ((0, 0), 0),
+            Some(tok) => (tok.start, tok.len),
+            None => {
+                debug!("no tokens lex'd, error underline is incorrect");
+                (pos(0, 0), 0)
+            }
         };
-        handle_error(e, contents_ref.as_slice(), last_tok_pos, tok_len);
+        handle_error(e, last_tok_pos, tok_len);
         return;
     }
 
-    // let (ast, error) = parse(tokens);
-    // if let Some(e) = error {
-    //     // let last_node_pos = match ast.last() {
-    //     //     Some(node) =>
-    //     //     None => 0,
-    //     // };
-    //     let last_node_pos = (0, 0);
-    //     handle_error(e, contents_ref.as_slice(), last_node_pos, 0);
-    //     return;
-    // }
+    let (ast, error) = parse(tokens);
+    if let Some(e) = error {
+        let error_start_pos = match ast.stmts.last() {
+            Some(node) => node.start,
+            None => {
+                // TODO(TOM): slight issue, stmts are encapsulated into a fn decl stmt, no lower statements are pushed to vec.
+                debug!("no stmts parsed, error underline is incorrect");
+                pos(0, 0)
+            }
+        };
+        handle_error(e, error_start_pos, 0);
+        return;
+    }
 
     // let gen_data = semantic_check(ast);
     // if let Some(e) = error {
@@ -90,33 +92,33 @@ fn main() {
 ----------------------------------------------------------------------------------------*/
 
 fn lex(contents: &[&str]) -> (VecDeque<Token>, Option<Error>) {
-    utils::set_prefix(utils::LogPrefix::Lexical);
+    Logger::set_prefix(LogPrefix::Lexical);
 
     let (lexer, error) = Lexer::new(contents).tokenize();
 
-    if utils::do_log() {
+    if Logger::print_output() {
         println!("{lexer}");
     }
     (lexer.tokens, error)
 }
 
 fn parse(tokens: VecDeque<Token>) -> (Ast, Option<Error>) {
-    utils::set_prefix(utils::LogPrefix::Parse);
+    Logger::set_prefix(LogPrefix::Parse);
 
     let (ast, error) = Parser::new(tokens).parse_tokens();
 
-    if utils::do_log() {
+    if Logger::print_output() {
         println!("\n{:#?}\n", ast);
     }
     (ast, error)
 }
 
 fn semantic_check(ast: Ast) -> (Checker, Option<Error>) {
-    utils::set_prefix(utils::LogPrefix::Semantic);
+    Logger::set_prefix(LogPrefix::Semantic);
 
     let (checked, error) = Checker::new().check_ast(ast);
 
-    if utils::do_log() {
+    if Logger::print_output() {
         println!("\n{:#?}\n", checked);
     }
     (checked, error)
@@ -151,14 +153,15 @@ fn code_gen(data: Checker, file_name: String) {
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-fn handle_error(error: Error, file_contents: &[&str], error_end_pos: (u32, u32), tok_len: u32) {
-    let panic_banner = match text_to_ascii_art::to_art(">Error!<".to_string(), "standard", 8, 0, 0)
-    {
+// TODO(TOM): change tok_len to error_end_pos
+fn handle_error(error: Error, error_start_pos: Pos, tok_len: u32) {
+    let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => art,
-        Err(e) => format!("[COMPILER] Error: {e}"),
+        Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
     };
+    let file_contents = Contents::get_contents_ref();
 
-    let erroring_code = match file_contents.get(error_end_pos.1 as usize) {
+    let erroring_code = match file_contents.get(error_start_pos.y as usize) {
         Some(line) => {
             // remove newline char && whitespace before first char
             // line.trim_start().trim_end()
@@ -169,12 +172,12 @@ fn handle_error(error: Error, file_contents: &[&str], error_end_pos: (u32, u32),
 
     println!(
         "\n{panic_banner}\n\
-         \nError Occurred at:\
+         \nError Occurred near:\
          \n'{erroring_code}'\
          \n.{dots}{error_highlight}\n\
          \n{error}\
          \n{backtrace}\n",
-        dots = ".".repeat(utils::get_pos().0 as usize),
+        dots = ".".repeat(Logger::get_pos().x as usize),
         error_highlight = "^".repeat(tok_len as usize),
         backtrace = error.backtrace()
     );

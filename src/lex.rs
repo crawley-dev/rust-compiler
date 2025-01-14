@@ -1,6 +1,6 @@
 use crate::{
     debug, err,
-    utils::{self, get_pos, FILE_CONTENTS},
+    utils::{self, pos, Contents, Logger, Pos},
 };
 use anyhow::{Error, Result};
 use bitflags::bitflags;
@@ -98,11 +98,10 @@ enum BufKind {
     NewLine,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
-    // pub value: Option<String>,
-    pub pos: (u32, u32),
+    pub start: Pos,
     pub len: u32,
 }
 
@@ -257,26 +256,26 @@ impl Lexer {
     fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
         if buf.is_empty() {
             self.idx += 1;
-            utils::add_pos((1, 0));
+            Logger::add_pos(pos(1, 0));
             return None;
         }
 
         let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
         let len = buf.len() as u32;
-        debug!("buf: '{buf_str}', kind: {buf_kind:?} | pos: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
+        debug!("buf: '{buf_str}', kind: {buf_kind:?} | start: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
 
         match buf_kind {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                utils::set_pos((0, utils::get_pos().1 + 1));
+                Logger::set_pos(pos(0, Logger::get_pos().y + 1));
                 None
             }
             BufKind::Word => self.match_word(&buf_str),
             BufKind::Symbol => self.match_symbol(&buf_str),
             BufKind::IntLit => Some(Token {
                 kind: TokenKind::IntLit,
-                pos: Self::get_pos_adjusted(len),
+                start: Self::get_start(len),
                 len,
             }),
         }
@@ -287,12 +286,12 @@ impl Lexer {
         match self.reg.get(buf_str) {
             Some(kind) => Some(Token {
                 kind: *kind,
-                pos: Self::get_pos_adjusted(len),
+                start: Self::get_start(len),
                 len,
             }),
             None => Some(Token {
                 kind: TokenKind::Ident,
-                pos: Self::get_pos_adjusted(len),
+                start: Self::get_start(len),
                 len,
             }),
         }
@@ -300,27 +299,28 @@ impl Lexer {
 
     fn match_symbol(&mut self, buf_str: &str) -> Option<Token> {
         let mut buf_len = buf_str.len();
-        let slice = &buf_str[..buf_len];
         while buf_len > 0 {
+            let slice = &buf_str[..buf_len];
             match self.reg.get(slice) {
                 Some(kind) => {
                     // early return if the symbol
                     return Some(Token {
                         kind: *kind,
-                        pos: utils::get_pos(),
+                        start: Logger::get_pos(),
                         len: buf_len as u32,
                     });
                 }
                 None => {
                     buf_len -= 1;
                     self.idx -= 1;
-                    utils::sub_pos((1, 0));
-                    debug!("reduce {} | new pos: {}", buf_str, self.idx);
+                    Logger::sub_pos(pos(1, 0));
+                    debug!("reduce '{}' | new pos: {}", &buf_str[..buf_len], self.idx);
                 }
             }
         }
         self.idx += 1;
-        utils::add_pos((1, 0));
+        Logger::add_pos(pos(1, 0));
+        debug!("exiting symbol match, no match found");
         None
     }
 
@@ -331,7 +331,7 @@ impl Lexer {
     fn consume(&mut self) -> u8 {
         let i = self.idx;
         self.idx += 1;
-        utils::add_pos((1, 0));
+        Logger::add_pos(pos(1, 0));
 
         let char = self.input.get(i).copied().unwrap();
         if char == b'\n' {
@@ -342,23 +342,19 @@ impl Lexer {
         char
     }
 
-    fn get_pos_adjusted(len: u32) -> (u32, u32) {
-        let (x, y) = utils::get_pos();
-        (x - len, y)
+    fn get_start(len: u32) -> Pos {
+        let mut p = Logger::get_pos();
+        pos(p.x - len, p.y)
     }
 }
 
 impl Token {
     pub fn str(&self) -> &str {
-        unsafe {
-            match FILE_CONTENTS.get(self.pos.1 as usize) {
-                Some(line) => {
-                    utils::set_pos(self.pos);
-                    &line[self.pos.0 as usize..(self.pos.0 + self.len) as usize]
-                }
-                None => panic!("Cannot get token str, invalid pos in: {self:#?}"),
-            }
-        }
+        Contents::get_src_oneline(self.start, self.end_pos())
+    }
+
+    pub fn end_pos(&self) -> Pos {
+        pos(self.start.x + self.len, self.start.y)
     }
 }
 bitflags! {
@@ -488,13 +484,15 @@ impl fmt::Debug for Token {
         if f.alternate() {
             writeln!(f, "Token {{")?;
             writeln!(f, "    kind: {:?}", self.kind)?;
-            writeln!(f, "    pos: ({}, {})", self.pos.1 + 1, self.pos.0 + 1)?;
+            writeln!(f, "    str: {}", self.str())?;
+            writeln!(f, "    start: ({}, {})", self.start.y + 1, self.start.x + 1)?;
             writeln!(f, "    len: {}", self.len)?;
             write!(f, "}}")
         } else {
             f.debug_struct("Token")
                 .field("kind", &self.kind)
-                .field("pos", &self.pos)
+                .field("str", &self.str())
+                .field("start", &(self.start.x + 1, self.start.y + 1))
                 .field("len", &self.len)
                 .finish()
         }
@@ -519,7 +517,8 @@ impl fmt::Display for Lexer {
             let val_cur_len = format!("{tok}").len();
             val_max_len = max(val_max_len, val_cur_len);
 
-            let (x, y) = tok.pos;
+            let x = tok.start.x;
+            let y = tok.start.y;
             x_max_len = max(x_max_len, format!("{x}").len());
             y_max_len = max(y_max_len, format!("{y}").len());
         }
@@ -527,9 +526,9 @@ impl fmt::Display for Lexer {
         for tok in &self.tokens {
             let val_str = format!("{tok}");
             let val_whitespace = " ".repeat(val_max_len - val_str.len());
-            let x_str = format!("{x:?}", x = tok.pos.0);
+            let x_str = format!("{x:?}", x = tok.start.x);
             let x_whitespace = " ".repeat(x_max_len - x_str.len());
-            let y_str = format!("{y:?}", y = tok.pos.1);
+            let y_str = format!("{y:?}", y = tok.start.y);
             let y_whitespace = " ".repeat(y_max_len - y_str.len());
             write!(f,
                 "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}\n"

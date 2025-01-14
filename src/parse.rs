@@ -2,7 +2,7 @@ use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{AddressingMode, Variable},
-    utils,
+    utils::{self, Logger, Pos},
 };
 use anyhow::{Error, Result};
 use std::collections::VecDeque;
@@ -22,27 +22,28 @@ pub struct ParseType {
 
 #[derive(Debug, Clone)]
 pub enum InitExpr {
-    Some(NodeExpr),
+    Some(Node<Expr>),
     None,
     Deferred, // trust me bro, it exists.
 }
 
-#[derive(Debug, Clone)]
-pub struct NodeScope {
-    pub stmts: Vec<NodeStmt>,
-    pub inherits_stmts: bool,
-}
-
 #[derive(Clone)]
 pub struct Ast {
-    pub stmts: Vec<NodeStmt>,
+    pub stmts: Vec<Node<Stmt>>,
 }
 
-// pub struct Node<T> {
-//     pub node: T,
-//     pub pos: (u32, u32),
-//     pub end: (u32, u32),
-// }
+#[derive(Debug, Clone)]
+pub struct Scope {
+    pub stmts: Vec<Node<Stmt>>,
+    pub inherits_stmts: bool,
+}
+// Generic node wrapper to add extra info
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Node<T> {
+    pub start: Pos,
+    pub end: Pos,
+    pub node: T,
+}
 
 // TODO(TOM): impl this
 // pub enum NodeTopLevel {
@@ -54,44 +55,41 @@ pub struct Ast {
 //         return_addr_mode: Option<AddressingMode>,
 //     },
 // }
-// pub enum SemNodeTopLevel
 
 #[derive(Debug, Clone)]
-pub enum NodeStmt {
+pub enum Stmt {
     FnDecl {
         ident: Token,
         args: Vec<Arg>,
-        scope: NodeScope,
+        scope: Node<Scope>,
         return_type: Option<ParseType>,
-        // return_type_tok: Option<Token>,
-        // return_addr_mode: Option<AddressingMode>,
     },
     VarDecl {
         init_expr: InitExpr,
         arg: Arg,
     },
     If {
-        condition: NodeExpr,
-        scope: NodeScope,
-        branches: Vec<NodeStmt>,
+        condition: Node<Expr>,
+        scope: Node<Scope>,
+        branches: Vec<Node<Stmt>>,
     },
     ElseIf {
-        condition: NodeExpr,
-        scope: NodeScope,
+        condition: Node<Expr>,
+        scope: Node<Scope>,
     },
-    Else(NodeScope),
+    Else(Node<Scope>),
     While {
-        condition: NodeExpr,
-        scope: NodeScope,
+        condition: Node<Expr>,
+        scope: Node<Scope>,
     },
     Assign {
         ident: Token,
-        expr: NodeExpr,
+        expr: Node<Expr>,
     },
-    Exit(NodeExpr),
-    NakedScope(NodeScope),
+    Exit(Node<Expr>),
+    NakedScope(Node<Scope>),
     Break,
-    Return(Option<NodeExpr>),
+    Return(Option<Node<Expr>>),
     // SEMANTIC STMT "CONVERSIONS"
     VarSemantics(Variable),
     FnSemantics {
@@ -103,26 +101,28 @@ pub enum NodeStmt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum NodeExpr {
+pub enum Expr {
     BinaryExpr {
         op: TokenKind,
-        lhs: Box<NodeExpr>,
-        rhs: Box<NodeExpr>,
+        lhs: Box<Node<Expr>>,
+        rhs: Box<Node<Expr>>,
     },
     UnaryExpr {
         op: TokenKind,
-        operand: Box<NodeExpr>,
+        operand: Box<Node<Expr>>,
     },
-    Term(NodeTerm),
+    // It contains itself, so Node<Expr::Term> is ~ Node<Term>
+    // But still have to pass an extra Node<> Wrapper w(ﾟДﾟ)w
+    Term(Node<Term>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum NodeTerm {
+pub enum Term {
     True,
     False,
-    Ident(Token),
-    IntLit(Token),
-    FnCall { ident: Token, args: Vec<NodeExpr> },
+    Ident,
+    IntLit,
+    FnCall { ident: Token, args: Vec<Node<Expr>> },
 }
 
 pub struct Parser {
@@ -147,13 +147,11 @@ impl Parser {
         (ast, None)
     }
 
-    fn parse_top_level(&mut self) -> Result<NodeStmt> {
-        if !self.expect(TokenKind::Fn).is_ok() {
-            return err!(
-                "A Program only consists of functions, this is =>\n{:#?}",
-                self.peek(0)
-            );
-        }
+    fn parse_top_level(&mut self) -> Result<Node<Stmt>> {
+        let fn_keyword = match self.expect(TokenKind::Fn) {
+            Ok(tok) => tok,
+            Err(e) => return Err(e),
+        };
 
         let ident = self.expect(TokenKind::Ident)?;
         self.expect(TokenKind::OpenParen)?;
@@ -175,7 +173,7 @@ impl Parser {
                 parse_type,
             });
         }
-        self.expect(TokenKind::CloseParen)?;
+        let close_paren = self.expect(TokenKind::CloseParen)?;
 
         // parse function return type
         let return_type = match self.expect(TokenKind::Arrow) {
@@ -184,24 +182,31 @@ impl Parser {
         };
         let scope = self.parse_scope(false)?;
 
-        Ok(NodeStmt::FnDecl {
-            ident,
-            args,
-            scope,
-            return_type,
+        Ok(Node {
+            start: fn_keyword.start,
+            end: close_paren.end_pos(),
+            node: Stmt::FnDecl {
+                ident,
+                args,
+                scope,
+                return_type,
+            },
         })
     }
 
-    fn parse_stmt(&mut self) -> Result<NodeStmt> {
-        let tok = match self.peek(0) {
-            Some(tok) => tok,
+    fn parse_stmt(&mut self) -> Result<Node<Stmt>> {
+        let kind = match self.peek(0) {
+            Some(tok) => {
+                debug!("parsing statement: {tok:?}");
+                tok.kind
+            } // cannot consume here,
             None => return err!("No statement to parse"),
         };
-        debug!("parsing statement: {tok:?}");
 
-        let stmt = match tok.kind {
+        // let tok = self.consume();
+        let stmt = match kind {
             TokenKind::Let => {
-                self.expect(TokenKind::Let)?;
+                let let_tok = self.expect(TokenKind::Let)?;
                 let mutable = self.expect(TokenKind::Mut).is_ok();
                 let ident = self.expect(TokenKind::Ident)?;
 
@@ -213,12 +218,20 @@ impl Parser {
                     Err(_) => InitExpr::None,
                 };
 
-                NodeStmt::VarDecl {
-                    init_expr,
-                    arg: Arg {
-                        ident,
-                        mutable,
-                        parse_type,
+                let end = match init_expr {
+                    InitExpr::Some(ref expr) => expr.end,
+                    _ => parse_type.type_tok.end_pos(),
+                };
+                Node {
+                    start: let_tok.start,
+                    end,
+                    node: Stmt::VarDecl {
+                        init_expr,
+                        arg: Arg {
+                            ident,
+                            mutable,
+                            parse_type,
+                        },
                     },
                 }
             }
@@ -229,40 +242,75 @@ impl Parser {
 
                 let mut branches = Vec::new();
                 loop {
+                    // no branches left, exit loop
                     if self.expect(TokenKind::Else).is_err() {
                         break;
+                        // Found an else if, parse condition & scope, push to branches
                     } else if self.expect(TokenKind::If).is_ok() {
-                        branches.push(NodeStmt::ElseIf {
-                            condition: self.parse_expr(0)?,
-                            scope: self.parse_scope(true)?,
+                        let condition = self.parse_expr(0)?;
+                        let scope = self.parse_scope(true)?;
+                        branches.push(Node {
+                            start: condition.start,
+                            end: scope.end,
+                            node: Stmt::ElseIf { condition, scope },
                         });
                         continue;
                     }
-                    branches.push(NodeStmt::Else(self.parse_scope(true)?));
+
+                    // Found an else, parse scope, push to branches
+                    let condition = self.parse_expr(0)?;
+                    let scope = self.parse_scope(true)?;
+
+                    branches.push(Node {
+                        start: condition.start,
+                        end: scope.end,
+                        node: Stmt::Else(self.parse_scope(true)?),
+                    });
                     break;
                 }
 
-                NodeStmt::If {
-                    condition,
-                    scope,
-                    branches,
+                let start = condition.start;
+                let end = match branches.last() {
+                    Some(branch) => branch.end,
+                    None => scope.end,
+                };
+                Node {
+                    start,
+                    end,
+                    node: Stmt::If {
+                        condition,
+                        scope,
+                        branches,
+                    },
                 }
             }
             TokenKind::Fn => {
                 return err!("Functions cannot be nested, they're top level statements")
             }
             TokenKind::Return => {
-                self.expect(TokenKind::Return)?;
+                let tok = self.expect(TokenKind::Return)?;
                 match self.peek(0) {
-                    Some(tok) if tok.kind == TokenKind::SemiColon => NodeStmt::Return(None),
-                    _ => NodeStmt::Return(Some(self.parse_expr(0)?)),
+                    Some(tok) if tok.kind == TokenKind::SemiColon => Node {
+                        start: tok.start,
+                        end: tok.end_pos(),
+                        node: Stmt::Return(None),
+                    },
+                    _ => Node {
+                        start: tok.start,
+                        end: tok.end_pos(),
+                        node: Stmt::Return(Some(self.parse_expr(0)?)),
+                    },
                 }
             }
             TokenKind::While => {
-                self.expect(TokenKind::While)?;
+                let tok = self.expect(TokenKind::While)?;
                 let condition = self.parse_expr(0)?;
                 let scope = self.parse_scope(true)?;
-                NodeStmt::While { condition, scope }
+                Node {
+                    start: tok.start,
+                    end: scope.end,
+                    node: Stmt::While { condition, scope },
+                }
             }
             TokenKind::Ident => {
                 let ident = self.expect(TokenKind::Ident)?;
@@ -270,46 +318,69 @@ impl Parser {
                     // Assignment: consume ident & '='. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => {
                         self.expect(TokenKind::Eq)?;
-                        NodeStmt::Assign {
-                            ident,
-                            expr: self.parse_expr(0)?,
+                        let expr = self.parse_expr(0)?;
+                        Node {
+                            start: ident.start,
+                            end: expr.end,
+                            node: Stmt::Assign { ident, expr },
                         }
                     }
                     // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
-                    //      - 'ident += 5;' => 'ident + 5;'
+                    //      - 'ident += 5;' => 'ident = ident + 5;'
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
                         self.tokens.push_front(ident.clone()); // TODO(TOM): this may not work !
                         let comp_assign = self.peek_mut(1).unwrap();
                         comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
-                        NodeStmt::Assign {
-                            ident,
-                            expr: self.parse_expr(0)?,
+
+                        let expr = self.parse_expr(0)?;
+                        Node {
+                            start: ident.start,
+                            end: expr.end,
+                            node: Stmt::Assign { ident, expr },
                         }
                     }
                     _ => return err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
                 }
             }
             TokenKind::Exit => {
-                self.expect(TokenKind::Exit)?;
+                let tok = self.expect(TokenKind::Exit)?;
+                // TODO(TOM): feels like this will break lol.
+                todo!("panic! trying to parse exit");
                 self.token_equals(TokenKind::OpenParen, 0)?;
                 let expr = self.parse_expr(0)?;
-                NodeStmt::Exit(expr)
+                Node {
+                    start: tok.start,
+                    end: expr.end,
+                    node: Stmt::Exit(expr),
+                }
             }
             TokenKind::Break => {
-                self.expect(TokenKind::Break)?;
-                NodeStmt::Break
+                let tok = self.expect(TokenKind::Break)?;
+                Node {
+                    start: tok.start,
+                    end: tok.end_pos(),
+                    node: Stmt::Break,
+                }
             }
-            TokenKind::OpenBrace => NodeStmt::NakedScope(self.parse_scope(true)?),
-            _ => return err!("Invalid Statement =>\n{tok:#?}"),
+            TokenKind::OpenBrace => {
+                let tok = self.expect(TokenKind::OpenBrace)?;
+                let scope = self.parse_scope(true)?;
+                Node {
+                    start: tok.start,
+                    end: scope.end,
+                    node: Stmt::NakedScope(scope),
+                }
+            }
+            _ => return err!("Invalid Statement =>\n{:#?}", self.tokens.front()),
         };
 
-        // statments that do/don't require a ';' to end.
-        match stmt {
-            NodeStmt::Exit(_)
-            | NodeStmt::Assign { .. }
-            | NodeStmt::VarDecl { .. }
-            | NodeStmt::Break
-            | NodeStmt::Return(_) => match self.expect(TokenKind::SemiColon) {
+        // statments that require a ';' to end.
+        match stmt.node {
+            Stmt::Exit(_)
+            | Stmt::Assign { .. }
+            | Stmt::VarDecl { .. }
+            | Stmt::Break
+            | Stmt::Return(_) => match self.expect(TokenKind::SemiColon) {
                 Ok(_) => Ok(stmt),
                 Err(e) => err!("{e}.\n{stmt:#?}"),
             },
@@ -317,21 +388,25 @@ impl Parser {
         }
     }
 
-    fn parse_scope(&mut self, inherits_stmts: bool) -> Result<NodeScope> {
+    fn parse_scope(&mut self, inherits_stmts: bool) -> Result<Node<Scope>> {
         // consumes statements until a closebrace is found.
-        self.expect(TokenKind::OpenBrace)?;
+        let open_brace = self.expect(TokenKind::OpenBrace)?;
         let mut stmts = Vec::new();
         while self.expect(TokenKind::CloseBrace).is_err() {
             stmts.push(self.parse_stmt()?);
         }
 
-        Ok(NodeScope {
-            stmts,
-            inherits_stmts,
+        Ok(Node {
+            start: open_brace.start,
+            end: stmts.last().unwrap().end,
+            node: Scope {
+                stmts,
+                inherits_stmts,
+            },
         })
     }
 
-    fn parse_expr(&mut self, min_prec: i32) -> Result<NodeExpr> {
+    fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
         let mut lhs = self.parse_term()?;
 
         loop {
@@ -363,9 +438,15 @@ impl Parser {
                     }
                     // not a 'NodeTerm', must be unary.
                     _ => {
-                        lhs = NodeExpr::UnaryExpr {
-                            op: self.consume().kind,
-                            operand: Box::new(lhs),
+                        // TODO(TOM): start,end dependent on whether its a lhs or rhs operator.
+                        // e.g. "array[i]" or "&array"
+                        lhs = Node {
+                            start: lhs.start,
+                            end: tok.end_pos(),
+                            node: Expr::UnaryExpr {
+                                op: self.consume().kind,
+                                operand: Box::new(lhs),
+                            },
                         };
                         continue;
                     }
@@ -378,17 +459,22 @@ impl Parser {
                 // Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
             };
 
-            lhs = NodeExpr::BinaryExpr {
-                op: self.consume().kind,
-                lhs: Box::new(lhs),
-                rhs: Box::new(self.parse_expr(next_prec)?),
-            }
+            let rhs = self.parse_expr(next_prec)?;
+            lhs = Node {
+                start: lhs.start,
+                end: rhs.end,
+                node: Expr::BinaryExpr {
+                    op: self.consume().kind,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+            };
         }
         Ok(lhs)
     }
 
     // peeking next token might not work because it could be a close paren?
-    fn parse_term(&mut self) -> Result<NodeExpr> {
+    fn parse_term(&mut self) -> Result<Node<Expr>> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
             None => return err!("Expected term, found nothing."),
@@ -398,9 +484,13 @@ impl Parser {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {
                 debug!("found unary expression: '{op:?}'");
                 let operand = self.parse_expr(op.get_prec_unary() + 1)?;
-                Ok(NodeExpr::UnaryExpr {
-                    op,
-                    operand: Box::new(operand),
+                Ok(Node {
+                    start: tok.start,
+                    end: operand.end,
+                    node: Expr::UnaryExpr {
+                        op,
+                        operand: Box::new(operand),
+                    },
                 })
             }
             TokenKind::OpenParen => {
@@ -422,21 +512,62 @@ impl Parser {
                             }
                             args.push(self.parse_expr(0)?);
                         }
-                        Ok(NodeExpr::Term(NodeTerm::FnCall { ident: tok, args }))
+
+                        Ok(Node {
+                            start: tok.start,
+                            end: args.last().unwrap().end,
+                            node: Expr::Term(Node {
+                                start: tok.start,
+                                end: args.last().unwrap().end,
+                                node: Term::FnCall { ident: tok, args },
+                            }),
+                        })
                     }
-                    Some(_) => Ok(NodeExpr::Term(NodeTerm::Ident(tok))),
+                    // Just an Ident
+                    Some(_) => Ok(Node {
+                        start: tok.start,
+                        end: tok.end_pos(),
+                        node: Expr::Term(Node {
+                            start: tok.start,
+                            end: tok.end_pos(),
+                            node: Term::Ident,
+                        }),
+                    }),
                     None => err!("Incomplete expression, nothing after =>\n{tok:#?}"),
                 }
             }
-            TokenKind::IntLit => Ok(NodeExpr::Term(NodeTerm::IntLit(tok))),
-            TokenKind::True => Ok(NodeExpr::Term(NodeTerm::True)),
-            TokenKind::False => Ok(NodeExpr::Term(NodeTerm::False)),
+            TokenKind::IntLit => Ok(Node {
+                start: tok.start,
+                end: tok.end_pos(),
+                node: Expr::Term(Node {
+                    start: tok.start,
+                    end: tok.end_pos(),
+                    node: Term::IntLit,
+                }),
+            }),
+            TokenKind::True => Ok(Node {
+                start: tok.start,
+                end: tok.end_pos(),
+                node: Expr::Term(Node {
+                    start: tok.start,
+                    end: tok.end_pos(),
+                    node: Term::True,
+                }),
+            }),
+            TokenKind::False => Ok(Node {
+                start: tok.start,
+                end: tok.end_pos(),
+                node: Expr::Term(Node {
+                    start: tok.start,
+                    end: tok.end_pos(),
+                    node: Term::False,
+                }),
+            }),
             _ => err!("Invalid Term =>\n{tok:#?}"),
         }
     }
 
     fn parse_type(&mut self) -> Result<ParseType> {
-        // let mut addr_mode = AddressingMode::Primitive;
         let mut depth: u32 = 0;
         let addr_mode = match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Ptr => {
@@ -464,7 +595,7 @@ impl Parser {
         })
     }
 
-    fn token_equals(&self, kind: TokenKind, offset: usize) -> anyhow::Result<()> {
+    fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<()> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
             Some(tok) => err!("expected '{kind:?}', found => '{:?}'", tok.kind),
@@ -485,9 +616,9 @@ impl Parser {
         match self.tokens.pop_front() {
             Some(tok) => {
                 match self.peek(0) {
-                    // peek "next" tok (just consumed so idx == 0)
-                    Some(next) => utils::set_pos(next.pos),
-                    None => utils::set_pos(tok.pos),
+                    // peek "next" tok (just consumed so next has offset == 0)
+                    Some(next) => Logger::set_pos(next.start),
+                    None => Logger::set_pos(tok.start),
                 }
                 tok
             }
@@ -495,7 +626,7 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, kind: TokenKind) -> anyhow::Result<Token> {
+    fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
     }

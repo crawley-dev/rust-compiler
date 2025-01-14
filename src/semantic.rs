@@ -61,7 +61,7 @@
 use crate::{
     debug, err,
     lex::{Token, TokenFlags, TokenKind},
-    parse::{Arg, Ast, InitExpr, NodeExpr, NodeScope, NodeStmt, NodeTerm}, utils,
+    parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, Contents, Logger},
 };
 use anyhow::{Error, Result};
 use educe::Educe;
@@ -158,7 +158,7 @@ pub struct Function {
     ident: Token,
     signature: String,
     args: Vec<Type<FullType>>,
-    scope: NodeScope,
+    scope: Node<Scope>,
     return_type_id: Option<usize>, // none == void
 }
 
@@ -291,9 +291,9 @@ impl Checker {
         (self, None)
     }
 
-    fn check_top_level(&mut self, stmt: NodeStmt) -> Result<NodeStmt> {
-        match stmt {
-            NodeStmt::FnDecl {
+    fn check_top_level(&mut self, stmt: Node<Stmt>) -> Result<Node<Stmt>> {
+        match stmt.node {
+            Stmt::FnDecl {
                 ident,
                 args,
                 scope,
@@ -372,22 +372,27 @@ impl Checker {
                     let mut_self = self as *mut Self;
                     checked_scope = (*mut_self).check_scope(
                         scope,
-                        Some(|stmts: Vec<NodeStmt>| -> Result<Vec<NodeStmt>> {
+                        Some(|stmts: Vec<Node<Stmt>>| -> Result<Vec<Node<Stmt>>> {
                             debug!("checking {signature}'s statements!");
 
                             let mut checked_stmts = Vec::with_capacity(stmts.len());
 
                             // add each arg as a variable for use in the function
-                            for (arg, parse) in args_semantics.iter().zip(args.iter()) {
-                                let arg_node = NodeStmt::VarDecl {
-                                    init_expr: InitExpr::None,
-                                    arg: Arg {
-                                        ident: parse.ident.clone(),
-                                        mutable: parse.mutable,
-                                        parse_type: parse.parse_type.clone(),
-                                    },
+                            for (arg_type, parse) in args_semantics.iter().zip(args.iter()) {
+                                // TODO(TOM): not enoguh information on 
+                                let arg_stmt = Node {
+                                    start: parse.ident.start,
+                                    end: parse.parse_type.type_tok.end_pos(),
+                                    node: Stmt::VarDecl {
+                                        init_expr: InitExpr::None,
+                                        arg: Arg {
+                                            ident: parse.ident.clone(),
+                                            mutable: parse.mutable,
+                                            parse_type: parse.parse_type.clone(),
+                                        },
+                                    }
                                 };
-                                checked_stmts.push(self.check_stmt(arg_node)?);
+                                checked_stmts.push(self.check_stmt(arg_stmt)?);
                                 debug!("added\n{:#?}", checked_stmts.last());
                             }
 
@@ -418,9 +423,9 @@ impl Checker {
                     return_type_id,
                 });
 
-                Ok(NodeStmt::FnSemantics {
+                Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
                     id: self.fn_vec.len() - 1,
-                })
+                }})
             }
             _ => err!(
                 "A Program only consists of functions, this is a {stmt:?}"
@@ -431,23 +436,23 @@ impl Checker {
     // region: Scope
     fn check_scope<F>(
         &mut self,
-        scope: NodeScope,
+        scope: Node<Scope>,
         special_checks: Option<F>,
-    ) -> Result<NodeScope>
+    ) -> Result<Node<Scope>>
     where
-        F: FnMut(Vec<NodeStmt>) -> Result<Vec<NodeStmt>>,
+        F: FnMut(Vec<Node<Stmt>>) -> Result<Vec<Node<Stmt>>>,
     {
         self.ctx.scope_depth += 1;
-        let does_inherit = scope.inherits_stmts;
+        let does_inherit = scope.node.inherits_stmts;
         if !does_inherit {
             self.ctx.inherit_bounds.push(self.ctx.scope_depth)
         }
 
         let stmts = match special_checks {
-            Some(mut lambda) => lambda(scope.stmts)?,
+            Some(mut lambda) => lambda(scope.node.stmts)?,
             None => {
                 let mut stmts = Vec::new();
-                for stmt in scope.stmts {
+                for stmt in scope.node.stmts {
                     stmts.push(self.check_stmt(stmt)?);
                 }
                 stmts
@@ -467,24 +472,24 @@ impl Checker {
             }
         }
 
-        Ok(NodeScope {
+        Ok(Node { start: scope.start, end: scope.end, node: Scope {
             stmts,
             inherits_stmts: does_inherit,
-        })
+        }})
     }
 
     // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
-    fn check_scope_default(&mut self, scope: NodeScope) -> Result<NodeScope> {
+    fn check_scope_default(&mut self, scope: Node<Scope>) -> Result<Node<Scope>> {
         self.check_scope(
             scope,
-            None::<fn(Vec<NodeStmt>) -> Result<Vec<NodeStmt>>>,
+            None::<fn(Vec<Node<Stmt>>) -> Result<Vec<Node<Stmt>>>>,
         )
     }
     // endregion
 
-    fn check_stmt(&mut self, stmt: NodeStmt) -> Result<NodeStmt> {
-        match stmt {
-            NodeStmt::VarDecl { init_expr, arg } => {
+    fn check_stmt(&mut self, stmt: Node<Stmt>) -> Result<Node<Stmt>> {
+        match stmt.node {
+            Stmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
                 let str = arg.ident.str();
                 if self.var_map.contains_key(str) {
@@ -528,7 +533,7 @@ impl Checker {
                     }
                 }
 
-                Ok(NodeStmt::VarSemantics(var))
+                Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var)})
             }
             /*
             NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
@@ -688,17 +693,17 @@ impl Checker {
                 }
                 Ok(stmt)
             } */
-            NodeStmt::FnDecl { .. } => {
+            Stmt::FnDecl { .. } => {
                 err!("Functions cannot be nested, they're top level statements")
             }
             _ => err!("Found {stmt:#?}.. shouldn't have."),
         }
     }
 
-    fn check_expr(&self, expr: &NodeExpr) -> Result<ExprSem> {
-        match expr {
-            NodeExpr::Term(term) => self.check_term(term),
-            NodeExpr::BinaryExpr { op, lhs, rhs } => {
+    fn check_expr(&self, expr: &Node<Expr>) -> Result<ExprSem> {
+        match &expr.node {
+            Expr::Term(term) => self.check_term(term),
+            Expr::BinaryExpr { op, lhs, rhs } => {
                 let lhs_checked = self.check_expr(lhs)?;
                 let rhs_checekd = self.check_expr(rhs)?;
                 self.check_type_equivalence(&lhs_checked, &rhs_checekd)?;
@@ -719,7 +724,7 @@ impl Checker {
                         // 'CMP'   => T, T       => bool
                         // 'LOG'   => bool, bool => bool
                         // 'Arith' => int, int   => int
-                        match *op {
+                        match op {
                             _ if op.has_flags(TokenFlags::CMP) => {
                                 Ok(ExprSem {
                                     form: ExprForm::Literal,
@@ -773,8 +778,8 @@ impl Checker {
                 }
             }
             // unary operators tend to be very unqiue, so they are individually matched.
-            NodeExpr::UnaryExpr { op, operand } => {
-                let checked = self.check_expr(operand)?;
+            Expr::UnaryExpr { op, operand } => {
+                let checked = self.check_expr(&*operand)?;
                 
                 // 'Unary sub' signed int or lit => signed int literal
                 // 'Cmp Not'   bool              => bool
@@ -786,7 +791,7 @@ impl Checker {
                         err!("[ARR] Invalid Unary Expression: {op:?}\n{checked:#?}")
                     }
                     AddressingMode::Pointer(depth) => {
-                        match *op {
+                        match op {
                             TokenKind::Ptr => {
                                 if depth == 1 {
                                     Ok(ExprSem {
@@ -818,7 +823,7 @@ impl Checker {
                         }
                     }
                     AddressingMode::Primitive => {
-                        match *op {
+                        match op {
                             TokenKind::Sub => match checked.type_mode {
                                 TypeMode::Int(true) => Ok(ExprSem {
                                     form: ExprForm::Compound,
@@ -856,21 +861,22 @@ impl Checker {
         }
     }
 
-    fn check_term(&self, term: &NodeTerm) -> Result<ExprSem> {
+    fn check_term(&self, term: &Node<Term>) -> Result<ExprSem> {
         // TODO(TOM): NodeTerm really should unconditionally contain a position,
         //  >> detach pos from token and give it to the node itself
-        match term {
-            NodeTerm::True | NodeTerm::False => Ok(ExprSem {
+        Logger::set_pos(term.start);
+
+        match &term.node {
+            Term::True | Term::False => Ok(ExprSem {
                 form: ExprForm::Literal,
                 type_mode: TypeMode::Boolean,
                 addr_mode: AddressingMode::Primitive,
                 width: 1,
             }),
-            NodeTerm::Ident(token) => {
-                utils::set_pos(token.pos);
+            Term::Ident => {
                 let var = self
                     .var_vec
-                    .get(*self.var_map.get(token.str()).unwrap())
+                    .get(*self.var_map.get(Contents::get_src_oneline(term.start, term.end)).unwrap())
                     .unwrap();
                 let addr_mode = match &var.var_type {
                     Type::Primitive(full_type) => full_type.addr_mode,
@@ -893,8 +899,7 @@ impl Checker {
                     width: self.get_full_width(&var.var_type),
                 })
             }
-            NodeTerm::IntLit(token) => {
-                utils::set_pos(token.pos);
+            Term::IntLit => {
                 Ok(ExprSem {
                     form: ExprForm::Literal,
                     type_mode: TypeMode::Int(false),
@@ -902,9 +907,7 @@ impl Checker {
                     width: 0,
                 })
             }
-            NodeTerm::FnCall { ident, args } => {
-                utils::set_pos(ident.pos);
-                
+            Term::FnCall { ident, args } => {
                 todo!("check_term fncall")
             }
         }
