@@ -2,7 +2,7 @@ use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{AddressingMode, Variable},
-    utils::{self, Logger, Pos},
+    utils::{self, pos, Contents, Logger, Pos},
 };
 use anyhow::{Error, Result};
 use std::collections::VecDeque;
@@ -197,7 +197,7 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Node<Stmt>> {
         let kind = match self.peek(0) {
             Some(tok) => {
-                debug!("parsing statement: {tok:?}");
+                debug!("\n\nparsing statement: {tok:?}");
                 tok.kind
             } // cannot consume here,
             None => return err!("No statement to parse"),
@@ -313,10 +313,11 @@ impl Parser {
                 }
             }
             TokenKind::Ident => {
-                let ident = self.expect(TokenKind::Ident)?;
-                match self.peek(0) {
+                // let ident = self.expect(TokenKind::Ident)?;
+                match self.peek(1) {
                     // Assignment: consume ident & '='. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => {
+                        let ident = self.expect(TokenKind::Ident)?;
                         self.expect(TokenKind::Eq)?;
                         let expr = self.parse_expr(0)?;
                         Node {
@@ -328,11 +329,15 @@ impl Parser {
                     // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
                     //      - 'ident += 5;' => 'ident = ident + 5;'
                     Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
-                        self.tokens.push_front(ident.clone()); // TODO(TOM): this may not work !
-                        let comp_assign = self.peek_mut(1).unwrap();
-                        comp_assign.kind = comp_assign.kind.assign_to_arithmetic()?;
+                        let ident = self.peek(0).copied().unwrap();
+
+                        let assign = self.peek_mut(1).unwrap();
+                        assign.kind = assign.kind.assign_to_arithmetic()?;
+                        assign.start = pos(assign.start.x - 1, assign.start.y);
+                        assign.len = 1;
 
                         let expr = self.parse_expr(0)?;
+
                         Node {
                             start: ident.start,
                             end: expr.end,
@@ -459,12 +464,13 @@ impl Parser {
                 // Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
             };
 
+            let op = self.consume().kind;
             let rhs = self.parse_expr(next_prec)?;
             lhs = Node {
                 start: lhs.start,
                 end: rhs.end,
                 node: Expr::BinaryExpr {
-                    op: self.consume().kind,
+                    op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                 },
@@ -479,6 +485,8 @@ impl Parser {
             Some(_) => self.consume(),
             None => return err!("Expected term, found nothing."),
         };
+
+        println!("parsed {tok:?}");
 
         match tok.kind {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {

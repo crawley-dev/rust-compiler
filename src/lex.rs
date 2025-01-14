@@ -485,14 +485,14 @@ impl fmt::Debug for Token {
             writeln!(f, "Token {{")?;
             writeln!(f, "    kind: {:?}", self.kind)?;
             writeln!(f, "    str: {}", self.str())?;
-            writeln!(f, "    start: ({}, {})", self.start.y + 1, self.start.x + 1)?;
+            writeln!(f, "    start: ({}, {})", self.start.y, self.start.x)?;
             writeln!(f, "    len: {}", self.len)?;
             write!(f, "}}")
         } else {
             f.debug_struct("Token")
                 .field("kind", &self.kind)
                 .field("str", &self.str())
-                .field("start", &(self.start.x + 1, self.start.y + 1))
+                .field("start", &(self.start.x, self.start.y))
                 .field("len", &self.len)
                 .finish()
         }

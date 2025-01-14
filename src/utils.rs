@@ -85,8 +85,8 @@ impl Logger {
 
     pub fn get_padding(p: Pos) -> (&'static str, &'static str) {
         unsafe {
-            let x_padding = LOGGER.max_digits.x - (1.0 + p.x as f64).log10().floor() as u32;
-            let y_padding = LOGGER.max_digits.y - (1.0 + p.y as f64).log10().floor() as u32;
+            let x_padding = LOGGER.max_digits.x - (/*1.0 + */p.x as f64).log10().floor() as u32;
+            let y_padding = LOGGER.max_digits.y - (/*1.0 + */p.y as f64).log10().floor() as u32;
             (
                 LOGGER.padding.get(..x_padding as usize).unwrap(),
                 LOGGER.padding.get(..y_padding as usize).unwrap(),
@@ -142,8 +142,8 @@ macro_rules! debug {
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
+                pos.y /*+ 1*/,
+                pos.x /*+ 1*/,
                 format!($msg)
             )
         }
@@ -155,8 +155,8 @@ macro_rules! debug {
             println!(
                 "[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
+                pos.y /*+ 1*/,
+                pos.x /*+ 1*/,
                 format!($fmt, $($arg)+)
             )
         }
@@ -171,8 +171,8 @@ macro_rules! err {
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}n",
                 crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
+                pos.y /*+ 1*/,
+                pos.x /*+ 1*/,
                 format!($msg),
             ))
         }
@@ -184,8 +184,8 @@ macro_rules! err {
             let y_padding = " ".repeat((4 - (1.0 + pos.y as f64).log10().floor() as usize));
             Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n",
                 crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
+                pos.y /*+ 1*/,
+                pos.x /*+ 1*/,
                 format!($fmt, $($arg)+)
             ))
         }
