@@ -59,9 +59,7 @@
 */
 
 use crate::{
-    debug, err,
-    lex::{Token, TokenFlags, TokenKind},
-    parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, Contents, Logger},
+    debug, err, err_new, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger}
 };
 use anyhow::{Error, Result};
 use educe::Educe;
@@ -243,15 +241,28 @@ impl Checker {
         };
 
         for stmt in ast.stmts {
-             let stmt = match self.check_top_level(stmt) {
-                Ok(stmt) => stmt,
-                Err(e) => {
-                    // panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
+             match self.check_top_level(stmt) {
+                // Ok(stmt) => stmt,
+                // Err(e) => {
+                //     // panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
+                //     self.ast = sem_ast;
+                //     return (self, Some(e));
+                // }
+                CompilerResult::Ok(data) => 
+            sem_ast.stmts.push(data),
+                CompilerResult::Err {
+                    data: Some(data),
+                    error,
+                } => {
+                    sem_ast.stmts.push(data);
                     self.ast = sem_ast;
-                    return (self, Some(e));
+                    return (self, Some(error));
                 }
+                CompilerResult::Err { data: None, error } => {
+                    self.ast = sem_ast;
+                    return (self, Some(error))
+                },
             };
-            sem_ast.stmts.push(stmt);
         }
         self.ast = sem_ast;
 
@@ -288,10 +299,11 @@ impl Checker {
         //     }
         //     _ => Ok(checker),
         // }
+
         (self, None)
     }
 
-    fn check_top_level(&mut self, stmt: Node<Stmt>) -> Result<Node<Stmt>> {
+    fn check_top_level(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
         match stmt.node {
             Stmt::FnDecl {
                 ident,
@@ -315,15 +327,18 @@ impl Checker {
                         .find(|x| *x == arg_ident)
                         .is_some()
                     {
-                        return err!(
+                        return err_new!(
+                            None,
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
                     } else if self.var_map.contains_key(arg_ident) {
-                        return err!(
+                        return err_new!(
+                            None,
                             "Argument name in use: {arg_ident} in function: {fn_ident}"
                         );
                     } else if self.type_map.contains_key(arg_ident) {
-                        return err!(
+                        return err_new!(
+                            None,
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
@@ -352,9 +367,13 @@ impl Checker {
 
                 // check for name collisions with signature.
                 if self.fn_map.contains_key(signature.as_str()) {
-                    return err!("Duplicate definition of a Function: '{signature}'");
+                    return err_new!(
+                        None,
+                        "Duplicate definition of a Function: '{signature}'"
+                    );
                 } else if self.type_map.contains_key(fn_ident) {
-                    return err!(
+                    return err_new!( 
+                        None,
                         "Illegal Function name, Types are reserved: '{fn_ident}'"
                     );
                 }
@@ -423,11 +442,12 @@ impl Checker {
                     return_type_id,
                 });
 
-                Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
+                CompilerResult::Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
                     id: self.fn_vec.len() - 1,
                 }})
             }
-            _ => err!(
+            _ => err_new!(
+                None,
                 "A Program only consists of functions, this is a {stmt:?}"
             ),
         }

@@ -1,11 +1,14 @@
-#![allow(unused)]
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
-#![warn(clippy::cargo)]
-#![warn(clippy::complexity)]
-#![warn(clippy::perf)]
-#![warn(clippy::style)]
+#![allow(unused, static_mut_refs)]
+#![feature(try_trait_v2)]
+#![warn(
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    clippy::complexity,
+    clippy::perf,
+    clippy::style
+)]
 use anyhow::{Error, Result};
 use std::{
     cmp::max,
@@ -59,10 +62,26 @@ fn main() {
         return;
     }
 
+    fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {
+        match &stmt.node {
+            Stmt::FnDecl { scope, .. } | Stmt::NakedScope(scope) => {
+                if scope.node.stmts.len() == 0 {
+                    return None;
+                }
+                drill_down(&scope.node.stmts[scope.node.stmts.len() - 1])
+            }
+            _ => return Some(stmt.clone()),
+        };
+        None
+    }
+
     let (ast, error) = parse(tokens);
     if let Some(e) = error {
         let error_start_pos = match ast.stmts.last() {
-            Some(node) => node.start,
+            Some(node) => match drill_down(node) {
+                Some(stmt) => stmt.start,
+                None => pos(0, 0),
+            },
             None => {
                 // TODO(TOM): slight issue, stmts are encapsulated into a fn decl stmt, no lower statements are pushed to vec.
                 debug!("no stmts parsed, error underline is incorrect");
@@ -73,16 +92,22 @@ fn main() {
         return;
     }
 
-    // let gen_data = semantic_check(ast);
-    // if let Some(e) = error {
-    //     // let last_node_pos = match ast.last() {
-    //     //     Some(node) =>
-    //     //     None => 0,
-    //     // };
-    //     let last_node_pos = 0;
-    //     handle_error(e, contents_ref.as_slice(), last_node_pos);
-    //     return;
-    // }
+    let (checker, error) = semantic_check(ast);
+    if let Some(e) = error {
+        let error_start_pos = match checker.ast.stmts.last() {
+            Some(node) => match drill_down(node) {
+                Some(stmt) => stmt.start,
+                None => pos(0, 0),
+            },
+            None => {
+                // TODO(TOM): slight issue, stmts are encapsulated into a fn decl stmt, no lower statements are pushed to vec.
+                debug!("no stmts parsed, error underline is incorrect");
+                pos(0, 0)
+            }
+        };
+        handle_error(e, error_start_pos, 0);
+        return;
+    }
 
     // code_gen(gen_data, file_name);
 }
@@ -170,16 +195,32 @@ fn handle_error(error: Error, error_start_pos: Pos, tok_len: u32) {
         None => "unknown location (´。＿。｀)",
     };
 
+    let len = error.chain().len();
+    let mut error_chain = String::from("[\n");
+    for (i, err) in error.chain().enumerate() {
+        error_chain.push_str("");
+        error_chain.push_str(&format!(
+            "    {}\n",
+            err.to_string().replace("\n", "\n    ")
+        ));
+        if i != len - 1 {
+            error_chain.push_str(",\n");
+        }
+    }
+    error_chain.push_str("]");
+
     println!(
         "\n{panic_banner}\n\
          \nError Occurred near:\
          \n'{erroring_code}'\
          \n.{dots}{error_highlight}\n\
-         \n{error}\
+         \nError Chain:\
+         \n{error_chain}
+         \nBacktrace:\
          \n{backtrace}\n",
         dots = ".".repeat(Logger::get_pos().x as usize),
         error_highlight = "^".repeat(tok_len as usize),
-        backtrace = error.backtrace()
+        backtrace = error.backtrace(),
     );
 }
 // UBUNTU bash script:

@@ -2,10 +2,11 @@ use crate::{
     debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{AddressingMode, Variable},
-    utils::{self, pos, Contents, Logger, Pos},
+    utils::{self, pos, CompilerResult, Contents, Logger, Pos},
 };
-use anyhow::{Error, Result};
-use std::collections::VecDeque;
+use anyhow::{Context, Error, Result};
+use core::fmt;
+use std::{collections::VecDeque, convert::Infallible};
 
 #[derive(Debug, Clone)]
 pub struct Arg {
@@ -14,7 +15,7 @@ pub struct Arg {
     pub parse_type: ParseType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ParseType {
     pub type_tok: Token,
     pub addr_mode: AddressingMode,
@@ -38,8 +39,8 @@ pub struct Scope {
     pub inherits_stmts: bool,
 }
 // Generic node wrapper to add extra info
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Node<T> {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Node<T: std::fmt::Debug> {
     pub start: Pos,
     pub end: Pos,
     pub node: T,
@@ -140,18 +141,22 @@ impl Parser {
 
         while self.peek(0).is_some() {
             match self.parse_top_level() {
-                Ok(stmt) => ast.stmts.push(stmt),
-                Err(e) => return (ast, Some(e)),
+                CompilerResult::Ok(stmt) => ast.stmts.push(stmt),
+                CompilerResult::Err {
+                    data: Some(data),
+                    error,
+                } => {
+                    ast.stmts.push(data);
+                    return (ast, Some(error));
+                }
+                CompilerResult::Err { data: None, error } => return (ast, Some(error)),
             };
         }
         (ast, None)
     }
 
-    fn parse_top_level(&mut self) -> Result<Node<Stmt>> {
-        let fn_keyword = match self.expect(TokenKind::Fn) {
-            Ok(tok) => tok,
-            Err(e) => return Err(e),
-        };
+    fn parse_top_level(&mut self) -> CompilerResult<Node<Stmt>> {
+        let fn_keyword = self.expect(TokenKind::Fn)?;
 
         let ident = self.expect(TokenKind::Ident)?;
         self.expect(TokenKind::OpenParen)?;
@@ -173,18 +178,21 @@ impl Parser {
                 parse_type,
             });
         }
-        let close_paren = self.expect(TokenKind::CloseParen)?;
+        self.expect(TokenKind::CloseParen)?;
 
         // parse function return type
         let return_type = match self.expect(TokenKind::Arrow) {
             Ok(_) => Some(self.parse_type()?),
             Err(_) => None,
         };
-        let scope = self.parse_scope(false)?;
+        let scope = self
+            .parse_scope(false)
+            .context("Failed to parse function body")?;
+        // let scope = self.parse_scope(false).context("Cannot Parse Function scope")?;
 
-        Ok(Node {
+        CompilerResult::Ok(Node {
             start: fn_keyword.start,
-            end: close_paren.end_pos(),
+            end: scope.end,
             node: Stmt::FnDecl {
                 ident,
                 args,
@@ -395,15 +403,28 @@ impl Parser {
 
     fn parse_scope(&mut self, inherits_stmts: bool) -> Result<Node<Scope>> {
         // consumes statements until a closebrace is found.
+        let mut error = None;
         let open_brace = self.expect(TokenKind::OpenBrace)?;
+
         let mut stmts = Vec::new();
         while self.expect(TokenKind::CloseBrace).is_err() {
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
         }
+
+        let end = match stmts.last() {
+            Some(stmt) => stmt.end,
+            None => open_brace.end_pos(),
+        };
 
         Ok(Node {
             start: open_brace.start,
-            end: stmts.last().unwrap().end,
+            end,
             node: Scope {
                 stmts,
                 inherits_stmts,
@@ -485,8 +506,6 @@ impl Parser {
             Some(_) => self.consume(),
             None => return err!("Expected term, found nothing."),
         };
-
-        println!("parsed {tok:?}");
 
         match tok.kind {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {
@@ -603,20 +622,17 @@ impl Parser {
         })
     }
 
+    fn expect(&mut self, kind: TokenKind) -> Result<Token> {
+        self.token_equals(kind, 0)?;
+        Ok(self.consume())
+    }
+
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<()> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
             Some(tok) => err!("expected '{kind:?}', found => '{:?}'", tok.kind),
             None => err!("No token to evaluate"),
         }
-    }
-
-    fn peek(&self, offset: usize) -> Option<&Token> {
-        self.tokens.get(self.idx + offset)
-    }
-
-    fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
-        self.tokens.get_mut(self.idx + offset)
     }
 
     fn consume(&mut self) -> Token {
@@ -630,13 +646,19 @@ impl Parser {
                 }
                 tok
             }
-            None => err!("expected token to consume, found nothing.").unwrap(),
+            None => {
+                let err: Result<Infallible> = err!("expected token to consume, found nothing.");
+                panic!("{err:?}")
+            }
         }
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token> {
-        self.token_equals(kind, 0)?;
-        Ok(self.consume())
+    fn peek(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.idx + offset)
+    }
+
+    fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
+        self.tokens.get_mut(self.idx + offset)
     }
 }
 
@@ -646,5 +668,16 @@ impl std::fmt::Debug for Ast {
             writeln!(f, "{stmt:#?},")?;
         }
         Ok(())
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Node<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let node_name = std::any::type_name::<T>().split("::").last().unwrap_or("");
+        f.debug_struct(&format!("Node<{}>", node_name))
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .field("node", &self.node)
+            .finish()
     }
 }

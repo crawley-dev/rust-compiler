@@ -1,11 +1,22 @@
 use std::{
-    cell::UnsafeCell,
+    convert::Infallible,
     fs,
     io::{BufRead, BufReader},
-    vec,
+    ops::{ControlFlow, FromResidual, Try},
 };
 
 // region: Logger
+
+static mut LOGGER: Logger = Logger {
+    log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
+    print_logs: [false, true, false, false],
+    print_output: [false, false, false, false],
+    current_prefix: LogPrefix::Lexical,
+    file_pos: Pos { x: 0, y: 0 },
+    padding: String::new(),
+    max_digits: Pos { x: 0, y: 0 },
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogPrefix {
     Lexical,
@@ -23,16 +34,6 @@ pub struct Logger {
     padding: String,
     max_digits: Pos,
 }
-
-static mut LOGGER: Logger = Logger {
-    log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    print_logs: [false, true, true, false],
-    print_output: [true, false, false, false],
-    current_prefix: LogPrefix::Lexical,
-    file_pos: Pos { x: 0, y: 0 },
-    padding: String::new(),
-    max_digits: Pos { x: 0, y: 0 },
-};
 
 impl Logger {
     pub fn add_pos(delta: Pos) {
@@ -99,32 +100,32 @@ impl Logger {
             LOGGER.current_prefix = new_prefix;
         }
         Self::set_pos(pos(0, 0));
-        if Self::print_logs() {
+        if Self::print_logs() || Self::print_output() {
             match new_prefix {
                 LogPrefix::Lexical => {
                     println!(
-                        "\n{}\n",
+                        "\n{}\n\n\n",
                         text_to_ascii_art::to_art(">Lexical<".to_string(), "standard", 8, 0, 0)
                             .unwrap()
                     )
                 }
                 LogPrefix::Parse => {
                     println!(
-                        "\n{}\n",
+                        "\n{}\n\n\n",
                         text_to_ascii_art::to_art(">Parse<".to_string(), "standard", 8, 0, 0)
                             .unwrap()
                     )
                 }
                 LogPrefix::Semantic => {
                     println!(
-                        "\n{}\n",
+                        "\n{}\n\n\n",
                         text_to_ascii_art::to_art(">Semantic<".to_string(), "standard", 8, 0, 0)
                             .unwrap()
                     )
                 }
                 LogPrefix::CodeGen => {
                     println!(
-                        "\n{}\n",
+                        "\n{}\n\n\n",
                         text_to_ascii_art::to_art(">CodeGen<".to_string(), "standard", 8, 0, 0)
                             .unwrap()
                     )
@@ -142,8 +143,8 @@ macro_rules! debug {
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
-                pos.y /*+ 1*/,
-                pos.x /*+ 1*/,
+                pos.y + 1,
+                pos.x + 1,
                 format!($msg)
             )
         }
@@ -155,56 +156,27 @@ macro_rules! debug {
             println!(
                 "[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
-                pos.y /*+ 1*/,
-                pos.x /*+ 1*/,
+                pos.y + 1,
+                pos.x + 1,
                 format!($fmt, $($arg)+)
             )
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! err {
-    ($msg:expr) => {
-        {
-            let pos = crate::utils::Logger::get_pos();
-            let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-            Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}n",
-                crate::utils::Logger::get_prefix(),
-                pos.y /*+ 1*/,
-                pos.x /*+ 1*/,
-                format!($msg),
-            ))
-        }
-    };
-    ($fmt:expr, $($arg:tt)+) => {
-        {
-            let pos = crate::utils::Logger::get_pos();
-            let x_padding = " ".repeat((4 - (1.0 + pos.x as f64).log10().floor() as usize));
-            let y_padding = " ".repeat((4 - (1.0 + pos.y as f64).log10().floor() as usize));
-            Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n",
-                crate::utils::Logger::get_prefix(),
-                pos.y /*+ 1*/,
-                pos.x /*+ 1*/,
-                format!($fmt, $($arg)+)
-            ))
         }
     };
 }
 // endregion
 
 // region: Global File Contents
-pub struct Contents {
-    file_name: String,
-    contents: Vec<String>,
-}
 
 static mut SOURCE: Contents = Contents {
     file_name: String::new(),
     contents: Vec::new(),
 };
-
 static mut CONTENTS_STATIC_REF: Option<Vec<&'static str>> = None;
+
+pub struct Contents {
+    file_name: String,
+    contents: Vec<String>,
+}
 
 impl Contents {
     pub fn init() {
@@ -227,7 +199,6 @@ impl Contents {
         }
     }
 
-    #[allow(static_mut_refs)]
     pub fn get_contents_ref() -> &'static [&'static str] {
         unsafe {
             match &CONTENTS_STATIC_REF {
@@ -307,7 +278,7 @@ impl Contents {
 // endregion
 
 // region: Position
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
     pub x: u32,
     pub y: u32,
@@ -316,4 +287,133 @@ pub struct Pos {
 pub fn pos(x: u32, y: u32) -> Pos {
     Pos { x, y }
 }
+
+impl std::fmt::Debug for Pos {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(col: {}, row: {})", self.y + 1, self.x + 1)
+    }
+}
+// endregion
+
+// region: Errors
+
+// Aim is to error gracefully, returning data up until error. needed as its all recursive!
+// pub type CompilerError<T, E = anyhow::Error> = anyhow::Result<T, (Option<T>, E)>;
+
+#[derive(Debug)]
+pub enum CompilerResult<T, E = anyhow::Error> {
+    Ok(T),
+    Err { data: Option<T>, error: E },
+}
+
+impl<T> Try for CompilerResult<T> {
+    type Output = T;
+    type Residual = CompilerResult<T>;
+
+    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            CompilerResult::Ok(output) => ControlFlow::Continue(output),
+            CompilerResult::Err { data, error } => {
+                ControlFlow::Break(CompilerResult::Err { data, error })
+            }
+        }
+    }
+
+    fn from_output(output: Self::Output) -> Self {
+        CompilerResult::Ok(output)
+    }
+}
+
+impl<T> FromResidual for CompilerResult<T> {
+    fn from_residual(residual: <Self as Try>::Residual) -> Self {
+        residual
+    }
+}
+
+impl<T> FromResidual<Result<Infallible, anyhow::Error>> for CompilerResult<T> {
+    fn from_residual(residual: Result<Infallible, anyhow::Error>) -> Self {
+        CompilerResult::Err {
+            data: None,
+            error: residual.unwrap_err(),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! err_new {
+    ($data:expr, $msg:expr) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+        crate::utils::CompilerResult::Err {
+            data: $data,
+            error: anyhow::anyhow!(
+                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                crate::utils::Logger::get_prefix(),
+                pos.y + 1,
+                pos.x + 1,
+                format!($msg),
+            ),
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! err {
+    ($msg:expr) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+        Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+            crate::utils::Logger::get_prefix(),
+            pos.y + 1,
+            pos.x + 1,
+            format!($msg)
+        ))
+    }};
+    ($fmt:expr, $($arg:tt)+) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+        Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+            crate::utils::Logger::get_prefix(),
+            pos.y + 1,
+            pos.x + 1,
+            format!($fmt, $($arg)+)
+        ))
+        // crate::utils::CompilerResult::Err {
+        //     data: None,
+        //     error: anyhow::anyhow!(
+        //         "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+        //         crate::utils::Logger::get_prefix(),
+        //         pos.y + 1,
+        //         pos.x + 1,
+        //         format!($msg),
+        //     ),
+        // }
+    }};
+}
+
+/*
+impl<T, E> ops::Try for Result<T, E> {
+    type Output = T;
+    type Residual = Result<convert::Infallible, E>;
+
+    #[inline]
+    fn from_output(output: Self::Output) -> Self {
+        Ok(output)
+    }
+
+    #[inline]
+    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            Ok(v) => ControlFlow::Continue(v),
+            Err(e) => ControlFlow::Break(Err(e)),
+        }
+    }
+}
+*/
+
+// impl<T> FromResidual for CompilerResult<T> {
+//     fn from_residual(residual: <Self as std::ops::Try>::Residual) -> Self {
+//         todo!("Implement this function")
+//     }
+// }
 // endregion
