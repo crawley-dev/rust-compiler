@@ -1,5 +1,5 @@
 use crate::{
-    debug, err,
+    comp_err, debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{AddressingMode, Variable},
     utils::{self, pos, CompilerResult, Contents, Logger, Pos},
@@ -185,30 +185,49 @@ impl Parser {
             Ok(_) => Some(self.parse_type()?),
             Err(_) => None,
         };
-        let scope = self
-            .parse_scope(false)
-            .context("Failed to parse function body")?;
-        // let scope = self.parse_scope(false).context("Cannot Parse Function scope")?;
 
-        CompilerResult::Ok(Node {
-            start: fn_keyword.start,
-            end: scope.end,
-            node: Stmt::FnDecl {
-                ident,
-                args,
-                scope,
-                return_type,
-            },
-        })
+        match self.parse_scope(false) {
+            CompilerResult::Ok(scope) => CompilerResult::Ok(Node {
+                start: fn_keyword.start,
+                end: scope.end,
+                node: Stmt::FnDecl {
+                    ident,
+                    args,
+                    scope,
+                    return_type,
+                },
+            }),
+            CompilerResult::Err { data, error } => {
+                let scope =
+                    data.expect("Unreachable code, parse_scope must return data within error");
+                CompilerResult::Err {
+                    data: Some(Node {
+                        start: fn_keyword.start,
+                        end: scope.end,
+                        node: Stmt::FnDecl {
+                            ident,
+                            args,
+                            scope,
+                            return_type,
+                        },
+                    }),
+                    error,
+                }
+            }
+        }
+        // let scope = self
+        //     .parse_scope(false)
+        //     .context("Failed to parse function body")?;
+        // can't generic'ize because the error contains the data, Node<Stmt> != Node<Scope>
     }
 
-    fn parse_stmt(&mut self) -> Result<Node<Stmt>> {
+    fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
         let kind = match self.peek(0) {
             Some(tok) => {
                 debug!("\n\nparsing statement: {tok:?}");
                 tok.kind
             } // cannot consume here,
-            None => return err!("No statement to parse"),
+            None => return comp_err!("No statement to parse"),
         };
 
         // let tok = self.consume();
@@ -244,9 +263,27 @@ impl Parser {
                 }
             }
             TokenKind::If => {
-                self.expect(TokenKind::If)?;
+                let if_tok = self.expect(TokenKind::If)?;
                 let condition = self.parse_expr(0)?;
-                let scope = self.parse_scope(true)?;
+                let scope = match self.parse_scope(true) {
+                    CompilerResult::Ok(scope) => scope,
+                    CompilerResult::Err { data, error } => {
+                        let scope = data
+                            .expect("Unreachable code, parse_scope must return data within error");
+                        return CompilerResult::Err {
+                            data: Some(Node {
+                                start: if_tok.start,
+                                end: scope.end,
+                                node: Stmt::If {
+                                    condition,
+                                    scope,
+                                    branches: Vec::new(),
+                                },
+                            }),
+                            error,
+                        };
+                    }
+                };
 
                 let mut branches = Vec::new();
                 loop {
@@ -256,7 +293,24 @@ impl Parser {
                         // Found an else if, parse condition & scope, push to branches
                     } else if self.expect(TokenKind::If).is_ok() {
                         let condition = self.parse_expr(0)?;
-                        let scope = self.parse_scope(true)?;
+                        // let scope = self.parse_scope(true)?;
+                        let scope = match self.parse_scope(true) {
+                            CompilerResult::Ok(scope) => scope,
+                            CompilerResult::Err { data, error } => {
+                                let scope = data.expect(
+                                    "Unreachable code, parse_scope must return data within error",
+                                );
+                                return CompilerResult::Err {
+                                    data: Some(Node {
+                                        start: if_tok.start,
+                                        end: scope.end,
+                                        node: Stmt::ElseIf { condition, scope },
+                                    }),
+                                    error,
+                                };
+                            }
+                        };
+
                         branches.push(Node {
                             start: condition.start,
                             end: scope.end,
@@ -267,12 +321,26 @@ impl Parser {
 
                     // Found an else, parse scope, push to branches
                     let condition = self.parse_expr(0)?;
-                    let scope = self.parse_scope(true)?;
-
+                    let scope = match self.parse_scope(true) {
+                        CompilerResult::Ok(scope) => scope,
+                        CompilerResult::Err { data, error } => {
+                            let scope = data.expect(
+                                "Unreachable code, parse_scope must return data within error",
+                            );
+                            return CompilerResult::Err {
+                                data: Some(Node {
+                                    start: if_tok.start,
+                                    end: scope.end,
+                                    node: Stmt::Else(scope),
+                                }),
+                                error,
+                            };
+                        }
+                    };
                     branches.push(Node {
                         start: condition.start,
                         end: scope.end,
-                        node: Stmt::Else(self.parse_scope(true)?),
+                        node: Stmt::Else(scope),
                     });
                     break;
                 }
@@ -293,7 +361,7 @@ impl Parser {
                 }
             }
             TokenKind::Fn => {
-                return err!("Functions cannot be nested, they're top level statements")
+                return comp_err!("Functions cannot be nested, they're top level statements")
             }
             TokenKind::Return => {
                 let tok = self.expect(TokenKind::Return)?;
@@ -313,7 +381,23 @@ impl Parser {
             TokenKind::While => {
                 let tok = self.expect(TokenKind::While)?;
                 let condition = self.parse_expr(0)?;
-                let scope = self.parse_scope(true)?;
+
+                let scope = match self.parse_scope(true) {
+                    CompilerResult::Ok(scope) => scope,
+                    CompilerResult::Err { data, error } => {
+                        let scope = data
+                            .expect("Unreachable code, parse_scope must return data within error");
+                        return CompilerResult::Err {
+                            data: Some(Node {
+                                start: tok.start,
+                                end: scope.end,
+                                node: Stmt::While { condition, scope },
+                            }),
+                            error,
+                        };
+                    }
+                };
+
                 Node {
                     start: tok.start,
                     end: scope.end,
@@ -352,7 +436,7 @@ impl Parser {
                             node: Stmt::Assign { ident, expr },
                         }
                     }
-                    _ => return err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
+                    _ => return comp_err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
                 }
             }
             TokenKind::Exit => {
@@ -377,14 +461,29 @@ impl Parser {
             }
             TokenKind::OpenBrace => {
                 let tok = self.expect(TokenKind::OpenBrace)?;
-                let scope = self.parse_scope(true)?;
+                let scope = match self.parse_scope(true) {
+                    CompilerResult::Ok(scope) => scope,
+                    CompilerResult::Err { data, error } => {
+                        let scope = data
+                            .expect("Unreachable code, parse_scope must return data within error");
+                        return CompilerResult::Err {
+                            data: Some(Node {
+                                start: tok.start,
+                                end: scope.end,
+                                node: Stmt::NakedScope(scope),
+                            }),
+                            error,
+                        };
+                    }
+                };
+
                 Node {
                     start: tok.start,
                     end: scope.end,
                     node: Stmt::NakedScope(scope),
                 }
             }
-            _ => return err!("Invalid Statement =>\n{:#?}", self.tokens.front()),
+            _ => return comp_err!("Invalid Statement =>\n{:#?}", self.tokens.front()),
         };
 
         // statments that require a ';' to end.
@@ -394,25 +493,40 @@ impl Parser {
             | Stmt::VarDecl { .. }
             | Stmt::Break
             | Stmt::Return(_) => match self.expect(TokenKind::SemiColon) {
-                Ok(_) => Ok(stmt),
-                Err(e) => err!("{e}.\n{stmt:#?}"),
+                Ok(_) => CompilerResult::Ok(stmt),
+                Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
             },
-            _ => Ok(stmt),
+            _ => CompilerResult::Ok(stmt),
         }
     }
 
-    fn parse_scope(&mut self, inherits_stmts: bool) -> Result<Node<Scope>> {
+    fn parse_scope(&mut self, inherits_stmts: bool) -> CompilerResult<Node<Scope>> {
         // consumes statements until a closebrace is found.
-        let mut error = None;
         let open_brace = self.expect(TokenKind::OpenBrace)?;
 
         let mut stmts = Vec::new();
         while self.expect(TokenKind::CloseBrace).is_err() {
             match self.parse_stmt() {
-                Ok(stmt) => stmts.push(stmt),
-                Err(e) => {
-                    error = Some(e);
-                    break;
+                CompilerResult::Ok(stmt) => stmts.push(stmt),
+                CompilerResult::Err { data, error } => {
+                    if let Some(data) = data {
+                        stmts.push(data);
+                    }
+                    let end = match stmts.last() {
+                        Some(stmt) => stmt.end,
+                        None => open_brace.end_pos(),
+                    };
+                    return CompilerResult::Err {
+                        data: Some(Node {
+                            start: open_brace.start,
+                            end,
+                            node: Scope {
+                                stmts,
+                                inherits_stmts,
+                            },
+                        }),
+                        error,
+                    };
                 }
             }
         }
@@ -422,7 +536,7 @@ impl Parser {
             None => open_brace.end_pos(),
         };
 
-        Ok(Node {
+        CompilerResult::Ok(Node {
             start: open_brace.start,
             end,
             node: Scope {
@@ -671,13 +785,37 @@ impl std::fmt::Debug for Ast {
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Node<T> {
+impl std::fmt::Debug for Node<Stmt> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let node_name = std::any::type_name::<T>().split("::").last().unwrap_or("");
-        f.debug_struct(&format!("Node<{}>", node_name))
-            .field("start", &self.start)
-            .field("end", &self.end)
+        let debug = format!("{:#?}", self.node);
+        let node_name = debug.split(" {").next().unwrap_or("");
+        f.debug_struct(node_name)
+            .field("pos", &format_args!("{}", self.start.fmt_range(self.end)))
             .field("node", &self.node)
             .finish()
+    }
+}
+
+impl std::fmt::Debug for Node<Expr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.node {
+            Expr::Term(ref term) => write!(f, "{:?}", term),
+            _ => write!(f, "{:#?}", self.node),
+        }
+    }
+}
+
+impl std::fmt::Debug for Node<Term> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Term")
+            .field("node", &self.node)
+            .field("pos", &format_args!("{}", self.start.fmt_range(self.end)))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Node<Scope> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self.node)
     }
 }

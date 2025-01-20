@@ -5,11 +5,13 @@ use std::{
     ops::{ControlFlow, FromResidual, Try},
 };
 
+use crate::{Node, Scope};
+
 // region: Logger
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    print_logs: [false, true, false, false],
+    print_logs: [false, false, false, false],
     print_output: [false, false, false, false],
     current_prefix: LogPrefix::Lexical,
     file_pos: Pos { x: 0, y: 0 },
@@ -293,17 +295,67 @@ impl std::fmt::Debug for Pos {
         write!(f, "(col: {}, row: {})", self.y + 1, self.x + 1)
     }
 }
+
+impl Pos {
+    pub fn fmt_range(&self, other: Pos) -> String {
+        if other.x > self.x && other.y > self.y {
+            return format!(
+                "(col: {}..{}, row: {}..{})",
+                self.y + 1,
+                other.y + 1,
+                self.x + 1,
+                other.x + 1
+            );
+        } else if other.x > self.x && self.y == other.y {
+            return format!(
+                "(col: {}, row: {}..{})",
+                self.y + 1,
+                self.x + 1,
+                other.x + 1
+            );
+        } else if other.y > self.y && self.x == other.x {
+            return format!(
+                "(col: {}..{}, row: {})",
+                self.y + 1,
+                other.y + 1,
+                self.x + 1,
+            );
+        } else {
+            return format!("{self:?}");
+        }
+    }
+}
 // endregion
 
 // region: Errors
 
-// Aim is to error gracefully, returning data up until error. needed as its all recursive!
-// pub type CompilerError<T, E = anyhow::Error> = anyhow::Result<T, (Option<T>, E)>;
+/*DOCS
+    (～￣▽￣)～ My own custom error handling, for more accurate error traces
+    IDEA:
+        - the error state optionally carries the data up until the error occurred,
+        - Very useful for recursive parsing (My entire compiler), as otherwise i would know the func, no more.
+        - Specifically, xxx_top_level() and xxx_scope() functions, gives me all stmts up until the failure, not what container.
+
+    NOTES:
+        - The Residual is the data
+*/
 
 #[derive(Debug)]
 pub enum CompilerResult<T, E = anyhow::Error> {
     Ok(T),
     Err { data: Option<T>, error: E },
+}
+
+impl<T> CompilerResult<T> {
+    pub fn context(self, msg: &'static str) -> Self {
+        match self {
+            CompilerResult::Ok(data) => CompilerResult::Ok(data),
+            CompilerResult::Err { data, error } => CompilerResult::Err {
+                data,
+                error: error.context(msg),
+            },
+        }
+    }
 }
 
 impl<T> Try for CompilerResult<T> {
@@ -324,7 +376,7 @@ impl<T> Try for CompilerResult<T> {
     }
 }
 
-impl<T> FromResidual for CompilerResult<T> {
+impl<T> FromResidual<Self> for CompilerResult<T> {
     fn from_residual(residual: <Self as Try>::Residual) -> Self {
         residual
     }
@@ -340,18 +392,59 @@ impl<T> FromResidual<Result<Infallible, anyhow::Error>> for CompilerResult<T> {
 }
 
 #[macro_export]
-macro_rules! err_new {
-    ($data:expr, $msg:expr) => {{
+macro_rules! comp_err {
+    ($msg:expr) => {{
         let pos = crate::utils::Logger::get_pos();
         let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
         crate::utils::CompilerResult::Err {
-            data: $data,
+            data: None,
             error: anyhow::anyhow!(
                 "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
                 format!($msg),
+            ),
+        }
+    }};
+    // Wrapping $data:expr in parens to differentiate it from fmt string
+    (($data:expr), $msg:expr) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+        crate::utils::CompilerResult::Err {
+            data: Some($data),
+            error: anyhow::anyhow!(
+                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                crate::utils::Logger::get_prefix(),
+                pos.y + 1,
+                pos.x + 1,
+                format!($msg),
+            ),
+        }
+    }};
+    ($fmt:expr, $($arg:tt)+) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+        crate::utils::CompilerResult::Err {
+            data: None,
+            error: anyhow::anyhow!(
+                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                crate::utils::Logger::get_prefix(),
+                pos.y + 1,
+                pos.x + 1,
+                format!($fmt, $($arg)+),
+            ),
+        }
+    }};
+    (($data:expr), $fmt:expr, $($arg:tt)+) => {{
+        crate::utils::CompilerResult::Err {
+            data: Some($data),
+            error: anyhow::anyhow!(
+                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                crate::utils::Logger::get_prefix(),
+                pos.y + 1,
+                pos.x + 1,
+                format!($fmt, $($arg)+),
             ),
         }
     }};
@@ -378,42 +471,7 @@ macro_rules! err {
             pos.x + 1,
             format!($fmt, $($arg)+)
         ))
-        // crate::utils::CompilerResult::Err {
-        //     data: None,
-        //     error: anyhow::anyhow!(
-        //         "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
-        //         crate::utils::Logger::get_prefix(),
-        //         pos.y + 1,
-        //         pos.x + 1,
-        //         format!($msg),
-        //     ),
-        // }
     }};
 }
 
-/*
-impl<T, E> ops::Try for Result<T, E> {
-    type Output = T;
-    type Residual = Result<convert::Infallible, E>;
-
-    #[inline]
-    fn from_output(output: Self::Output) -> Self {
-        Ok(output)
-    }
-
-    #[inline]
-    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
-        match self {
-            Ok(v) => ControlFlow::Continue(v),
-            Err(e) => ControlFlow::Break(Err(e)),
-        }
-    }
-}
-*/
-
-// impl<T> FromResidual for CompilerResult<T> {
-//     fn from_residual(residual: <Self as std::ops::Try>::Residual) -> Self {
-//         todo!("Implement this function")
-//     }
-// }
 // endregion

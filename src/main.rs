@@ -51,61 +51,40 @@ fn main() {
 
     let (tokens, error) = lex(Contents::get_contents_ref());
     if let Some(e) = error {
-        let (last_tok_pos, tok_len) = match tokens.back() {
+        let (start, tok_len) = match tokens.back() {
             Some(tok) => (tok.start, tok.len),
             None => {
                 debug!("no tokens lex'd, error underline is incorrect");
                 (pos(0, 0), 0)
             }
         };
-        handle_error(e, last_tok_pos, tok_len);
+        handle_error(e, start, pos(start.x + tok_len, start.y));
         return;
-    }
-
-    fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {
-        match &stmt.node {
-            Stmt::FnDecl { scope, .. } | Stmt::NakedScope(scope) => {
-                if scope.node.stmts.len() == 0 {
-                    return None;
-                }
-                drill_down(&scope.node.stmts[scope.node.stmts.len() - 1])
-            }
-            _ => return Some(stmt.clone()),
-        };
-        None
     }
 
     let (ast, error) = parse(tokens);
     if let Some(e) = error {
-        let error_start_pos = match ast.stmts.last() {
+        let (start, end) = match ast.stmts.last() {
             Some(node) => match drill_down(node) {
-                Some(stmt) => stmt.start,
-                None => pos(0, 0),
+                Some(stmt) => (stmt.start, stmt.end),
+                None => (pos(0, 0), pos(0, 0)),
             },
-            None => {
-                // TODO(TOM): slight issue, stmts are encapsulated into a fn decl stmt, no lower statements are pushed to vec.
-                debug!("no stmts parsed, error underline is incorrect");
-                pos(0, 0)
-            }
+            None => (pos(0, 0), pos(0, 0)),
         };
-        handle_error(e, error_start_pos, 0);
+        handle_error(e, start, end);
         return;
     }
 
     let (checker, error) = semantic_check(ast);
     if let Some(e) = error {
-        let error_start_pos = match checker.ast.stmts.last() {
+        let (start, end) = match checker.ast.stmts.last() {
             Some(node) => match drill_down(node) {
-                Some(stmt) => stmt.start,
-                None => pos(0, 0),
+                Some(stmt) => (stmt.start, stmt.end),
+                None => (pos(123, 456), pos(456, 123)),
             },
-            None => {
-                // TODO(TOM): slight issue, stmts are encapsulated into a fn decl stmt, no lower statements are pushed to vec.
-                debug!("no stmts parsed, error underline is incorrect");
-                pos(0, 0)
-            }
+            None => (pos(1, 2), pos(1, 2)),
         };
-        handle_error(e, error_start_pos, 0);
+        handle_error(e, start, end);
         return;
     }
 
@@ -179,21 +158,20 @@ fn code_gen(data: Checker, file_name: String) {
 ----------------------------------------------------------------------------------------*/
 
 // TODO(TOM): change tok_len to error_end_pos
-fn handle_error(error: Error, error_start_pos: Pos, tok_len: u32) {
+fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
     let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => art,
         Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
     };
-    let file_contents = Contents::get_contents_ref();
 
-    let erroring_code = match file_contents.get(error_start_pos.y as usize) {
-        Some(line) => {
-            // remove newline char && whitespace before first char
-            // line.trim_start().trim_end()
-            line.trim_end()
-        }
-        None => "unknown location (´。＿。｀)",
-    };
+    println!("error_start: {error_start:?}, error_end: {error_end:?}");
+    let erroring_code = Contents::get_src(error_start, error_end)
+        .iter()
+        .flat_map(|x| x.chars())
+        .collect::<String>();
+
+    let dots = ".".repeat(Logger::get_pos().x as usize);
+    let error_highlight = "";
 
     let len = error.chain().len();
     let mut error_chain = String::from("[\n");
@@ -218,11 +196,25 @@ fn handle_error(error: Error, error_start_pos: Pos, tok_len: u32) {
          \n{error_chain}
          \nBacktrace:\
          \n{backtrace}\n",
-        dots = ".".repeat(Logger::get_pos().x as usize),
-        error_highlight = "^".repeat(tok_len as usize),
         backtrace = error.backtrace(),
     );
 }
+
+fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {
+    println!("drilling down: {stmt:#?}");
+    match &stmt.node {
+        Stmt::FnDecl { scope, .. } | Stmt::NakedScope(scope) => {
+            if scope.node.stmts.len() == 0 {
+                println!("no stmts in scope");
+                return None;
+            }
+            drill_down(&scope.node.stmts[scope.node.stmts.len() - 1])
+        }
+        _ => return Some(stmt.clone()),
+    };
+    None
+}
+
 // UBUNTU bash script:
 // read file
 // sudo nasm -felf64 $file.asm -o $file.o

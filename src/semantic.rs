@@ -59,7 +59,7 @@
 */
 
 use crate::{
-    debug, err, err_new, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger}
+    debug, err, comp_err, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger}
 };
 use anyhow::{Error, Result};
 use educe::Educe;
@@ -242,14 +242,7 @@ impl Checker {
 
         for stmt in ast.stmts {
              match self.check_top_level(stmt) {
-                // Ok(stmt) => stmt,
-                // Err(e) => {
-                //     // panic!("\n{e}\nBacktrace:\n{}\n{sem_ast:#?}", e.backtrace())
-                //     self.ast = sem_ast;
-                //     return (self, Some(e));
-                // }
-                CompilerResult::Ok(data) => 
-            sem_ast.stmts.push(data),
+                CompilerResult::Ok(data) => sem_ast.stmts.push(data),
                 CompilerResult::Err {
                     data: Some(data),
                     error,
@@ -327,18 +320,15 @@ impl Checker {
                         .find(|x| *x == arg_ident)
                         .is_some()
                     {
-                        return err_new!(
-                            None,
+                        return comp_err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
                     } else if self.var_map.contains_key(arg_ident) {
-                        return err_new!(
-                            None,
+                        return comp_err!(
                             "Argument name in use: {arg_ident} in function: {fn_ident}"
                         );
                     } else if self.type_map.contains_key(arg_ident) {
-                        return err_new!(
-                            None,
+                        return comp_err!(
                             "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                         );
                     }
@@ -367,13 +357,11 @@ impl Checker {
 
                 // check for name collisions with signature.
                 if self.fn_map.contains_key(signature.as_str()) {
-                    return err_new!(
-                        None,
+                    return comp_err!(
                         "Duplicate definition of a Function: '{signature}'"
                     );
                 } else if self.type_map.contains_key(fn_ident) {
-                    return err_new!( 
-                        None,
+                    return comp_err!( 
                         "Illegal Function name, Types are reserved: '{fn_ident}'"
                     );
                 }
@@ -446,8 +434,7 @@ impl Checker {
                     id: self.fn_vec.len() - 1,
                 }})
             }
-            _ => err_new!(
-                None,
+            _ => comp_err!(
                 "A Program only consists of functions, this is a {stmt:?}"
             ),
         }

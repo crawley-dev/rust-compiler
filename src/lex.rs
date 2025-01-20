@@ -482,18 +482,21 @@ impl TokenKind {
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
+            // writeln!(f, "Token<{:?}> {{", self.kind)?;
             writeln!(f, "Token {{")?;
-            writeln!(f, "    kind: {:?}", self.kind)?;
-            writeln!(f, "    str: {}", self.str())?;
-            writeln!(f, "    start: ({}, {})", self.start.y, self.start.x)?;
-            writeln!(f, "    len: {}", self.len)?;
+            writeln!(f, "    str: {:?}", self.str())?;
+            writeln!(
+                f,
+                "    start: {}",
+                self.start
+                    .fmt_range(pos(self.start.x + self.len, self.start.y))
+            )?;
             write!(f, "}}")
         } else {
             f.debug_struct("Token")
                 .field("kind", &self.kind)
                 .field("str", &self.str())
-                .field("start", &(self.start.x, self.start.y))
-                .field("len", &self.len)
+                .field("start", &self.start)
                 .finish()
         }
     }
