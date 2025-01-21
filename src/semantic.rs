@@ -374,12 +374,12 @@ impl Checker {
                 };
 
                 // Create lambda for custom scope check
-                let mut checked_scope;
+                let mut scope_check_result;
                 unsafe {
                     let mut_self = self as *mut Self;
-                    checked_scope = (*mut_self).check_scope(
+                    scope_check_result = (*mut_self).check_scope(
                         scope,
-                        Some(|stmts: Vec<Node<Stmt>>| -> Result<Vec<Node<Stmt>>> {
+                        Some(|stmts: Vec<Node<Stmt>>| -> CompilerResult<Scope> {
                             debug!("checking {signature}'s statements!");
 
                             let mut checked_stmts = Vec::with_capacity(stmts.len());
@@ -408,18 +408,36 @@ impl Checker {
                                 debug!("added\n{:#?}", checked_stmts.last())
                             }
 
-                            match self.ctx.func {
+                            let scope = Scope {
+                                stmts: checked_stmts,
+                                inherits_stmts: false,
+                            };
+
+                            match self.ctx.func { // can't do if let with other conditionals (21.1.25)
                                 Some(ref func) if !func.valid_return => {
-                                    return err!("Not all code paths return in '{signature}'")
+                                    return comp_err!((scope),"Not all code paths return in '{signature}'")
                                 }
-                                _ => (),
+                                _ => CompilerResult::Ok(scope),
                             }
 
-                            // removes args for me! (check_scope() that is)
-                            Ok(checked_stmts)
+                            // cleans up  args for me! (check_scope() that is)
                         }),
-                    )?;
+                    );
                 }
+
+                let (checked_scope, error) = match scope_check_result {
+                    CompilerResult::Ok(node) => (node, None),
+                    CompilerResult::Err { data, error } => {
+                        (Node {
+                            start: stmt.start,
+                            end: stmt.end,
+                            node: Scope {
+                                stmts: Vec::new(),
+                                inherits_stmts: false,
+                            }
+                        }, Some(error))
+                    }
+                };
 
                 self.fn_map.insert(signature.clone(), self.fn_vec.len());
                 self.fn_vec.push(Function {
@@ -430,9 +448,16 @@ impl Checker {
                     return_type_id,
                 });
 
-                CompilerResult::Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
+                let data = Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
                     id: self.fn_vec.len() - 1,
-                }})
+                }};
+                match error {
+                    Some(error) => CompilerResult::Err {
+                        data: Some(data),
+                        error,
+                    },
+                    None => CompilerResult::Ok(data),
+                }
             }
             _ => comp_err!(
                 "A Program only consists of functions, this is a {stmt:?}"
@@ -445,9 +470,9 @@ impl Checker {
         &mut self,
         scope: Node<Scope>,
         special_checks: Option<F>,
-    ) -> Result<Node<Scope>>
+    ) -> CompilerResult<Node<Scope>>
     where
-        F: FnMut(Vec<Node<Stmt>>) -> Result<Vec<Node<Stmt>>>,
+        F: FnMut(Vec<Node<Stmt>>) -> CompilerResult<Scope>,
     {
         self.ctx.scope_depth += 1;
         let does_inherit = scope.node.inherits_stmts;
@@ -455,14 +480,30 @@ impl Checker {
             self.ctx.inherit_bounds.push(self.ctx.scope_depth)
         }
 
-        let stmts = match special_checks {
-            Some(mut lambda) => lambda(scope.node.stmts)?,
+        let node = match special_checks {
+            Some(mut lambda) => match lambda(scope.node.stmts) {
+                CompilerResult::Ok(node) => node,
+                CompilerResult::Err { data, error} => return CompilerResult::Err {
+                    data: Some(Node {
+                        start: scope.start,
+                        end: scope.end,
+                        node: data.unwrap_or(Scope {
+                            stmts: Vec::new(),
+                            inherits_stmts: does_inherit,
+                        }),
+                    }),
+                    error 
+                },
+            },
             None => {
                 let mut stmts = Vec::new();
                 for stmt in scope.node.stmts {
                     stmts.push(self.check_stmt(stmt)?);
                 }
-                stmts
+
+                Scope {
+                    stmts, inherits_stmts: does_inherit,
+                }
             }
         };
 
@@ -479,17 +520,14 @@ impl Checker {
             }
         }
 
-        Ok(Node { start: scope.start, end: scope.end, node: Scope {
-            stmts,
-            inherits_stmts: does_inherit,
-        }})
+        CompilerResult::Ok(Node { start: scope.start, end: scope.end, node })
     }
 
     // Compiler doesn't understand type of 'None', so must hide away type annotations in this function.
-    fn check_scope_default(&mut self, scope: Node<Scope>) -> Result<Node<Scope>> {
+    fn check_scope_default(&mut self, scope: Node<Scope>) -> CompilerResult<Node<Scope>> {
         self.check_scope(
             scope,
-            None::<fn(Vec<Node<Stmt>>) -> Result<Vec<Node<Stmt>>>>,
+            None::<fn(Vec<Node<Stmt>>) -> CompilerResult<Scope>>,
         )
     }
     // endregion
@@ -712,8 +750,8 @@ impl Checker {
             Expr::Term(term) => self.check_term(term),
             Expr::BinaryExpr { op, lhs, rhs } => {
                 let lhs_checked = self.check_expr(lhs)?;
-                let rhs_checekd = self.check_expr(rhs)?;
-                self.check_type_equivalence(&lhs_checked, &rhs_checekd)?;
+                let rhs_checked = self.check_expr(rhs)?;
+                self.check_type_equivalence(&lhs_checked, &rhs_checked)?;
 
                 match lhs_checked.addr_mode {
                     // can check lhs or rhs, doesn't matter, they are equal

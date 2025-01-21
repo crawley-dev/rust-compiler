@@ -10,6 +10,7 @@
     clippy::style
 )]
 use anyhow::{Error, Result};
+use core::error;
 use std::{
     cmp::max,
     collections::VecDeque,
@@ -165,13 +166,31 @@ fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
     };
 
     println!("error_start: {error_start:?}, error_end: {error_end:?}");
-    let erroring_code = Contents::get_src(error_start, error_end)
+    let src_content = Contents::get_src(error_start, error_end);
+    let erroring_code = src_content // why does Vec<&str> not impl Display???
         .iter()
         .flat_map(|x| x.chars())
         .collect::<String>();
 
-    let dots = ".".repeat(Logger::get_pos().x as usize);
-    let error_highlight = "";
+    // let dots = ".".repeat(Logger::get_pos().x as usize);
+    // let error_highlight = "";
+    let (dots_before, error_highlight, dots_after): (String, String, String);
+    if error_start.y == error_end.y {
+        // let dots_before = ".".repeat(error_start.x as usize);
+        // let error_highlight = "^".repeat(max(1, error_end.x - error_start.x) as usize);
+        // let dots_after = ".".repeat((Contents::get_contents_ref()[error_start.y].len() - error_end.x) as usize);
+        // (dots_before, error_highlight, dots_after)
+        dots_before = ".".repeat(error_start.x as usize);
+        error_highlight = "^".repeat(max(0, error_end.x as i32 - error_start.x as i32) as usize);
+        dots_after = ".".repeat(error_end.x as usize)
+    } else {
+        let first_char_pos = src_content[error_end.y as usize]
+            .find(|x: char| x.is_alphanumeric())
+            .unwrap_or(0);
+        dots_before = ".".repeat(first_char_pos - 1);
+        error_highlight = "^".repeat(error_end.x as usize - first_char_pos);
+        dots_after = ".".repeat(src_content[error_end.y as usize].len() - error_end.x as usize);
+    }
 
     let len = error.chain().len();
     let mut error_chain = String::from("[\n");
@@ -191,7 +210,7 @@ fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
         "\n{panic_banner}\n\
          \nError Occurred near:\
          \n'{erroring_code}'\
-         \n.{dots}{error_highlight}\n\
+         \n.{dots_before}{error_highlight}{dots_after}\n\
          \nError Chain:\
          \n{error_chain}
          \nBacktrace:\

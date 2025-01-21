@@ -356,6 +356,20 @@ impl<T> CompilerResult<T> {
             },
         }
     }
+
+    pub fn is_ok(&self) -> bool {
+        match self {
+            CompilerResult::Ok(_) => true,
+            CompilerResult::Err { .. } => false,
+        }
+    }
+
+    pub fn is_err(&self) -> bool {
+        match self {
+            CompilerResult::Ok(_) => false,
+            CompilerResult::Err { .. } => true,
+        }
+    }
 }
 
 impl<T> Try for CompilerResult<T> {
