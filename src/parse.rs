@@ -6,13 +6,15 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::fmt;
-use std::{collections::VecDeque, convert::Infallible};
+use educe::Educe;
+use std::{collections::VecDeque, convert::Infallible, fmt::Formatter};
 
+// region: Type Definitions
 #[derive(Debug, Clone)]
-pub struct Arg {
-    pub ident: Token,
-    pub mutable: bool,
-    pub parse_type: ParseType,
+pub enum InitExpr {
+    Some(Node<Expr>),
+    None,
+    Deferred, // trust me bro, it exists.
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -21,41 +23,37 @@ pub struct ParseType {
     pub addr_mode: AddressingMode,
 }
 
-#[derive(Debug, Clone)]
-pub enum InitExpr {
-    Some(Node<Expr>),
-    None,
-    Deferred, // trust me bro, it exists.
+#[derive(Debug, Clone, Copy)]
+pub struct Arg {
+    pub ident: Token,
+    pub mutable: bool,
+    pub parse_type: ParseType,
 }
 
-#[derive(Clone)]
-pub struct Ast {
-    pub stmts: Vec<Node<Stmt>>,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Term {
+    True,
+    False,
+    Ident,
+    IntLit,
+    FnCall { ident: Token, args: Vec<Node<Expr>> },
 }
 
-#[derive(Debug, Clone)]
-pub struct Scope {
-    pub stmts: Vec<Node<Stmt>>,
-    pub inherits_stmts: bool,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Expr {
+    Binary {
+        op: TokenKind,
+        lhs: Box<Node<Expr>>,
+        rhs: Box<Node<Expr>>,
+    },
+    Unary {
+        op: TokenKind,
+        expr: Box<Node<Expr>>,
+    },
+    // It contains itself, so Node<Expr::Term> is ~ Node<Term>
+    // But still have to pass an extra Node<> Wrapper w(ﾟДﾟ)w
+    Term(Node<Term>),
 }
-// Generic node wrapper to add extra info
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Node<T: std::fmt::Debug> {
-    pub start: Pos,
-    pub end: Pos,
-    pub node: T,
-}
-
-// TODO(TOM): impl this
-// pub enum NodeTopLevel {
-//     FnDecl {
-//         ident: Token,
-//         args: Vec<Arg>,
-//         scope: NodeScope,
-//         return_type_tok: Option<Token>,
-//         return_addr_mode: Option<AddressingMode>,
-//     },
-// }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -91,7 +89,7 @@ pub enum Stmt {
     NakedScope(Node<Scope>),
     Break,
     Return(Option<Node<Expr>>),
-    // SEMANTIC STMT "CONVERSIONS"
+    // SEMANTIC STMTs
     VarSemantics(Variable),
     FnSemantics {
         id: usize,
@@ -101,35 +99,31 @@ pub enum Stmt {
     // },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Expr {
-    BinaryExpr {
-        op: TokenKind,
-        lhs: Box<Node<Expr>>,
-        rhs: Box<Node<Expr>>,
-    },
-    UnaryExpr {
-        op: TokenKind,
-        operand: Box<Node<Expr>>,
-    },
-    // It contains itself, so Node<Expr::Term> is ~ Node<Term>
-    // But still have to pass an extra Node<> Wrapper w(ﾟДﾟ)w
-    Term(Node<Term>),
+// Generic node wrapper to add extra info
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Node<T: std::fmt::Debug> {
+    pub start: Pos,
+    pub end: Pos,
+    pub node: T,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Term {
-    True,
-    False,
-    Ident,
-    IntLit,
-    FnCall { ident: Token, args: Vec<Node<Expr>> },
+#[derive(Debug, Clone)]
+pub struct Scope {
+    pub stmts: Vec<Node<Stmt>>,
+    pub inherits_stmts: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ast {
+    pub stmts: Vec<Node<Stmt>>,
 }
 
 pub struct Parser {
     pub tokens: VecDeque<Token>,
     pub idx: usize,
 }
+
+// endregion
 
 impl Parser {
     pub fn new(tokens: VecDeque<Token>) -> Self {
@@ -215,10 +209,6 @@ impl Parser {
                 }
             }
         }
-        // let scope = self
-        //     .parse_scope(false)
-        //     .context("Failed to parse function body")?;
-        // can't generic'ize because the error contains the data, Node<Stmt> != Node<Scope>
     }
 
     fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
@@ -230,7 +220,6 @@ impl Parser {
             None => return comp_err!("No statement to parse"),
         };
 
-        // let tok = self.consume();
         let stmt = match kind {
             TokenKind::Let => {
                 let let_tok = self.expect(TokenKind::Let)?;
@@ -337,6 +326,7 @@ impl Parser {
                             };
                         }
                     };
+
                     branches.push(Node {
                         start: condition.start,
                         end: scope.end,
@@ -359,9 +349,6 @@ impl Parser {
                         branches,
                     },
                 }
-            }
-            TokenKind::Fn => {
-                return comp_err!("Functions cannot be nested, they're top level statements")
             }
             TokenKind::Return => {
                 let tok = self.expect(TokenKind::Return)?;
@@ -405,7 +392,6 @@ impl Parser {
                 }
             }
             TokenKind::Ident => {
-                // let ident = self.expect(TokenKind::Ident)?;
                 match self.peek(1) {
                     // Assignment: consume ident & '='. parse expr.
                     Some(tok) if tok.kind == TokenKind::Eq => {
@@ -482,6 +468,9 @@ impl Parser {
                     end: scope.end,
                     node: Stmt::NakedScope(scope),
                 }
+            }
+            TokenKind::Fn => {
+                return comp_err!("Functions cannot be nested, they're top level statements")
             }
             _ => return comp_err!("Invalid Statement =>\n{:#?}", self.tokens.front()),
         };
@@ -583,9 +572,9 @@ impl Parser {
                         lhs = Node {
                             start: lhs.start,
                             end: tok.end_pos(),
-                            node: Expr::UnaryExpr {
+                            node: Expr::Unary {
                                 op: self.consume().kind,
-                                operand: Box::new(lhs),
+                                expr: Box::new(lhs),
                             },
                         };
                         continue;
@@ -604,7 +593,7 @@ impl Parser {
             lhs = Node {
                 start: lhs.start,
                 end: rhs.end,
-                node: Expr::BinaryExpr {
+                node: Expr::Binary {
                     op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
@@ -624,13 +613,13 @@ impl Parser {
         match tok.kind {
             op @ _ if op.has_flags(TokenFlags::UNARY) => {
                 debug!("found unary expression: '{op:?}'");
-                let operand = self.parse_expr(op.get_prec_unary() + 1)?;
+                let expr = self.parse_expr(op.get_prec_unary() + 1)?;
                 Ok(Node {
                     start: tok.start,
-                    end: operand.end,
-                    node: Expr::UnaryExpr {
+                    end: expr.end,
+                    node: Expr::Unary {
                         op,
-                        operand: Box::new(operand),
+                        expr: Box::new(expr),
                     },
                 })
             }
@@ -773,49 +762,5 @@ impl Parser {
 
     fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
         self.tokens.get_mut(self.idx + offset)
-    }
-}
-
-impl std::fmt::Debug for Ast {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for stmt in &self.stmts {
-            writeln!(f, "{stmt:#?},")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Debug for Node<Stmt> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let debug = format!("{:#?}", self.node);
-        let node_name = debug.split(" {").next().unwrap_or("");
-        f.debug_struct(node_name)
-            .field("pos", &format_args!("{}", self.start.fmt_range(self.end)))
-            .field("node", &self.node)
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for Node<Expr> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.node {
-            Expr::Term(ref term) => write!(f, "{:?}", term),
-            _ => write!(f, "{:#?}", self.node),
-        }
-    }
-}
-
-impl std::fmt::Debug for Node<Term> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Term")
-            .field("node", &self.node)
-            .field("pos", &format_args!("{}", self.start.fmt_range(self.end)))
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for Node<Scope> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#?}", self.node)
     }
 }

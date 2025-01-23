@@ -10,6 +10,23 @@ use std::{
     collections::{HashMap, VecDeque},
 };
 
+// region: Type Definitions
+
+#[derive(Debug)]
+pub enum Associativity {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BufKind {
+    Word,
+    IntLit,
+    Symbol,
+    Illegal,
+    NewLine,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
     // Generic Symbols
@@ -83,21 +100,6 @@ pub enum TokenKind {
     IntLit,
 }
 
-#[derive(Debug)]
-pub enum Associativity {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BufKind {
-    Word,
-    IntLit,
-    Symbol,
-    Illegal,
-    NewLine,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
@@ -113,6 +115,140 @@ pub struct Lexer {
     is_multicomment: bool,
 
     pub tokens: VecDeque<Token>,
+}
+
+// endregion
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct TokenFlags: u8 {
+        const ASSIGN = 1 << 0;
+        const ARITH = 1 << 1;
+        const CMP = 1 << 2;
+        const LOG = 1 << 3;
+        const BIT = 1 << 4;
+        const UNARY = 1 << 5;
+    }
+}
+
+impl TokenKind {
+    pub fn get_flags(self) -> TokenFlags {
+        match self {
+            TokenKind::Ptr => TokenFlags::UNARY,                     // "^"
+            TokenKind::Eq => TokenFlags::ASSIGN,                     // "="
+            TokenKind::Add => TokenFlags::ARITH,                     // "+"
+            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-"
+            TokenKind::Mul => TokenFlags::ARITH,                     // "*"
+            TokenKind::Quo => TokenFlags::ARITH,                     // "/"
+            TokenKind::Mod => TokenFlags::ARITH,                     // "%"
+            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
+            TokenKind::Bar => TokenFlags::BIT,                       // "|"
+            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~"
+            TokenKind::AndNot => TokenFlags::BIT,                    // "&~"
+            TokenKind::Shl => TokenFlags::BIT,                       // "<<"
+            TokenKind::Shr => TokenFlags::BIT,                       // ">>"
+
+            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
+            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
+            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "*="
+            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "/="
+            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "%="
+            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "&="
+            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,    // "|="
+            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "~="
+            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&~="
+            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
+            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
+
+            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
+            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,                  // "&&"
+            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,                   // "||"
+            TokenKind::CmpEq => TokenFlags::CMP,                                     // "=="
+            TokenKind::NotEq => TokenFlags::CMP,                                     // "!="
+            TokenKind::Lt => TokenFlags::CMP,                                        // "<"
+            TokenKind::Gt => TokenFlags::CMP,                                        // ">"
+            TokenKind::LtEq => TokenFlags::CMP,                                      // "<="
+            TokenKind::GtEq => TokenFlags::CMP,                                      // ">="
+
+            _ => TokenFlags::empty(),
+        }
+    }
+
+    pub fn has_flags(&self, flags: TokenFlags) -> bool {
+        self.get_flags().contains(flags)
+    }
+
+    pub fn has_some_flags(&self, flags: TokenFlags) -> bool {
+        self.get_flags().intersects(flags)
+    }
+
+    // Precedence hierarchy: higher = done first
+    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
+    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
+    pub fn get_prec_binary(&self) -> i32 {
+        match self {
+            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
+            TokenKind::Sub | TokenKind::Add => 11,
+            TokenKind::Shl | TokenKind::Shr => 10,
+            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
+            TokenKind::CmpEq | TokenKind::NotEq => 8,
+            TokenKind::Ampersand => 7, // BitAnd
+            TokenKind::Tilde => 6,     // BitXor
+            TokenKind::Bar => 5,
+            TokenKind::CmpAnd => 3,
+            TokenKind::CmpOr => 2,
+            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
+            TokenKind::Comma => 0,
+            _ => -100,
+        }
+    }
+
+    // Precedence hierarchy for unary operators, may be a variant of a multi-purpose operator
+    // unary operators for now have a precedence of 13, may have some edge-cases.
+    // .. e.g: "&":
+    // .. .. Binary: BitAnd, prec: 7
+    // .. .. Unary: Address-of, prec: 13
+    pub fn get_prec_unary(&self) -> i32 {
+        match self {
+            _ if self.has_flags(TokenFlags::UNARY) => 13,
+            _ => -100,
+        }
+    }
+
+    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
+        match self {
+            TokenKind::AddEq => Ok(TokenKind::Add),
+            TokenKind::SubEq => Ok(TokenKind::Sub),
+            TokenKind::MulEq => Ok(TokenKind::Mul),
+            TokenKind::QuoEq => Ok(TokenKind::Quo),
+            TokenKind::ModEq => Ok(TokenKind::Mod),
+            TokenKind::AndEq => Ok(TokenKind::Ampersand),
+            TokenKind::OrEq => Ok(TokenKind::Bar),
+            TokenKind::XorEq => Ok(TokenKind::Tilde),
+            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
+            TokenKind::ShlEq => Ok(TokenKind::Shl),
+            TokenKind::ShrEq => Ok(TokenKind::Shr),
+            _ => err!("{self:?} cannot be converted to arithmetic"),
+        }
+    }
+
+    pub fn get_associativity(&self, is_unary: bool) -> Associativity {
+        match self {
+            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::Right,
+            _ if is_unary => Associativity::Right,
+            _ => Associativity::Left,
+        }
+    }
+}
+
+impl Token {
+    pub fn str(&self) -> &str {
+        Contents::get_src_oneline(self.start, self.end_pos())
+    }
+
+    pub fn end_pos(&self) -> Pos {
+        pos(self.start.x + self.len, self.start.y)
+    }
 }
 
 impl Lexer {
@@ -345,198 +481,5 @@ impl Lexer {
     fn get_start(len: u32) -> Pos {
         let mut p = Logger::get_pos();
         pos(p.x - len, p.y)
-    }
-}
-
-impl Token {
-    pub fn str(&self) -> &str {
-        Contents::get_src_oneline(self.start, self.end_pos())
-    }
-
-    pub fn end_pos(&self) -> Pos {
-        pos(self.start.x + self.len, self.start.y)
-    }
-}
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct TokenFlags: u8 {
-        const ASSIGN = 1 << 0;
-        const ARITH = 1 << 1;
-        const CMP = 1 << 2;
-        const LOG = 1 << 3;
-        const BIT = 1 << 4;
-        const UNARY = 1 << 5;
-    }
-}
-
-impl TokenKind {
-    pub fn get_flags(self) -> TokenFlags {
-        match self {
-            TokenKind::Ptr => TokenFlags::UNARY,                     // "^"
-            TokenKind::Eq => TokenFlags::ASSIGN,                     // "="
-            TokenKind::Add => TokenFlags::ARITH,                     // "+"
-            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-"
-            TokenKind::Mul => TokenFlags::ARITH,                     // "*"
-            TokenKind::Quo => TokenFlags::ARITH,                     // "/"
-            TokenKind::Mod => TokenFlags::ARITH,                     // "%"
-            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
-            TokenKind::Bar => TokenFlags::BIT,                       // "|"
-            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~"
-            TokenKind::AndNot => TokenFlags::BIT,                    // "&~"
-            TokenKind::Shl => TokenFlags::BIT,                       // "<<"
-            TokenKind::Shr => TokenFlags::BIT,                       // ">>"
-
-            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
-            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
-            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "*="
-            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "/="
-            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "%="
-            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "&="
-            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,    // "|="
-            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "~="
-            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&~="
-            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
-            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
-
-            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
-            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,                  // "&&"
-            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,                   // "||"
-            TokenKind::CmpEq => TokenFlags::CMP,                                     // "=="
-            TokenKind::NotEq => TokenFlags::CMP,                                     // "!="
-            TokenKind::Lt => TokenFlags::CMP,                                        // "<"
-            TokenKind::Gt => TokenFlags::CMP,                                        // ">"
-            TokenKind::LtEq => TokenFlags::CMP,                                      // "<="
-            TokenKind::GtEq => TokenFlags::CMP,                                      // ">="
-
-            _ => TokenFlags::empty(),
-        }
-    }
-
-    pub fn has_flags(&self, flags: TokenFlags) -> bool {
-        self.get_flags().contains(flags)
-    }
-
-    pub fn has_some_flags(&self, flags: TokenFlags) -> bool {
-        self.get_flags().intersects(flags)
-    }
-
-    // Precedence hierarchy: higher = done first
-    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
-    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
-    pub fn get_prec_binary(&self) -> i32 {
-        match self {
-            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
-            TokenKind::Sub | TokenKind::Add => 11,
-            TokenKind::Shl | TokenKind::Shr => 10,
-            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
-            TokenKind::CmpEq | TokenKind::NotEq => 8,
-            TokenKind::Ampersand => 7, // BitAnd
-            TokenKind::Tilde => 6,     // BitXor
-            TokenKind::Bar => 5,
-            TokenKind::CmpAnd => 3,
-            TokenKind::CmpOr => 2,
-            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
-            TokenKind::Comma => 0,
-            _ => -100,
-        }
-    }
-
-    // Precedence hierarchy for unary operators, may be a variant of a multi-purpose operator
-    // unary operators for now have a precedence of 13, may have some edge-cases.
-    // .. e.g: "&":
-    // .. .. Binary: BitAnd, prec: 7
-    // .. .. Unary: Address-of, prec: 13
-    pub fn get_prec_unary(&self) -> i32 {
-        match self {
-            _ if self.has_flags(TokenFlags::UNARY) => 13,
-            _ => -100,
-        }
-    }
-
-    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
-        match self {
-            TokenKind::AddEq => Ok(TokenKind::Add),
-            TokenKind::SubEq => Ok(TokenKind::Sub),
-            TokenKind::MulEq => Ok(TokenKind::Mul),
-            TokenKind::QuoEq => Ok(TokenKind::Quo),
-            TokenKind::ModEq => Ok(TokenKind::Mod),
-            TokenKind::AndEq => Ok(TokenKind::Ampersand),
-            TokenKind::OrEq => Ok(TokenKind::Bar),
-            TokenKind::XorEq => Ok(TokenKind::Tilde),
-            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
-            TokenKind::ShlEq => Ok(TokenKind::Shl),
-            TokenKind::ShrEq => Ok(TokenKind::Shr),
-            _ => err!("{self:?} cannot be converted to arithmetic"),
-        }
-    }
-
-    pub fn get_associativity(&self, is_unary: bool) -> Associativity {
-        match self {
-            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::Right,
-            _ if is_unary => Associativity::Right,
-            _ => Associativity::Left,
-        }
-    }
-}
-
-impl fmt::Debug for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            // writeln!(f, "Token<{:?}> {{", self.kind)?;
-            writeln!(f, "Token {{")?;
-            writeln!(f, "    str: {:?}", self.str())?;
-            writeln!(
-                f,
-                "    start: {}",
-                self.start
-                    .fmt_range(pos(self.start.x + self.len, self.start.y))
-            )?;
-            write!(f, "}}")
-        } else {
-            f.debug_struct("Token")
-                .field("kind", &self.kind)
-                .field("str", &self.str())
-                .field("start", &self.start)
-                .finish()
-        }
-    }
-}
-
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            TokenKind::Ident | TokenKind::IntLit => write!(f, "{:?}({})", self.kind, self.str()),
-            _ => write!(f, "{:?}", self.kind),
-        }
-    }
-}
-
-impl fmt::Display for Lexer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut val_max_len = 0;
-        let mut x_max_len = 0;
-        let mut y_max_len = 0;
-        for tok in &self.tokens {
-            let val_cur_len = format!("{tok}").len();
-            val_max_len = max(val_max_len, val_cur_len);
-
-            let x = tok.start.x;
-            let y = tok.start.y;
-            x_max_len = max(x_max_len, format!("{x}").len());
-            y_max_len = max(y_max_len, format!("{y}").len());
-        }
-
-        for tok in &self.tokens {
-            let val_str = format!("{tok}");
-            let val_whitespace = " ".repeat(val_max_len - val_str.len());
-            let x_str = format!("{x:?}", x = tok.start.x);
-            let x_whitespace = " ".repeat(x_max_len - x_str.len());
-            let y_str = format!("{y:?}", y = tok.start.y);
-            let y_whitespace = " ".repeat(y_max_len - y_str.len());
-            write!(f,
-                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}\n"
-            )?
-        }
-        Ok(())
     }
 }

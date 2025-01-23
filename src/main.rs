@@ -34,6 +34,8 @@ use semantic::*;
 // mod code_gen;
 // use code_gen::Generator;
 
+mod formatting;
+
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LIB_BACKTRACE", "1");
@@ -47,19 +49,16 @@ fn main() {
         }
     }
 
-    // Get file name
+    // Get file contents, init to global buffer
     Contents::init();
 
     let (tokens, error) = lex(Contents::get_contents_ref());
     if let Some(e) = error {
         let (start, tok_len) = match tokens.back() {
             Some(tok) => (tok.start, tok.len),
-            None => {
-                debug!("no tokens lex'd, error underline is incorrect");
-                (pos(0, 0), 0)
-            }
+            None => (pos(0, 0), 0),
         };
-        handle_error(e, start, pos(start.x + tok_len, start.y));
+        handle_error(tokens, e, start, pos(start.x + tok_len, start.y));
         return;
     }
 
@@ -72,7 +71,7 @@ fn main() {
             },
             None => (pos(0, 0), pos(0, 0)),
         };
-        handle_error(e, start, end);
+        handle_error(ast, e, start, end);
         return;
     }
 
@@ -81,11 +80,11 @@ fn main() {
         let (start, end) = match checker.ast.stmts.last() {
             Some(node) => match drill_down(node) {
                 Some(stmt) => (stmt.start, stmt.end),
-                None => (pos(123, 456), pos(456, 123)),
+                None => (pos(0, 0), pos(0, 0)),
             },
-            None => (pos(1, 2), pos(1, 2)),
+            None => (pos(0, 0), pos(0, 0)),
         };
-        handle_error(e, start, end);
+        handle_error(checker, e, start, end);
         return;
     }
 
@@ -158,36 +157,28 @@ fn code_gen(data: Checker, file_name: String) {
 ---- Misc --------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------*/
 
-// TODO(TOM): change tok_len to error_end_pos
-fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
+fn handle_error<T: std::fmt::Debug>(error_data: T, error: Error, error_start: Pos, error_end: Pos) {
     let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => art,
         Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
     };
 
-    println!("error_start: {error_start:?}, error_end: {error_end:?}");
-    let src_content = Contents::get_src(error_start, error_end);
+    let src_content = Contents::get_src_lines(error_start.y, error_end.y);
     let erroring_code = src_content // why does Vec<&str> not impl Display???
         .iter()
         .flat_map(|x| x.chars())
         .collect::<String>();
 
-    // let dots = ".".repeat(Logger::get_pos().x as usize);
-    // let error_highlight = "";
     let (dots_before, error_highlight, dots_after): (String, String, String);
     if error_start.y == error_end.y {
-        // let dots_before = ".".repeat(error_start.x as usize);
-        // let error_highlight = "^".repeat(max(1, error_end.x - error_start.x) as usize);
-        // let dots_after = ".".repeat((Contents::get_contents_ref()[error_start.y].len() - error_end.x) as usize);
-        // (dots_before, error_highlight, dots_after)
         dots_before = ".".repeat(error_start.x as usize);
         error_highlight = "^".repeat(max(0, error_end.x as i32 - error_start.x as i32) as usize);
         dots_after = ".".repeat(error_end.x as usize)
     } else {
-        let first_char_pos = src_content[error_end.y as usize]
+        let mut first_char_pos = src_content[error_end.y as usize]
             .find(|x: char| x.is_alphanumeric())
             .unwrap_or(0);
-        dots_before = ".".repeat(first_char_pos - 1);
+        dots_before = ".".repeat(first_char_pos);
         error_highlight = "^".repeat(error_end.x as usize - first_char_pos);
         dots_after = ".".repeat(src_content[error_end.y as usize].len() - error_end.x as usize);
     }
@@ -210,9 +201,11 @@ fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
         "\n{panic_banner}\n\
          \nError Occurred near:\
          \n'{erroring_code}'\
-         \n.{dots_before}{error_highlight}{dots_after}\n\
+         \n{dots_before}{error_highlight}{dots_after}\n\
          \nError Chain:\
-         \n{error_chain}
+         \n{error_chain}\n\
+         \nError Data:\
+         \n{error_data:#?}\n\
          \nBacktrace:\
          \n{backtrace}\n",
         backtrace = error.backtrace(),
@@ -220,7 +213,6 @@ fn handle_error(error: Error, error_start: Pos, error_end: Pos) {
 }
 
 fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {
-    println!("drilling down: {stmt:#?}");
     match &stmt.node {
         Stmt::FnDecl { scope, .. } | Stmt::NakedScope(scope) => {
             if scope.node.stmts.len() == 0 {

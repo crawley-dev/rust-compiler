@@ -1,5 +1,4 @@
-/*
->>SEMANTIC<< The rules of the language, not grammar or syntax!
+/* >>SEMANTIC<< The rules of the language, checking the meaning of the program.
  ✅ CLONING:
      - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
      - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
@@ -67,6 +66,8 @@ use std::{
     collections::{HashMap},
     ptr::NonNull,
 };
+
+// region: Type Definitions
 
 pub type Byte = usize;
 const PTR: Byte = 8;
@@ -142,10 +143,10 @@ struct ExprSem {
     width: Byte,
 }
 
-// region: Final Data Types
 #[derive(Debug, Clone)]
 pub struct Variable {
     ident: Token,
+    mutable: bool,
     var_type: Type<FullType>,
     init_expr: InitExpr,
     scope_id: usize,
@@ -164,6 +165,7 @@ pub struct Function {
 struct FuncContext {
     valid_return: bool,
 }
+
 #[derive(Debug)]
 struct SemContext {
     loop_count: isize, // usize means I can get useful error messages in debug build, instead of oob error
@@ -178,17 +180,19 @@ pub struct Checker {
     pub ast: Ast,
     ctx: SemContext,
 
-    // var_vec does NOT permanently store variables, stores current scope's variables. (on stack)
     #[educe(Debug(ignore))]
     type_vec: Vec<Type<BaseType>>,
-    pub fn_vec: Vec<Function>,
-    #[educe(Debug(ignore))]
-    var_vec: Vec<Variable>,
     #[educe(Debug(ignore))]
     pub type_map: HashMap<String, usize>,
-    pub fn_map: HashMap<String, usize>,
+    
     #[educe(Debug(ignore))]
-    pub var_map: HashMap<String, usize>,
+    stack_var_vec: Vec<Variable>,
+    #[educe(Debug(ignore))]
+    pub stack_var_map: HashMap<String, usize>,
+    
+    pub fn_map: HashMap<String, usize>,
+    pub fn_vec: Vec<Function>,
+    
 }
 // endregion
 
@@ -228,10 +232,10 @@ impl Checker {
 
             type_vec,
             fn_vec: Vec::new(),
-            var_vec: Vec::new(),
+            stack_var_vec: Vec::new(),
             type_map,
             fn_map: HashMap::new(),
-            var_map: HashMap::new(),
+            stack_var_map: HashMap::new(),
         }
     }
 
@@ -243,15 +247,11 @@ impl Checker {
         for stmt in ast.stmts {
              match self.check_top_level(stmt) {
                 CompilerResult::Ok(data) => sem_ast.stmts.push(data),
-                CompilerResult::Err {
-                    data: Some(data),
-                    error,
-                } => {
-                    sem_ast.stmts.push(data);
-                    self.ast = sem_ast;
-                    return (self, Some(error));
-                }
-                CompilerResult::Err { data: None, error } => {
+                CompilerResult::Err { data, error } => {
+                    if let Some(data) = data {
+                        sem_ast.stmts.push(data);
+                    }
+
                     self.ast = sem_ast;
                     return (self, Some(error))
                 },
@@ -323,7 +323,7 @@ impl Checker {
                         return comp_err!(
                             "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                         );
-                    } else if self.var_map.contains_key(arg_ident) {
+                    } else if self.stack_var_map.contains_key(arg_ident) {
                         return comp_err!(
                             "Argument name in use: {arg_ident} in function: {fn_ident}"
                         );
@@ -386,7 +386,6 @@ impl Checker {
 
                             // add each arg as a variable for use in the function
                             for (arg_type, parse) in args_semantics.iter().zip(args.iter()) {
-                                // TODO(TOM): not enoguh information on 
                                 let arg_stmt = Node {
                                     start: parse.ident.start,
                                     end: parse.parse_type.type_tok.end_pos(),
@@ -399,12 +398,40 @@ impl Checker {
                                         },
                                     }
                                 };
-                                checked_stmts.push(self.check_stmt(arg_stmt)?);
+                                match self.check_stmt(arg_stmt) {
+                                    CompilerResult::Ok(data) => checked_stmts.push(data),
+                                    CompilerResult::Err { data, error } => {
+                                        if let Some(data) = data {
+                                            checked_stmts.push(data)
+                                        }
+                                        return CompilerResult::Err {
+                                            data: Some(Scope {
+                                                stmts: checked_stmts,
+                                                inherits_stmts: false,
+                                            }),
+                                            error,
+                                        }
+                                    }
+                                }
                                 debug!("added\n{:#?}", checked_stmts.last());
                             }
 
                             for stmt in stmts {
-                                checked_stmts.push(self.check_stmt(stmt)?);
+                                match self.check_stmt(stmt) {
+                                    CompilerResult::Ok(data) => checked_stmts.push(data),
+                                    CompilerResult::Err { data, error } => {
+                                        if let Some(data) = data {
+                                            checked_stmts.push(data)
+                                        }
+                                        return CompilerResult::Err {
+                                            data: Some(Scope {
+                                                stmts: checked_stmts,
+                                                inherits_stmts: false,
+                                            }),
+                                            error,
+                                        }
+                                    }
+                                }
                                 debug!("added\n{:#?}", checked_stmts.last())
                             }
 
@@ -428,14 +455,14 @@ impl Checker {
                 let (checked_scope, error) = match scope_check_result {
                     CompilerResult::Ok(node) => (node, None),
                     CompilerResult::Err { data, error } => {
-                        (Node {
+                        (data.unwrap_or(Node {
                             start: stmt.start,
                             end: stmt.end,
                             node: Scope {
                                 stmts: Vec::new(),
                                 inherits_stmts: false,
-                            }
-                        }, Some(error))
+                            },
+                        }), Some(error))
                     }
                 };
 
@@ -498,7 +525,25 @@ impl Checker {
             None => {
                 let mut stmts = Vec::new();
                 for stmt in scope.node.stmts {
-                    stmts.push(self.check_stmt(stmt)?);
+                    match self.check_stmt(stmt) {
+                        CompilerResult::Ok(data) => stmts.push(data),
+                        CompilerResult::Err { data, error } => {
+                            if let Some(data) = data {
+                                stmts.push(data)
+                            }
+                            return CompilerResult::Err {
+                                data: Some(Node {
+                                    start: scope.start,
+                                    end: scope.end,
+                                    node: Scope {
+                                        stmts,
+                                        inherits_stmts: does_inherit,
+                                    },
+                                }),
+                                error,
+                            }
+                        }
+                    }
                 }
 
                 Scope {
@@ -509,12 +554,12 @@ impl Checker {
 
         self.ctx.scope_depth -= 1;
         loop {
-            match self.var_vec.last() {
+            match self.stack_var_vec.last() {
                 Some(var) if var.scope_id <= self.ctx.scope_depth => break,
                 Some(var) => {
                     // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
-                    let var = self.var_vec.pop().unwrap();
-                    self.var_map.remove(var.ident.str());
+                    let var = self.stack_var_vec.pop().unwrap();
+                    self.stack_var_map.remove(var.ident.str());
                 }
                 None => break,
             }
@@ -532,15 +577,15 @@ impl Checker {
     }
     // endregion
 
-    fn check_stmt(&mut self, stmt: Node<Stmt>) -> Result<Node<Stmt>> {
+    fn check_stmt(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
         match stmt.node {
             Stmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
                 let str = arg.ident.str();
-                if self.var_map.contains_key(str) {
-                    return err!("Duplicate definition of a Variable: '{str}'");
+                if self.stack_var_map.contains_key(str) {
+                    return comp_err!("Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
-                    return err!("Illegal Variable name, Types are reserved: '{str}'");
+                    return comp_err!("Illegal Variable name, Types are reserved: '{str}'");
                 }
 
                 let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
@@ -548,37 +593,52 @@ impl Checker {
 
                 let var = Variable {
                     ident: arg.ident,
+                    mutable: arg.mutable,
                     var_type,
                     init_expr,
                     scope_id: self.ctx.scope_depth,
                 };
 
                 // insert variable into registry
-                self.var_map
-                    .insert(var.ident.str().to_string(), self.var_vec.len());
-                self.var_vec.push(var.clone());
+                self.stack_var_map
+                    .insert(var.ident.str().to_string(), self.stack_var_vec.len());
+                self.stack_var_vec.push(var.clone());
 
                 // check intial expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
+                    let expected = self.get_type_sem(&var.var_type);
                     let init_expr = self.check_expr(expr)?;
 
-                    let expected = ExprSem {
-                        form: ExprForm::Compound,
-                        type_mode: self.get_full_mode(&var.var_type),
-                        addr_mode: arg.parse_type.addr_mode,
-                        width: self.get_full_width(&var.var_type),
-                    };
-                    match self.check_type_equivalence(&expected, &init_expr) {
-                        Ok(_) => (),
-                        Err(e) => {
-                            return err!(
-                                "Invalid init expr for variable {}\n{e}", var.ident.str()
-                            );
-                        }
+
+                    if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
+                        return comp_err!((Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var.clone())}), "Invalid init expr for variable {}\n{error}", var.ident);
                     }
                 }
 
-                Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var)})
+                CompilerResult::Ok(Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var)})
+            }
+            Stmt::Assign {
+                ref ident,
+                ref expr,
+            } => {
+                let var = self.get_var(ident.str())?;
+
+                let expected = self.get_type_sem(&var.var_type);
+                let assign_rhs = self.check_expr(expr)?;
+                self.check_type_equivalence(&expected, &assign_rhs)?;
+
+                if !var.mutable {
+                    // if the variable is not initialised, this is the initialisation!
+                    match var.init_expr {
+                        InitExpr::None => {
+                            let var_mut = self.get_var_mut(ident.str())?;
+                            var_mut.init_expr = InitExpr::Deferred
+                        }
+                        _ => return comp_err!((stmt), "Re-assignment of a Constant:\n{var:#?}"),
+                    }
+                }
+
+                CompilerResult::Ok(stmt)
             }
             /*
             NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
@@ -705,26 +765,6 @@ impl Checker {
                     scope: new_scope,
                 })
             }
-            NodeStmt::Assign {
-                ref ident,
-                ref expr,
-            } => {
-                let var = self.get_var(ident.as_str())?;
-                let var_data = self.get_exprdata(var)?;
-                if !var.mutable {
-                    // if the variable is not initialised, this is the initialisation!
-                    match var.init_expr {
-                        InitExpr::None => {
-                            let var_mut = self.get_var_mut(ident.as_str())?;
-                            var_mut.init_expr = InitExpr::Deferred
-                        }
-                        _ => return err!(self, "Re-assignment of a Constant:\n{var:#?}"),
-                    }
-                }
-                let checked = self.check_expr(expr)?;
-                self.check_type_equivalence(&var_data, &checked)?;
-                Ok(stmt)
-            }
             NodeStmt::Exit(ref expr) => {
                 self.check_expr(&expr)?;
                 Ok(stmt)
@@ -738,17 +778,17 @@ impl Checker {
                 }
                 Ok(stmt)
             } */
-            Stmt::FnDecl { .. } => {
-                err!("Functions cannot be nested, they're top level statements")
+            Stmt::FnDecl { ident, .. } => {
+                comp_err!((stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
             }
-            _ => err!("Found {stmt:#?}.. shouldn't have."),
+            _ => comp_err!((stmt.clone()), "Unexpected statement {stmt:#?}"),
         }
     }
 
     fn check_expr(&self, expr: &Node<Expr>) -> Result<ExprSem> {
         match &expr.node {
             Expr::Term(term) => self.check_term(term),
-            Expr::BinaryExpr { op, lhs, rhs } => {
+            Expr::Binary { op, lhs, rhs } => {
                 let lhs_checked = self.check_expr(lhs)?;
                 let rhs_checked = self.check_expr(rhs)?;
                 self.check_type_equivalence(&lhs_checked, &rhs_checked)?;
@@ -823,8 +863,8 @@ impl Checker {
                 }
             }
             // unary operators tend to be very unqiue, so they are individually matched.
-            Expr::UnaryExpr { op, operand } => {
-                let checked = self.check_expr(&*operand)?;
+            Expr::Unary { op, expr } => {
+                let checked = self.check_expr(&*expr)?;
                 
                 // 'Unary sub' signed int or lit => signed int literal
                 // 'Cmp Not'   bool              => bool
@@ -919,10 +959,7 @@ impl Checker {
                 width: 1,
             }),
             Term::Ident => {
-                let var = self
-                    .var_vec
-                    .get(*self.var_map.get(Contents::get_src_oneline(term.start, term.end)).unwrap())
-                    .unwrap();
+                let var = self.get_var(&Contents::get_src_oneline(term.start, term.end))?;
                 let addr_mode = match &var.var_type {
                     Type::Primitive(full_type) => full_type.addr_mode,
                     Type::Struct {
@@ -1018,29 +1055,40 @@ impl Checker {
             width,
         })
     }
-
-    // base type width depends solely on form
-    fn get_base_width(inp_type: &Type<BaseType>) -> usize {
-        match inp_type {
-            Type::Primitive(base) => base.width,
-            Type::Struct { .. } => todo!("struct width calculation"),
-            Type::Union { .. } => todo!("union width calculation"),
+    
+    fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
+        let base = self.type_vec.get(base_id).unwrap();
+        match base {
+            Type::Primitive(base) => Type::Primitive(FullType {
+                width: base.width,
+                type_id: base_id,
+                addr_mode,
+            }),
+            Type::Struct { .. } => todo!("struct full type"),
+            Type::Union { .. } => todo!("union full type"),
         }
     }
 
-    fn get_base_mode(inp_type: &Type<BaseType>) -> TypeMode {
-        match inp_type {
-            Type::Primitive(base) => base.mode,
-            Type::Struct { .. } => todo!("struct mode calculation"),
-            Type::Union { .. } => todo!("union mode calculation"),
+    fn get_var(&self, str: &str) -> Result<&Variable> {
+        match self.stack_var_map.get(str) {
+            Some(id) => Ok(self.stack_var_vec.get(*id).unwrap()),
+            None => err!("Variable not found: '{str}'"),
         }
     }
 
-    fn get_base_ident(inp_type: &Type<BaseType>) -> &str {
-        match inp_type {
-            Type::Primitive(base) => base.ident.as_str(),
-            Type::Struct { .. } => todo!("struct ident calculation"),
-            Type::Union { .. } => todo!("union ident calculation"),
+    fn get_var_mut(&mut self, str: &str) -> Result<&mut Variable> {
+        match self.stack_var_map.get(str) {
+            Some(id) => Ok(self.stack_var_vec.get_mut(*id).unwrap()),
+            None => err!("Variable not found: '{str}'"),
+        }
+    }
+
+    fn get_type_sem(&self, var_type: &Type<FullType>) -> ExprSem {
+        ExprSem {
+            form: ExprForm::Compound,
+            type_mode: self.get_full_mode(var_type),
+            addr_mode: self.get_full_addrmode(var_type),
+            width: self.get_full_width(var_type),
         }
     }
 
@@ -1080,16 +1128,36 @@ impl Checker {
         }
     }
 
-    fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
-        let base = self.type_vec.get(base_id).unwrap();
-        match base {
-            Type::Primitive(base) => Type::Primitive(FullType {
-                width: base.width,
-                type_id: base_id,
-                addr_mode,
-            }),
-            Type::Struct { .. } => todo!("struct full type"),
-            Type::Union { .. } => todo!("union full type"),
+    fn get_full_addrmode(&self, inp_type: &Type<FullType>) -> AddressingMode {
+        match inp_type {
+            Type::Primitive(full) => full.addr_mode,
+            Type::Struct { .. } => todo!("struct addr_mode calculation"),
+            Type::Union { .. } => todo!("union addr_mode calculation"),
+        }
+    }
+
+     // base type width depends solely on form
+     fn get_base_width(inp_type: &Type<BaseType>) -> usize {
+        match inp_type {
+            Type::Primitive(base) => base.width,
+            Type::Struct { .. } => todo!("struct width calculation"),
+            Type::Union { .. } => todo!("union width calculation"),
+        }
+    }
+
+    fn get_base_mode(inp_type: &Type<BaseType>) -> TypeMode {
+        match inp_type {
+            Type::Primitive(base) => base.mode,
+            Type::Struct { .. } => todo!("struct mode calculation"),
+            Type::Union { .. } => todo!("union mode calculation"),
+        }
+    }
+
+    fn get_base_ident(inp_type: &Type<BaseType>) -> &str {
+        match inp_type {
+            Type::Primitive(base) => base.ident.as_str(),
+            Type::Struct { .. } => todo!("struct ident calculation"),
+            Type::Union { .. } => todo!("union ident calculation"),
         }
     }
 
@@ -1099,7 +1167,7 @@ impl Checker {
 /*
 fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
     match expr {
-        NodeExpr::BinaryExpr { op, lhs, rhs } => {
+        NodeExpr::Binary { op, lhs, rhs } => {
             let ldata = self.check_expr(lhs)?;
             let rdata = self.check_expr(rhs)?;
             // debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
@@ -1169,8 +1237,8 @@ fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
                 ),
             }
         }
-        NodeExpr::UnaryExpr { op, operand } => {
-            let checked = self.check_expr(&*operand)?;
+        NodeExpr::Unary { op, expr } => {
+            let checked = self.check_expr(&*expr)?;
             // debug!(self, "{checked:#?}");
 
             // 'Unary sub' signed int or lit => int | signed
@@ -1454,14 +1522,14 @@ fn check_type_mode(
 
 fn get_expr_ident(&self, expr: &NodeExpr, right_side: bool) -> String {
     match expr {
-        NodeExpr::BinaryExpr { lhs, rhs, .. } => {
+        NodeExpr::Binary { lhs, rhs, .. } => {
             if right_side {
                 self.get_expr_ident(&*rhs, false)
             } else {
                 self.get_expr_ident(&*lhs, false)
             }
         }
-        NodeExpr::UnaryExpr { operand, .. } => self.get_expr_ident(&*operand, false),
+        NodeExpr::Unary { expr, .. } => self.get_expr_ident(&*expr, false),
         NodeExpr::Term(term) => match term {
             NodeTerm::True => "true".to_string(),
             NodeTerm::False => "false".to_string(),

@@ -1,4 +1,5 @@
 use std::{
+    cmp::max,
     convert::Infallible,
     fs,
     io::{BufRead, BufReader},
@@ -12,7 +13,7 @@ use crate::{Node, Scope};
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
     print_logs: [false, false, false, false],
-    print_output: [false, false, false, false],
+    print_output: [false, false, true, false],
     current_prefix: LogPrefix::Lexical,
     file_pos: Pos { x: 0, y: 0 },
     padding: String::new(),
@@ -254,6 +255,24 @@ impl Contents {
         vec
     }
 
+    pub fn get_src_lines(start_y: u32, end_y: u32) -> Vec<&'static str> {
+        let last_line_len;
+        unsafe {
+            // last_line_len = std::cmp::max(SOURCE.contents.get().unwrap().len() as u32, 1) - 1;
+            last_line_len = match SOURCE.contents.get(end_y as usize) {
+                Some(line) => line.len().max(1) as u32 - 1,
+                None => 0,
+            }
+        }
+        Self::get_src(
+            Pos { x: 0, y: start_y },
+            Pos {
+                x: last_line_len,
+                y: end_y,
+            },
+        )
+    }
+
     fn get_file_name() -> String {
         let args: String = std::env::args().skip(1).take(1).collect();
         assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
@@ -298,7 +317,14 @@ impl std::fmt::Debug for Pos {
 
 impl Pos {
     pub fn fmt_range(&self, other: Pos) -> String {
-        if other.x > self.x && other.y > self.y {
+        if other.y > self.y && self.x == other.x {
+            return format!(
+                "(col: {}..{}, row: {})",
+                self.y + 1,
+                other.y + 1,
+                self.x + 1,
+            );
+        } else if other.y > self.y {
             return format!(
                 "(col: {}..{}, row: {}..{})",
                 self.y + 1,
@@ -313,15 +339,8 @@ impl Pos {
                 self.x + 1,
                 other.x + 1
             );
-        } else if other.y > self.y && self.x == other.x {
-            return format!(
-                "(col: {}..{}, row: {})",
-                self.y + 1,
-                other.y + 1,
-                self.x + 1,
-            );
         } else {
-            return format!("{self:?}");
+            return format!("I give up {self:?} {other:?}");
         }
     }
 }
@@ -407,17 +426,17 @@ impl<T> FromResidual<Result<Infallible, anyhow::Error>> for CompilerResult<T> {
 
 #[macro_export]
 macro_rules! comp_err {
-    ($msg:expr) => {{
+    (($data:expr), $fmt:expr, $($arg:tt)+) => {{
         let pos = crate::utils::Logger::get_pos();
         let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
         crate::utils::CompilerResult::Err {
-            data: None,
+            data: Some($data),
             error: anyhow::anyhow!(
                 "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
-                format!($msg),
+                format!($fmt, $($arg)+),
             ),
         }
     }};
@@ -450,15 +469,18 @@ macro_rules! comp_err {
             ),
         }
     }};
-    (($data:expr), $fmt:expr, $($arg:tt)+) => {{
+
+    ($msg:expr) => {{
+        let pos = crate::utils::Logger::get_pos();
+        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
         crate::utils::CompilerResult::Err {
-            data: Some($data),
+            data: None,
             error: anyhow::anyhow!(
                 "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
-                format!($fmt, $($arg)+),
+                format!($msg),
             ),
         }
     }};
