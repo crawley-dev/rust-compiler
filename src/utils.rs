@@ -6,14 +6,26 @@ use std::{
     ops::{ControlFlow, FromResidual, Try},
 };
 
-use crate::{Node, Scope};
+use crate::{Node, Scope, Stmt};
+
+fn count_digits(mut n: u32) -> u32 {
+    if n == 0 {
+        return 1;
+    }
+    let mut count = 0;
+    while n > 0 {
+        count += 1;
+        n /= 10;
+    }
+    count
+}
 
 // region: Logger
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    print_logs: [false, false, false, false],
-    print_output: [false, false, true, false],
+    print_logs: [true, true, false, false],
+    print_output: [false, false, false, false],
     current_prefix: LogPrefix::Lexical,
     file_pos: Pos { x: 0, y: 0 },
     padding: String::new(),
@@ -89,8 +101,8 @@ impl Logger {
 
     pub fn get_padding(p: Pos) -> (&'static str, &'static str) {
         unsafe {
-            let x_padding = LOGGER.max_digits.x - (/*1.0 + */p.x as f64).log10().floor() as u32;
-            let y_padding = LOGGER.max_digits.y - (/*1.0 + */p.y as f64).log10().floor() as u32;
+            let x_padding = LOGGER.max_digits.x - count_digits(p.x + 1);
+            let y_padding = LOGGER.max_digits.y - count_digits(p.y + 1);
             (
                 LOGGER.padding.get(..x_padding as usize).unwrap(),
                 LOGGER.padding.get(..y_padding as usize).unwrap(),
@@ -144,6 +156,9 @@ macro_rules! debug {
         if crate::utils::Logger::print_logs() {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+            if pos.x == 10 {
+                println!("\n'{x_padding}'\n")
+            }
             println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
@@ -191,8 +206,8 @@ impl Contents {
         unsafe {
             LOGGER.padding = " ".repeat(10); // if you have more than 10 digits, you're on your own
             LOGGER.max_digits = pos(
-                (max_width as f64).log10().floor() as u32,
-                (max_height as f64).log10().floor() as u32,
+                count_digits(max_width as u32),
+                count_digits(max_height as u32),
             );
 
             SOURCE = Contents {
@@ -221,8 +236,8 @@ impl Contents {
 
     pub fn get_src_oneline(start: Pos, end: Pos) -> &'static str {
         match Self::get_contents_ref().get(start.y as usize) {
-            Some(line) => &line[start.x as usize..end.x as usize],
-            None => panic!("Invalid start position {start:?}, {end:?}"),
+            Some(line) if (end.x as usize) <= line.len() => &line[start.x as usize..end.x as usize],
+            _ => panic!("Invalid start position {start:?}, {end:?}"),
         }
     }
 

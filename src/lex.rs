@@ -12,21 +12,6 @@ use std::{
 
 // region: Type Definitions
 
-#[derive(Debug)]
-pub enum Associativity {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BufKind {
-    Word,
-    IntLit,
-    Symbol,
-    Illegal,
-    NewLine,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
     // Generic Symbols
@@ -98,6 +83,21 @@ pub enum TokenKind {
     // Primitive Constructs
     Ident,
     IntLit,
+}
+
+#[derive(Debug)]
+pub enum Associativity {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BufKind {
+    Word,
+    IntLit,
+    Symbol,
+    Illegal,
+    NewLine,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -398,13 +398,16 @@ impl Lexer {
 
         let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
         let len = buf.len() as u32;
-        debug!("buf: '{buf_str}', kind: {buf_kind:?} | start: {}", self.idx); // TODO(TOM): formatting ruined on '\n' :/
+        debug!(
+            "buf: '{buf_str}', kind: {buf_kind:?} | buf_len: {}",
+            buf_str.len()
+        ); // TODO(TOM): formatting ruined on '\n' :/
 
         match buf_kind {
             BufKind::Illegal => None,
             BufKind::NewLine => {
                 self.is_linecomment = false;
-                Logger::set_pos(pos(0, Logger::get_pos().y + 1));
+                Logger::set_pos(pos(0, Logger::get_pos().y + buf_str.len() as u32));
                 None
             }
             BufKind::Word => self.match_word(&buf_str),

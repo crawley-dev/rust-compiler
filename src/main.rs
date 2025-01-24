@@ -17,6 +17,7 @@ use std::{
     fs,
     io::{BufRead, BufReader},
     panic::PanicHookInfo,
+    process::exit,
 };
 
 mod utils;
@@ -52,17 +53,44 @@ fn main() {
     // Get file contents, init to global buffer
     Contents::init();
 
-    let (tokens, error) = lex(Contents::get_contents_ref());
+    let lexer = lex(Contents::get_contents_ref());
+    let ast = parse(lexer.tokens);
+    let checker = semantic_check(ast);
+    // code_gen(gen_data, file_name);
+}
+
+/*----------------------------------------------------------------------------------------
+---- Stages of Compilation ----------------------------------------------------------------
+----------------------------------------------------------------------------------------*/
+
+fn lex(contents: &[&str]) -> Lexer {
+    Logger::set_prefix(LogPrefix::Lexical);
+
+    if Logger::print_logs() {
+        println!("\nContents:\n{contents:#?}\n");
+    }
+
+    let (lexer, error) = Lexer::new(contents).tokenize();
+
     if let Some(e) = error {
-        let (start, tok_len) = match tokens.back() {
+        let (start, tok_len) = match lexer.tokens.back() {
             Some(tok) => (tok.start, tok.len),
             None => (pos(0, 0), 0),
         };
-        handle_error(tokens, e, start, pos(start.x + tok_len, start.y));
-        return;
+        handle_error(lexer.tokens, e, start, pos(start.x + tok_len, start.y));
     }
 
-    let (ast, error) = parse(tokens);
+    if Logger::print_output() {
+        println!("{lexer}");
+    }
+    lexer
+}
+
+fn parse(tokens: VecDeque<Token>) -> Ast {
+    Logger::set_prefix(LogPrefix::Parse);
+
+    let (ast, error) = Parser::new(tokens).parse_tokens();
+
     if let Some(e) = error {
         let (start, end) = match ast.stmts.last() {
             Some(node) => match drill_down(node) {
@@ -72,10 +100,21 @@ fn main() {
             None => (pos(0, 0), pos(0, 0)),
         };
         handle_error(ast, e, start, end);
-        return;
     }
 
-    let (checker, error) = semantic_check(ast);
+    if Logger::print_output() {
+        println!("\n{:#?}\n", ast);
+    }
+
+    ast
+}
+
+// fn semantic_check(ast: Ast) -> (Checker, Option<Error>) {
+fn semantic_check(ast: Ast) -> Checker {
+    Logger::set_prefix(LogPrefix::Semantic);
+
+    let (checker, error) = Checker::new().check_ast(ast);
+
     if let Some(e) = error {
         let (start, end) = match checker.ast.stmts.last() {
             Some(node) => match drill_down(node) {
@@ -85,47 +124,13 @@ fn main() {
             None => (pos(0, 0), pos(0, 0)),
         };
         handle_error(checker, e, start, end);
-        return;
     }
-
-    // code_gen(gen_data, file_name);
-}
-
-/*----------------------------------------------------------------------------------------
----- Stags of Compilation ----------------------------------------------------------------
-----------------------------------------------------------------------------------------*/
-
-fn lex(contents: &[&str]) -> (VecDeque<Token>, Option<Error>) {
-    Logger::set_prefix(LogPrefix::Lexical);
-
-    let (lexer, error) = Lexer::new(contents).tokenize();
 
     if Logger::print_output() {
-        println!("{lexer}");
+        println!("\n{:#?}\n", checker);
     }
-    (lexer.tokens, error)
-}
 
-fn parse(tokens: VecDeque<Token>) -> (Ast, Option<Error>) {
-    Logger::set_prefix(LogPrefix::Parse);
-
-    let (ast, error) = Parser::new(tokens).parse_tokens();
-
-    if Logger::print_output() {
-        println!("\n{:#?}\n", ast);
-    }
-    (ast, error)
-}
-
-fn semantic_check(ast: Ast) -> (Checker, Option<Error>) {
-    Logger::set_prefix(LogPrefix::Semantic);
-
-    let (checked, error) = Checker::new().check_ast(ast);
-
-    if Logger::print_output() {
-        println!("\n{:#?}\n", checked);
-    }
-    (checked, error)
+    checker
 }
 
 /*
@@ -153,11 +158,12 @@ fn code_gen(data: Checker, file_name: String) {
 }
 */
 
-/*----------------------------------------------------------------------------------------
----- Misc --------------------------------------------------------------------------------
-----------------------------------------------------------------------------------------*/
-
-fn handle_error<T: std::fmt::Debug>(error_data: T, error: Error, error_start: Pos, error_end: Pos) {
+fn handle_error<T: std::fmt::Debug>(
+    error_data: T,
+    error: Error,
+    error_start: Pos,
+    error_end: Pos,
+) -> ! {
     let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
         Ok(art) => art,
         Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
@@ -199,17 +205,19 @@ fn handle_error<T: std::fmt::Debug>(error_data: T, error: Error, error_start: Po
 
     println!(
         "\n{panic_banner}\n\
-         \nError Occurred near:\
-         \n'{erroring_code}'\
-         \n{dots_before}{error_highlight}{dots_after}\n\
-         \nError Chain:\
-         \n{error_chain}\n\
-         \nError Data:\
-         \n{error_data:#?}\n\
-         \nBacktrace:\
-         \n{backtrace}\n",
+        \nBacktrace:\
+        \n{backtrace}\n
+        \nError Data:\
+        \n{error_data:#?}\n\
+        \nError Occurred near:\
+        \n'{erroring_code}'\
+        \n{dots_before}{error_highlight}{dots_after}\n\
+        \nError Chain:\
+        \n{error_chain}\n",
         backtrace = error.backtrace(),
     );
+
+    exit(0);
 }
 
 fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {

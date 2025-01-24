@@ -769,15 +769,38 @@ impl Checker {
                 self.check_expr(&expr)?;
                 Ok(stmt)
             }
-            NodeStmt::NakedScope(scope) => {
-                Ok(NodeStmt::NakedScope(self.check_scope_default(scope)?))
-            }
             NodeStmt::Break => {
                 if self.ctx.loop_count <= 0 {
                     return err!(self, "Not inside a loop! cannot break");
+                    }
+                    Ok(stmt)
+                    } */
+           Stmt::NakedScope(scope) => {
+                match self.check_scope_default(scope) {
+                    CompilerResult::Ok(data) => CompilerResult::Ok(
+                        Node { 
+                            start: data.start, 
+                            end: data.end, 
+                            node: Stmt::NakedScope(data) 
+                        }),
+                    CompilerResult::Err {data, error} => {
+                        let data = match data {
+                            Some(node) => node,
+                            None => return CompilerResult::Err { data: None, error},
+                        };
+                        // TODO(TOM): is this not a bit ridiculous? 
+                        // node containg a singular item. so much wasted data
+                        CompilerResult::Err { 
+                            data: Some(Node {
+                                start: stmt.start,
+                                end: stmt.end,
+                                node: Stmt::NakedScope(data),
+                            }),
+                            error
+                        }
+                    }
                 }
-                Ok(stmt)
-            } */
+           }
             Stmt::FnDecl { ident, .. } => {
                 comp_err!((stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
             }
@@ -877,30 +900,29 @@ impl Checker {
                     }
                     AddressingMode::Pointer(depth) => {
                         match op {
+                            TokenKind::Ptr if depth == 1 => {
+                                Ok(ExprSem {
+                                    form: ExprForm::Literal,
+                                    type_mode: checked.type_mode,
+                                    addr_mode: AddressingMode::Primitive,
+                                    // width: checked.width,
+                                    // calculate width of type it was pointing to, e.g. bool == 1.
+                                    // because currently checked.width == 8 (ptr)
+                                    // not ideal, should have this information saved?
+                                    width: match checked.type_mode {
+                                        TypeMode::Boolean => 1,
+                                        TypeMode::Int(_) => 8, // will be shrunk to match caller.
+                                        _ => todo!("width calculation for type"),
+                                    },
+                                })
+                            }
                             TokenKind::Ptr => {
-                                if depth == 1 {
-                                    Ok(ExprSem {
-                                        form: ExprForm::Literal,
-                                        type_mode: checked.type_mode,
-                                        addr_mode: AddressingMode::Primitive,
-                                        // width: checked.width,
-                                        // calculate width of type it was pointing to, e.g. bool == 1.
-                                        // because currently checked.width == 8 (ptr)
-                                        // not ideal, should have this information saved?
-                                        width: match checked.type_mode {
-                                            TypeMode::Boolean => 1,
-                                            TypeMode::Int(_) => 8, // will be shrunk to match caller.
-                                            _ => todo!("width calculation for type"),
-                                        },
-                                    })
-                                } else {
-                                    Ok(ExprSem {
-                                        form: ExprForm::Literal,
-                                        type_mode: checked.type_mode,
-                                        addr_mode: AddressingMode::Pointer(depth - 1),
-                                        width: checked.width,
-                                    })
-                                }
+                                Ok(ExprSem {
+                                    form: ExprForm::Literal,
+                                    type_mode: checked.type_mode,
+                                    addr_mode: AddressingMode::Pointer(depth - 1),
+                                    width: checked.width,
+                                })
                             }
                             _ => err!(
                                 "[PTR] Invalid Unary Expression: {op:?}..\n{checked:#?}"

@@ -228,4 +228,9 @@ impl PosAwareDebug for Term {
     }
 }
 
+impl Debug for Ast {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#?}", self.stmts)
+    }
+}
 // endregion

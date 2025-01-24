@@ -113,7 +113,7 @@ pub struct Scope {
     pub inherits_stmts: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Ast {
     pub stmts: Vec<Node<Stmt>>,
 }
@@ -192,8 +192,10 @@ impl Parser {
                 },
             }),
             CompilerResult::Err { data, error } => {
-                let scope =
-                    data.expect("Unreachable code, parse_scope must return data within error");
+                let scope = match data {
+                    Some(scope) => scope,
+                    None => return CompilerResult::Err { data: None, error },
+                };
                 CompilerResult::Err {
                     data: Some(Node {
                         start: fn_keyword.start,
@@ -209,6 +211,52 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn parse_scope(&mut self, inherits_stmts: bool) -> CompilerResult<Node<Scope>> {
+        // consumes statements until a closebrace is found.
+        let open_brace = self.expect(TokenKind::OpenBrace)?;
+
+        let mut stmts = Vec::new();
+        while self.expect(TokenKind::CloseBrace).is_err() {
+            match self.parse_stmt() {
+                CompilerResult::Ok(stmt) => stmts.push(stmt),
+                CompilerResult::Err { data, error } => {
+                    if let Some(data) = data {
+                        stmts.push(data);
+                    }
+                    let end = match stmts.last() {
+                        Some(stmt) => stmt.end,
+                        None => open_brace.end_pos(),
+                    };
+                    return CompilerResult::Err {
+                        data: Some(Node {
+                            start: open_brace.start,
+                            end,
+                            node: Scope {
+                                stmts,
+                                inherits_stmts,
+                            },
+                        }),
+                        error,
+                    };
+                }
+            }
+        }
+
+        let end = match stmts.last() {
+            Some(stmt) => stmt.end,
+            None => open_brace.end_pos(),
+        };
+
+        CompilerResult::Ok(Node {
+            start: open_brace.start,
+            end,
+            node: Scope {
+                stmts,
+                inherits_stmts,
+            },
+        })
     }
 
     fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
@@ -257,8 +305,10 @@ impl Parser {
                 let scope = match self.parse_scope(true) {
                     CompilerResult::Ok(scope) => scope,
                     CompilerResult::Err { data, error } => {
-                        let scope = data
-                            .expect("Unreachable code, parse_scope must return data within error");
+                        let scope = match data {
+                            Some(scope) => scope,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
                         return CompilerResult::Err {
                             data: Some(Node {
                                 start: if_tok.start,
@@ -282,13 +332,13 @@ impl Parser {
                         // Found an else if, parse condition & scope, push to branches
                     } else if self.expect(TokenKind::If).is_ok() {
                         let condition = self.parse_expr(0)?;
-                        // let scope = self.parse_scope(true)?;
                         let scope = match self.parse_scope(true) {
                             CompilerResult::Ok(scope) => scope,
                             CompilerResult::Err { data, error } => {
-                                let scope = data.expect(
-                                    "Unreachable code, parse_scope must return data within error",
-                                );
+                                let scope = match data {
+                                    Some(scope) => scope,
+                                    None => return CompilerResult::Err { data: None, error },
+                                };
                                 return CompilerResult::Err {
                                     data: Some(Node {
                                         start: if_tok.start,
@@ -313,9 +363,10 @@ impl Parser {
                     let scope = match self.parse_scope(true) {
                         CompilerResult::Ok(scope) => scope,
                         CompilerResult::Err { data, error } => {
-                            let scope = data.expect(
-                                "Unreachable code, parse_scope must return data within error",
-                            );
+                            let scope = match data {
+                                Some(scope) => scope,
+                                None => return CompilerResult::Err { data: None, error },
+                            };
                             return CompilerResult::Err {
                                 data: Some(Node {
                                     start: if_tok.start,
@@ -372,8 +423,10 @@ impl Parser {
                 let scope = match self.parse_scope(true) {
                     CompilerResult::Ok(scope) => scope,
                     CompilerResult::Err { data, error } => {
-                        let scope = data
-                            .expect("Unreachable code, parse_scope must return data within error");
+                        let scope = match data {
+                            Some(scope) => scope,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
                         return CompilerResult::Err {
                             data: Some(Node {
                                 start: tok.start,
@@ -450,8 +503,10 @@ impl Parser {
                 let scope = match self.parse_scope(true) {
                     CompilerResult::Ok(scope) => scope,
                     CompilerResult::Err { data, error } => {
-                        let scope = data
-                            .expect("Unreachable code, parse_scope must return data within error");
+                        let scope = match data {
+                            Some(scope) => scope,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
                         return CompilerResult::Err {
                             data: Some(Node {
                                 start: tok.start,
@@ -487,52 +542,6 @@ impl Parser {
             },
             _ => CompilerResult::Ok(stmt),
         }
-    }
-
-    fn parse_scope(&mut self, inherits_stmts: bool) -> CompilerResult<Node<Scope>> {
-        // consumes statements until a closebrace is found.
-        let open_brace = self.expect(TokenKind::OpenBrace)?;
-
-        let mut stmts = Vec::new();
-        while self.expect(TokenKind::CloseBrace).is_err() {
-            match self.parse_stmt() {
-                CompilerResult::Ok(stmt) => stmts.push(stmt),
-                CompilerResult::Err { data, error } => {
-                    if let Some(data) = data {
-                        stmts.push(data);
-                    }
-                    let end = match stmts.last() {
-                        Some(stmt) => stmt.end,
-                        None => open_brace.end_pos(),
-                    };
-                    return CompilerResult::Err {
-                        data: Some(Node {
-                            start: open_brace.start,
-                            end,
-                            node: Scope {
-                                stmts,
-                                inherits_stmts,
-                            },
-                        }),
-                        error,
-                    };
-                }
-            }
-        }
-
-        let end = match stmts.last() {
-            Some(stmt) => stmt.end,
-            None => open_brace.end_pos(),
-        };
-
-        CompilerResult::Ok(Node {
-            start: open_brace.start,
-            end,
-            node: Scope {
-                stmts,
-                inherits_stmts,
-            },
-        })
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
