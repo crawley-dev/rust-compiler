@@ -24,8 +24,8 @@ fn count_digits(mut n: u32) -> u32 {
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
-    print_logs: [true, true, false, false],
-    print_output: [false, false, false, false],
+    print_logs: [false, false, true, false],
+    print_output: [true, false, false, false],
     current_prefix: LogPrefix::Lexical,
     file_pos: Pos { x: 0, y: 0 },
     padding: String::new(),
@@ -159,7 +159,7 @@ macro_rules! debug {
             if pos.x == 10 {
                 println!("\n'{x_padding}'\n")
             }
-            println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+            println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n\n",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -172,7 +172,7 @@ macro_rules! debug {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!(
-                "[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                "[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -381,16 +381,6 @@ pub enum CompilerResult<T, E = anyhow::Error> {
 }
 
 impl<T> CompilerResult<T> {
-    pub fn context(self, msg: &'static str) -> Self {
-        match self {
-            CompilerResult::Ok(data) => CompilerResult::Ok(data),
-            CompilerResult::Err { data, error } => CompilerResult::Err {
-                data,
-                error: error.context(msg),
-            },
-        }
-    }
-
     pub fn is_ok(&self) -> bool {
         match self {
             CompilerResult::Ok(_) => true,

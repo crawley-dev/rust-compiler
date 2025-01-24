@@ -63,8 +63,7 @@ use crate::{
 use anyhow::{Error, Result};
 use educe::Educe;
 use std::{
-    collections::{HashMap},
-    ptr::NonNull,
+    cmp::max, collections::HashMap, ptr::NonNull
 };
 
 // region: Type Definitions
@@ -609,6 +608,8 @@ impl Checker {
                     let expected = self.get_type_sem(&var.var_type);
                     let init_expr = self.check_expr(expr)?;
 
+                    println!("init_expr for '{}' {init_expr:#?}", var.ident.str());
+
 
                     if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
                         return comp_err!((Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var.clone())}), "Invalid init expr for variable {}\n{error}", var.ident);
@@ -789,7 +790,7 @@ impl Checker {
                             None => return CompilerResult::Err { data: None, error},
                         };
                         // TODO(TOM): is this not a bit ridiculous? 
-                        // node containg a singular item. so much wasted data
+                        // node containg a singular item. so much wasted data on pos
                         CompilerResult::Err { 
                             data: Some(Node {
                                 start: stmt.start,
@@ -814,10 +815,10 @@ impl Checker {
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_checked = self.check_expr(lhs)?;
                 let rhs_checked = self.check_expr(rhs)?;
-                self.check_type_equivalence(&lhs_checked, &rhs_checked)?;
+                
+                let resultant_form = self.check_type_equivalence(&lhs_checked, &rhs_checked)?;
 
-                match lhs_checked.addr_mode {
-                    // can check lhs or rhs, doesn't matter, they are equal
+                match resultant_form.addr_mode {
                     AddressingMode::Array(_) => {
                         err!(
                             "[ARR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
@@ -835,7 +836,7 @@ impl Checker {
                         match op {
                             _ if op.has_flags(TokenFlags::CMP) => {
                                 Ok(ExprSem {
-                                    form: ExprForm::Literal,
+                                    form: resultant_form.form,
                                     type_mode: TypeMode::Boolean,
                                     addr_mode: AddressingMode::Primitive,
                                     width: 1,
@@ -843,10 +844,10 @@ impl Checker {
                             }
 
                             _ if op.has_flags(TokenFlags::LOG) => {
-                                match lhs_checked.type_mode { 
+                                match resultant_form.type_mode { 
                                     TypeMode::Boolean => { 
                                         Ok(ExprSem {
-                                            form: ExprForm::Literal,
+                                            form: resultant_form.form,
                                             type_mode: TypeMode::Boolean,
                                             addr_mode: AddressingMode::Primitive,
                                             width: 1,
@@ -857,24 +858,24 @@ impl Checker {
                             }
 
                             _ if op.has_flags(TokenFlags::ARITH) => {
-                                match lhs_checked.type_mode {
+                                match resultant_form.type_mode {
                                     TypeMode::Int(_) => Ok(ExprSem {
-                                        form: ExprForm::Literal,
-                                        type_mode: lhs_checked.type_mode,
+                                        form: resultant_form.form,
+                                        type_mode: resultant_form.type_mode,
                                         addr_mode: AddressingMode::Primitive,
-                                        width: lhs_checked.width,
+                                        width: resultant_form.width,
                                     }),
                                     _ => err!("Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                                 }
                             }
                             
                             _ if op.has_flags(TokenFlags::BIT) => {
-                                match lhs_checked.type_mode {
+                                match resultant_form.type_mode {
                                     TypeMode::Int(_) => Ok(ExprSem {
-                                        form: ExprForm::Literal,
-                                        type_mode: lhs_checked.type_mode,
+                                        form: resultant_form.form,
+                                        type_mode: resultant_form.type_mode,
                                         addr_mode: AddressingMode::Primitive,
-                                        width: lhs_checked.width,
+                                        width: resultant_form.width,
                                     }),
                                     _ => err!("Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                                 }
@@ -900,9 +901,10 @@ impl Checker {
                     }
                     AddressingMode::Pointer(depth) => {
                         match op {
+                            // deref address into a variable.
                             TokenKind::Ptr if depth == 1 => {
                                 Ok(ExprSem {
-                                    form: ExprForm::Literal,
+                                    form: ExprForm::Variable, // this is going to point to a mem loc, a var!
                                     type_mode: checked.type_mode,
                                     addr_mode: AddressingMode::Primitive,
                                     // width: checked.width,
@@ -918,7 +920,7 @@ impl Checker {
                             }
                             TokenKind::Ptr => {
                                 Ok(ExprSem {
-                                    form: ExprForm::Literal,
+                                    form: ExprForm::Variable, // dereferencing into a memory location, must be a var.
                                     type_mode: checked.type_mode,
                                     addr_mode: AddressingMode::Pointer(depth - 1),
                                     width: checked.width,
@@ -932,12 +934,9 @@ impl Checker {
                     AddressingMode::Primitive => {
                         match op {
                             TokenKind::Sub => match checked.type_mode {
-                                TypeMode::Int(true) => Ok(ExprSem {
-                                    form: ExprForm::Compound,
-                                    ..checked
-                                }),
+                                TypeMode::Int(true) => Ok(checked),
                                 TypeMode::Int(false) if checked.form == ExprForm::Literal => Ok(ExprSem {
-                                    form: ExprForm::Compound,
+                                    form: checked.form,
                                     type_mode: TypeMode::Int(true),
                                     addr_mode: AddressingMode::Primitive,
                                     width: checked.width,
@@ -947,10 +946,7 @@ impl Checker {
                            
                             // TODO(TOM): bitwise not on signed integers?
                             TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!("Not expects a boolean or unsigned integer, found {checked:#?}"), 
-                            TokenKind::Not => Ok(ExprSem {
-                                form: ExprForm::Compound,
-                                ..checked
-                            }),
+                            TokenKind::Not => Ok(checked),
 
                             TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("AddressOf expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
@@ -1017,7 +1013,7 @@ impl Checker {
         }
     }
 
-    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<()> {
+    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<ExprSem> {
         debug!("checking type equivalence {a:#?}\n{b:#?}");
 
         if a.addr_mode != b.addr_mode {
@@ -1028,6 +1024,8 @@ impl Checker {
             );
         }
 
+        // the expression involves a literal e.g. 5 == var_name_here;
+        // literals have no defined width yet, so we assume the width of the other thing.
         let literal_expr = a.form == ExprForm::Literal || b.form == ExprForm::Literal;
 
         // cannot assign something bigger than the 'container'
@@ -1040,17 +1038,33 @@ impl Checker {
         }
 
         match (a.type_mode, b.type_mode) {
-            (TypeMode::Boolean, TypeMode::Boolean) => Ok(()),
-            (TypeMode::Int(_), TypeMode::Int(_)) if literal_expr => Ok(()),
-            (TypeMode::Int(a_sign), TypeMode::Int(b_sign)) if a_sign == b_sign => Ok(()),
+            (TypeMode::Boolean, TypeMode::Boolean) => (),
+            (TypeMode::Int(_), TypeMode::Int(_)) if literal_expr => (),
+            (TypeMode::Int(a_sign), TypeMode::Int(b_sign)) if a_sign == b_sign => (),
             _ => {
-                err!(
+                return err!(
                     "TypeMode mismatch: {:?} != {:?} ..\n{a:#?}\n.. {b:#?}",
                     a.type_mode,
                     b.type_mode
                 )
             }
         }
+
+        // prevents later coercion as it won't be a pure literal e.g. 5 + 5 != 5 + var_name_here
+        let form= if a.form == ExprForm::Literal && b.form == ExprForm::Literal {
+            ExprForm::Literal
+        } else {
+            ExprForm::Compound
+        };
+
+        let new_exprsem = Ok(ExprSem {
+            form,
+            addr_mode: a.addr_mode,
+            type_mode: a.type_mode,
+            width: max(a.width, b.width),
+        });
+        println!("new_exprsem {new_exprsem:#?}");
+        new_exprsem
     }
 
     // region: Small_Components

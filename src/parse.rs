@@ -499,7 +499,7 @@ impl Parser {
                 }
             }
             TokenKind::OpenBrace => {
-                let tok = self.expect(TokenKind::OpenBrace)?;
+                let tok = *self.peek(0).unwrap();
                 let scope = match self.parse_scope(true) {
                     CompilerResult::Ok(scope) => scope,
                     CompilerResult::Err { data, error } => {
