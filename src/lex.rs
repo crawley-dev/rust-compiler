@@ -398,10 +398,19 @@ impl Lexer {
 
         let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
         let len = buf.len() as u32;
-        debug!(
-            "buf: '{buf_str}', kind: {buf_kind:?} | buf_len: {}",
-            buf_str.len()
-        ); // TODO(TOM): formatting ruined on '\n' :/
+
+        if Logger::print_logs() {
+            let mut print_buf = buf_str.clone();
+            let mut offset = 0;
+            for (i, c) in buf_str.chars().enumerate() {
+                if c == '\n' {
+                    print_buf.remove(i + offset);
+                    print_buf.insert_str(i + offset, r"\n");
+                    offset += 1;
+                }
+            }
+            debug!("buf: '{print_buf}', kind: {buf_kind:?} | buf_len: {len}");
+        }
 
         match buf_kind {
             BufKind::Illegal => None,
