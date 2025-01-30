@@ -8,6 +8,13 @@ use std::{
 };
 
 const PRINT_TERM_POS: bool = false;
+static mut SHORT_NODE_PRINT: bool = true;
+
+pub fn set_node_dbg_fmt(state: bool) {
+    unsafe {
+        SHORT_NODE_PRINT = state;
+    }
+}
 
 // region: lex.rs
 impl Debug for Token {
@@ -76,28 +83,49 @@ impl Display for Lexer {
 
 // Not directly done on Node<Stmt> because ...(*￣０￣)ノ . (～￣▽￣)～ ... I don't remember
 pub trait PosAwareDebug {
-    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: &Pos, end: &Pos) -> fmt::Result;
+    fn get_variant_name(&self) -> String;
+    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result;
 }
 
 impl<T: PosAwareDebug + Debug> Debug for Node<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.node.fmt_with_pos(f, &self.start, &self.end)
+        unsafe {
+            if SHORT_NODE_PRINT {
+                self.fmt_short(f)
+            } else {
+                self.node.fmt_with_pos(f, self.start, self.end)
+            }
+        }
+    }
+}
+
+impl<T: PosAwareDebug + Debug> Node<T> {
+    pub fn fmt_short(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{} {}",
+            self.node.get_variant_name(),
+            self.start.fmt_range(self.end)
+        )
     }
 }
 
 impl PosAwareDebug for Stmt {
-    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: &Pos, end: &Pos) -> fmt::Result {
-        // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
-        // could I just do this in the match below? yes. did I? no.
-        let stmt_owned = format!("{:#?}", self);
-        let variant_name = stmt_owned
+    fn get_variant_name(&self) -> String {
+        let stmt_owned: String = format!("{:#?}", self);
+        stmt_owned
             .lines()
             .next()
             .unwrap()
-            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ');
+            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
+            .to_string()
+    }
+    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
+        // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
+        // could I just do this in the match below? yes. did I? no.
 
-        let mut dbg = f.debug_struct(variant_name);
-        dbg.field("pos", &format_args!("{}", start.fmt_range(*end)));
+        let mut dbg = f.debug_struct(&self.get_variant_name());
+        dbg.field("pos", &format_args!("{}", start.fmt_range(end)));
 
         match self {
             Stmt::FnDecl {
@@ -159,38 +187,52 @@ impl PosAwareDebug for Stmt {
 
 // == derive(Debug)
 impl PosAwareDebug for Scope {
-    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: &Pos, end: &Pos) -> fmt::Result {
+    fn get_variant_name(&self) -> String {
+        let expr_owned = format!("{:#?}", self);
+        expr_owned
+            .lines()
+            .next()
+            .unwrap()
+            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
+            .to_owned()
+    }
+    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
         f.debug_struct("Scope")
-            .field("pos", &format_args!("{}", start.fmt_range(*end)))
+            .field("pos", &format_args!("{}", start.fmt_range(end)))
             .field("stmts", &self.stmts)
             .finish()
     }
 }
 
 impl PosAwareDebug for Expr {
-    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: &Pos, end: &Pos) -> fmt::Result {
-        // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
-        // could I just do this in the match below? yes. did I? no.
+    fn get_variant_name(&self) -> String {
         let expr_owned = format!("{:#?}", self);
-        let variant_name = expr_owned
+        expr_owned
             .lines()
             .next()
             .unwrap()
-            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ');
+            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
+            .to_owned()
+    }
 
+    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
+        // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
+        // could I just do this in the match below? yes. did I? no.
+
+        let variant_name = self.get_variant_name();
         match self {
             Expr::Term(term) => {
                 write!(f, "{term:?}")
             }
             Expr::Unary { op, expr } => f
-                .debug_struct(variant_name)
-                .field("pos", &format_args!("{}", start.fmt_range(*end)))
+                .debug_struct(&variant_name)
+                .field("pos", &format_args!("{}", start.fmt_range(end)))
                 .field("op", op)
                 .field("expr", expr)
                 .finish(),
             Expr::Binary { lhs, op, rhs } => f
-                .debug_struct(variant_name)
-                .field("pos", &format_args!("{}", start.fmt_range(*end)))
+                .debug_struct(&variant_name)
+                .field("pos", &format_args!("{}", start.fmt_range(end)))
                 .field("lhs", lhs)
                 .field("op", op)
                 .field("rhs", rhs)
@@ -200,18 +242,22 @@ impl PosAwareDebug for Expr {
 }
 
 impl PosAwareDebug for Term {
-    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: &Pos, end: &Pos) -> fmt::Result {
+    fn get_variant_name(&self) -> String {
         let term_owned = format!("{:#?}", self);
-        let variant_name = term_owned
+        term_owned
             .lines()
             .next()
             .unwrap()
-            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ');
-        let pos = start.fmt_range(*end);
+            .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
+            .to_owned()
+    }
+    fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
+        let variant_name = self.get_variant_name();
+        let pos = start.fmt_range(end);
 
         match self {
             Term::Ident | Term::IntLit | Term::False | Term::True => {
-                let src = Contents::get_src_oneline(*start, *end);
+                let src = Contents::get_src_oneline(start, end);
                 if PRINT_TERM_POS {
                     write!(f, "{variant_name}({src}) | {pos}",)
                 } else {
@@ -219,7 +265,7 @@ impl PosAwareDebug for Term {
                 }
             }
             Term::FnCall { ident, args } => f
-                .debug_struct(variant_name)
+                .debug_struct(&variant_name)
                 .field("pos", &format_args!("{pos}"))
                 .field("ident", ident)
                 .field("args", args)

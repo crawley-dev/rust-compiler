@@ -58,7 +58,7 @@
 */
 
 use crate::{
-    debug, err, comp_err, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger}
+    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger}
 };
 use anyhow::{Error, Result};
 use educe::Educe;
@@ -71,7 +71,7 @@ use std::{
 pub type Byte = usize;
 const PTR: Byte = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
     Primitive,
     Pointer(u32), // stores "depth"
@@ -79,31 +79,31 @@ pub enum AddressingMode {
                   // None, // For zero width "marker types", e.g. void
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TypeMode {
     Boolean,
     Int(bool), // sign
-    Void,
+    // Void, // TODO(TOM): only place I can really put it..
     Struct,
     Union,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ExprForm {
     Variable, // a variable, allows for addr of etc
-    Compound, // a compound expression, e.g. a + b, has less coercion than a literal
+    Compound, // a compound expression, e.g. a + b, doesn't have coercion semantics like a literal
     Literal, // has some freedoms as its a literal!
 }
 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct BaseType {
     ident: String,
     mode: TypeMode,
     width: Byte,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct FullType {
     width: Byte, // width accounting for the addressing mode
     type_id: usize,
@@ -111,10 +111,10 @@ struct FullType {
 }
 
 // TODO(TOM): make this generic over the type, e.g. a partial base, or a partial struct?
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Type<T> {
+    Void, // Don't really know how Void ptrs are gonna work.. another variant? do I even want them?
     Primitive(T),
-    // TODO(TOM): does this need a typemode, its mode is kinda itself.. a struct??
     Struct {
         ident: Token,
         members: Vec<T>,
@@ -157,20 +157,21 @@ pub struct Function {
     signature: String,
     args: Vec<Type<FullType>>,
     scope: Node<Scope>,
-    return_type_id: Option<usize>, // none == void
+    return_type: Type<FullType>, // none == void
 }
 
 #[derive(Debug)]
 struct FuncContext {
-    valid_return: bool,
+    return_type: Type<FullType>, // optional as it may be void, which isn't a type!
+    signature: String, // should be a str really.
 }
 
 #[derive(Debug)]
 struct SemContext {
-    loop_count: isize, // usize means I can get useful error messages in debug build, instead of oob error
-    scope_depth: usize, // how many scopes we are deep! 0 --> infinity
+    loop_count: isize, // picked isize so I get useful error messages in debug build, instead of an oob error
+    scope_depth: usize, // how many scopes we are deep! 0 --> 2^64 (a few)
     inherit_bounds: Vec<usize>, // a stack for storing function call scopes, don't inherit values past these!
-    func: Option<FuncContext>, // fn_decl_id: Option<usize>,  // for when checking a function declaration
+    func: FuncContext,
 }
 
 #[derive(Educe)]
@@ -193,6 +194,7 @@ pub struct Checker {
     pub fn_vec: Vec<Function>,
     
 }
+
 // endregion
 
 impl Checker {
@@ -202,15 +204,15 @@ impl Checker {
             Self::new_prim("u8", 1, TypeMode::Int(false)),
             Self::new_prim("u16", 2, TypeMode::Int(false)),
             Self::new_prim("u32", 4, TypeMode::Int(false)),
-            Self::new_prim("u64", PTR, TypeMode::Int(false)),
+            Self::new_prim("u64", 8, TypeMode::Int(false)),
             Self::new_prim("usize", PTR, TypeMode::Int(false)),
             Self::new_prim("i8", 1, TypeMode::Int(true)),
             Self::new_prim("i16", 2, TypeMode::Int(true)),
             Self::new_prim("i32", 4, TypeMode::Int(true)),
-            Self::new_prim("i64", PTR, TypeMode::Int(true)),
+            Self::new_prim("i64", 8, TypeMode::Int(true)),
             Self::new_prim("isize", PTR, TypeMode::Int(true)),
-            Self::new_prim("f32", 4, TypeMode::Int(true)),
-            Self::new_prim("f64", PTR, TypeMode::Int(true)),
+            // Self::new_prim("f32", 4, TypeMode::Int(true)),
+            // Self::new_prim("f64", 8, TypeMode::Int(true)),
         ]);
         let mut type_map = HashMap::with_capacity(type_vec.len());
         for (idx, base) in type_vec.iter().enumerate() {
@@ -226,7 +228,10 @@ impl Checker {
                 loop_count: 0,
                 scope_depth: 0,
                 inherit_bounds: Vec::new(),
-                func: None,
+                func: FuncContext {
+                    return_type: Type::Void,
+                    signature: String::new(),
+                },
             },
 
             type_vec,
@@ -258,6 +263,7 @@ impl Checker {
         }
         self.ast = sem_ast;
 
+        /*
         // TODO(TOM): for ref, cpp "main" function either:
         //      - takes no arguments, main().
         //      - takes 2 arguments, main(int argc, char* argv[]).
@@ -291,7 +297,7 @@ impl Checker {
         //     }
         //     _ => Ok(checker),
         // }
-
+        */
         (self, None)
     }
 
@@ -365,21 +371,26 @@ impl Checker {
                     );
                 }
 
-                let return_type_id = match return_type {
-                    Some(parse_type) => {
-                        Some(*self.type_map.get(parse_type.type_tok.str()).unwrap())
-                    }
-                    None => None,
-                };
+                self.ctx.func.signature = signature.clone();
 
+                let return_type = match return_type {
+                    Some(parse_type) => {
+                        let base_id = *self.type_map.get(parse_type.type_tok.str()).unwrap();
+                        self.new_full(base_id, parse_type.addr_mode)
+                    }
+                    None => Type::Void,
+                };
+                self.ctx.func.return_type = return_type;
+                
                 // Create lambda for custom scope check
+                println!("\n\n\n");
+                debug!("checking {signature}'s statements!");
                 let mut scope_check_result;
                 unsafe {
                     let mut_self = self as *mut Self;
                     scope_check_result = (*mut_self).check_scope(
                         scope,
                         Some(|stmts: Vec<Node<Stmt>>| -> CompilerResult<Scope> {
-                            debug!("checking {signature}'s statements!");
 
                             let mut checked_stmts = Vec::with_capacity(stmts.len());
 
@@ -439,29 +450,65 @@ impl Checker {
                                 inherits_stmts: false,
                             };
 
-                            match self.ctx.func { // can't do if let with other conditionals (21.1.25)
-                                Some(ref func) if !func.valid_return => {
-                                    return comp_err!((scope),"Not all code paths return in '{signature}'")
-                                }
-                                _ => CompilerResult::Ok(scope),
-                            }
+                            // match self.ctx.func { // can't do if let with other conditionals (21.1.25)
+                            //     Some(ref func) if !func.valid_return => {
+                            //         return comp_err!((scope),"Not all code paths return in '{signature}'")
+                            //     }
+                            //     _ => CompilerResult::Ok(scope),
+                            // }
+                            CompilerResult::Ok(scope)
 
                             // cleans up  args for me! (check_scope() that is)
                         }),
                     );
                 }
 
+                // TODO(TOM): Check for valid returns 
+                /*
+                // Avoid function return semantics
+                // if self.ctx.function_decl_name.is_none() {
+                //     return Ok(NodeStmt::If {
+                //         condition,
+                //         scope: checked_scope,
+                //         branches: new_branches,
+                //     });
+                // }
+
+                // if a return statement is present within the 'if' scope:
+                // - check for an 'else'.
+                // //  - if present, a 'return' MUST be present.
+                // let found_return = checked_scope.node.stmts.iter().rev().find(|stmt| match stmt {
+                //     Stmt::ReturnSemantics { .. } => true,
+                //     _ => false,
+                // });
+
+                // if let Some(NodeStmt::Else(scope)) = new_branches.last() {
+                //     let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
+                //         NodeStmt::ReturnSemantics { .. } => true,
+                //         _ => false,
+                //     });
+                //     if found_return.is_some() != found_return_else.is_some() {
+                //         return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
+                //     }
+                // }
+                */
+
                 let (checked_scope, error) = match scope_check_result {
                     CompilerResult::Ok(node) => (node, None),
                     CompilerResult::Err { data, error } => {
-                        (data.unwrap_or(Node {
-                            start: stmt.start,
-                            end: stmt.end,
-                            node: Scope {
-                                stmts: Vec::new(),
-                                inherits_stmts: false,
-                            },
-                        }), Some(error))
+                        let data = match data {
+                            Some(node) => node,
+                            None => Node {
+                                start: stmt.start,
+                                end: stmt.end,
+                                node: Scope {
+                                    stmts: Vec::new(),
+                                    inherits_stmts: false,
+                                },
+                            }
+                        };
+
+                        (data, Some(error))
                     }
                 };
 
@@ -471,7 +518,7 @@ impl Checker {
                     signature,
                     scope: checked_scope,
                     args: args_semantics,
-                    return_type_id,
+                    return_type: self.ctx.func.return_type.clone(),
                 });
 
                 let data = Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
@@ -577,6 +624,10 @@ impl Checker {
     // endregion
 
     fn check_stmt(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
+        Logger::set_pos(stmt.start);
+        println!("\n\n");
+        debug!("checking {stmt:?}");
+        
         match stmt.node {
             Stmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
@@ -603,12 +654,12 @@ impl Checker {
                     .insert(var.ident.str().to_string(), self.stack_var_vec.len());
                 self.stack_var_vec.push(var.clone());
 
-                // check intial expression
+                // check assignment expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
                     let expected = self.get_type_sem(&var.var_type);
                     let init_expr = self.check_expr(expr)?;
 
-                    println!("init_expr for '{}' {init_expr:#?}", var.ident.str());
+                    debug!("init_expr for'{}'\n{init_expr:#?}", var.ident.str());
 
 
                     if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
@@ -641,37 +692,110 @@ impl Checker {
 
                 CompilerResult::Ok(stmt)
             }
+            Stmt::If {
+                condition,
+                scope,
+                branches,
+            } => {
+                let checked = self.check_expr(&condition)?;
+                match checked.type_mode {
+                    TypeMode::Boolean => (),
+                    _ => {
+                        return comp_err!(
+                            "'If' statement condition not 'boolean'\n{condition:#?}"
+                        );
+                    }
+                }
+
+                let checked_scope = match self.check_scope_default(scope) {
+                    CompilerResult::Ok(node) => node,
+                    CompilerResult::Err { data, error } => {
+                        let data = match data {
+                            Some(node) => node,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
+                        return CompilerResult::Err {
+                            data: Some(Node {
+                                start: stmt.start,
+                                end: stmt.end,   
+                                node: Stmt::If {
+                                    condition,
+                                    scope: data,
+                                    branches,
+                                },
+                            }),
+                            error,
+                        };
+                    },
+                };
+
+                let mut new_branches = Vec::new();
+                for branch in branches {
+                    new_branches.push(self.check_stmt(branch)?);
+                }
+
+                CompilerResult::Ok(Node {
+                    start: stmt.start,
+                    end: stmt.end,
+                    node: Stmt::If {
+                        condition,
+                        scope: checked_scope,
+                        branches: new_branches,
+                    }
+                })
+            }
+            Stmt::Return(ref expr) => {
+                // Void return check
+                let expr = match expr {
+                    Some(expr) => expr,
+                    None if self.ctx.func.return_type == Type::Void => return CompilerResult::Ok(stmt),
+                    None => {
+                        return comp_err!((stmt), "Mismatched '{}' return, expected '{:#?}', found =>\n'void'", self.ctx.func.signature, self.ctx.func.return_type);
+                    }
+                };
+
+
+                let proposed_return_sem = self.check_expr(expr)?;
+                let expected_return_sem = self.get_type_sem(&self.ctx.func.return_type);
+
+                self.check_type_equivalence(&expected_return_sem, &proposed_return_sem)?;
+                
+                CompilerResult::Ok(stmt)
+                // check for return mismatch with void.
+                // let return_type = match self.ctx.return_type_tok {
+                //     Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
+                //     None => {
+                //         return err!(
+                //             self,
+                //             "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
+                //             signature = self.ctx.function_decl_name.as_ref().unwrap(),
+                //         );
+                //     }
+                // };
+                // if let Some(type_id) = self.ctx.func.type_id {
+                //     return comp_err!((stmt), "Mismatched {signature} return type, expected 'void', foun =>\n'{expr_type_data:#?}'", signature = self.ctx.func.signature);
+                // }
+
+
+                // let return_exprsem = self.get_type_sem(var_type)
+                // self.check_type_equivalence(a, b)
+
+                // checked prior to "check_type_equivalence" for better err message
+                // if expr_type_data.addr_mode != self.ctx.type_data.unwrap().addr_mode {
+                //     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
+                // }
+                // self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
+                // self.ctx.valid_return = true;
+
+                // Ok(Stmt::ReturnSemantics {
+                //     expr: Some(expr_type_data),
+                // })
+            }
             /*
             NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
                 err!(self, "return not expected outside a function declaration.")
             }
-            NodeStmt::Return(expr) if expr.is_some() => {
-                let expr = expr.unwrap();
-                let expr_type_data = self.check_expr(&expr)?;
-
-                // check for return mismatch with void.
-                let return_type = match self.ctx.return_type_tok {
-                    Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
-                    None => {
-                        return err!(
-                            self,
-                            "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
-                            signature = self.ctx.function_decl_name.as_ref().unwrap(),
-                        );
-                    }
-                };
-
-                // checked prior to "check_type_equivalence" for better err message
-                if expr_type_data.addr_mode != self.ctx.return_type_data.unwrap().addr_mode {
-                    return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
-                }
-                self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
-                self.ctx.valid_return = true;
-
-                Ok(NodeStmt::ReturnSemantics {
-                    expr: Some(expr_type_data),
-                })
-            }
+            
             NodeStmt::Return(expr) => match &self.ctx.return_type_tok {
                 Some(tok) => {
                     err!(
@@ -684,61 +808,7 @@ impl Checker {
                     Ok(NodeStmt::ReturnSemantics { expr: None })
                 }
             },
-            NodeStmt::If {
-                condition,
-                scope,
-                branches,
-            } => {
-                let checked = self.check_expr(&condition)?;
-                match checked.type_mode {
-                    TypeMode::Bool => (),
-                    _ => {
-                        return err!(
-                            self,
-                            "'If' statement condition not 'boolean'\n{condition:#?}"
-                        );
-                    }
-                }
-
-                let checked_scope = self.check_scope_default(scope)?;
-                let mut new_branches = Vec::new();
-                for branch in branches {
-                    new_branches.push(self.check_stmt(branch)?);
-                }
-
-                // Avoid function return semantics
-                if self.ctx.function_decl_name.is_none() {
-                    return Ok(NodeStmt::If {
-                        condition,
-                        scope: checked_scope,
-                        branches: new_branches,
-                    });
-                }
-
-                // if a return statement is present within the 'if' scope:
-                // - check for an 'else'.
-                //  - if present, a 'return' MUST be present.
-                let found_return = checked_scope.stmts.iter().rev().find(|stmt| match stmt {
-                    NodeStmt::ReturnSemantics { .. } => true,
-                    _ => false,
-                });
-
-                if let Some(NodeStmt::Else(scope)) = new_branches.last() {
-                    let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
-                        NodeStmt::ReturnSemantics { .. } => true,
-                        _ => false,
-                    });
-                    if found_return.is_some() != found_return_else.is_some() {
-                        return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
-                    }
-                }
-
-                Ok(NodeStmt::If {
-                    condition,
-                    scope: checked_scope,
-                    branches: new_branches,
-                })
-            }
+            
             NodeStmt::ElseIf { condition, scope } => {
                 let checked = self.check_expr(&condition)?;
                 match checked.type_mode {
@@ -979,6 +1049,7 @@ impl Checker {
             Term::Ident => {
                 let var = self.get_var(&Contents::get_src_oneline(term.start, term.end))?;
                 let addr_mode = match &var.var_type {
+                    Type::Void => todo!("void semantics"),
                     Type::Primitive(full_type) => full_type.addr_mode,
                     Type::Struct {
                         ident,
@@ -1014,8 +1085,6 @@ impl Checker {
     }
 
     fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<ExprSem> {
-        debug!("checking type equivalence {a:#?}\n{b:#?}");
-
         if a.addr_mode != b.addr_mode {
             return err!(
                 "Expr of different AddrMode! {a:?} vs {b:?}, {a:#?}\n.. {b:#?}",
@@ -1057,14 +1126,14 @@ impl Checker {
             ExprForm::Compound
         };
 
-        let new_exprsem = Ok(ExprSem {
+        let expr_sem = ExprSem {
             form,
             addr_mode: a.addr_mode,
             type_mode: a.type_mode,
             width: max(a.width, b.width),
-        });
-        println!("new_exprsem {new_exprsem:#?}");
-        new_exprsem
+        };
+        debug!("New: {expr_sem:#?}");
+        Ok(expr_sem)
     }
 
     // region: Small_Components
@@ -1095,6 +1164,7 @@ impl Checker {
     fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
         let base = self.type_vec.get(base_id).unwrap();
         match base {
+            Type::Void => Type::Void,
             Type::Primitive(base) => Type::Primitive(FullType {
                 width: base.width,
                 type_id: base_id,
@@ -1130,6 +1200,7 @@ impl Checker {
 
     fn get_full_ident(&self, inp_type: &Type<FullType>) -> &str {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(full) => {
                 let base = self.type_vec.get(full.type_id).unwrap();
                 Self::get_base_ident(base)
@@ -1141,6 +1212,7 @@ impl Checker {
 
     fn get_full_mode(&self, inp_type: &Type<FullType>) -> TypeMode {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(full) => {
                 let base = self.type_vec.get(full.type_id).unwrap();
                 Self::get_base_mode(base)
@@ -1152,6 +1224,7 @@ impl Checker {
 
     fn get_full_width(&self, inp_type: &Type<FullType>) -> usize {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(full) => {
                 match full.addr_mode {
                     AddressingMode::Primitive => full.width,
@@ -1166,6 +1239,7 @@ impl Checker {
 
     fn get_full_addrmode(&self, inp_type: &Type<FullType>) -> AddressingMode {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(full) => full.addr_mode,
             Type::Struct { .. } => todo!("struct addr_mode calculation"),
             Type::Union { .. } => todo!("union addr_mode calculation"),
@@ -1175,6 +1249,7 @@ impl Checker {
      // base type width depends solely on form
      fn get_base_width(inp_type: &Type<BaseType>) -> usize {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.width,
             Type::Struct { .. } => todo!("struct width calculation"),
             Type::Union { .. } => todo!("union width calculation"),
@@ -1183,6 +1258,7 @@ impl Checker {
 
     fn get_base_mode(inp_type: &Type<BaseType>) -> TypeMode {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.mode,
             Type::Struct { .. } => todo!("struct mode calculation"),
             Type::Union { .. } => todo!("union mode calculation"),
@@ -1191,6 +1267,7 @@ impl Checker {
 
     fn get_base_ident(inp_type: &Type<BaseType>) -> &str {
         match inp_type {
+            Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.ident.as_str(),
             Type::Struct { .. } => todo!("struct ident calculation"),
             Type::Union { .. } => todo!("union ident calculation"),

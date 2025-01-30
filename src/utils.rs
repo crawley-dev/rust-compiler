@@ -23,10 +23,10 @@ fn count_digits(mut n: u32) -> u32 {
 // region: Logger
 
 static mut LOGGER: Logger = Logger {
-    log_prefixes: ["LEX", "PARSE", "SEMANTIC", "CODEGEN"],
+    log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
     print_logs: [false, false, true, false],
-    print_output: [true, false, false, false],
-    current_prefix: LogPrefix::Lexical,
+    print_output: [true, false, true, false],
+    current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
     padding: String::new(),
     max_digits: Pos { x: 0, y: 0 },
@@ -34,7 +34,7 @@ static mut LOGGER: Logger = Logger {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogPrefix {
-    Lexical,
+    Lex,
     Parse,
     Semantic,
     CodeGen,
@@ -92,7 +92,16 @@ impl Logger {
     }
 
     pub fn print_output() -> bool {
-        unsafe { LOGGER.print_output[LOGGER.current_prefix as usize] }
+        unsafe {
+            let cond = LOGGER.print_output[LOGGER.current_prefix as usize];
+            if cond {
+                println!(
+                    "\n\n{}\n",
+                    text_to_ascii_art::to_art(">Output<".to_string(), "standard", 8, 0, 0).unwrap()
+                );
+            }
+            cond
+        }
     }
 
     pub fn get_pos() -> Pos {
@@ -117,7 +126,7 @@ impl Logger {
         Self::set_pos(pos(0, 0));
         if Self::print_logs() || Self::print_output() {
             match new_prefix {
-                LogPrefix::Lexical => {
+                LogPrefix::Lex => {
                     println!(
                         "\n{}\n\n\n",
                         text_to_ascii_art::to_art(">Lexical<".to_string(), "standard", 8, 0, 0)
@@ -156,13 +165,9 @@ macro_rules! debug {
         if crate::utils::Logger::print_logs() {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-            if pos.x == 10 {
-                println!("\n'{x_padding}'\n")
-            }
-            println!("[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n\n",
-                crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
+            println!("[col: {y_padding}{}, row: {x_padding}{}] {}",
+            pos.y + 1,
+            pos.x + 1,
                 format!($msg)
             )
         }
@@ -172,8 +177,7 @@ macro_rules! debug {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!(
-                "[DBG_{} | (col: {y_padding}{}, row: {x_padding}{})] {}\n",
-                crate::utils::Logger::get_prefix(),
+                "[col: {y_padding}{}, row: {x_padding}{}] {}",
                 pos.y + 1,
                 pos.x + 1,
                 format!($fmt, $($arg)+)

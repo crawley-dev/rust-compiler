@@ -94,9 +94,7 @@ pub enum Stmt {
     FnSemantics {
         id: usize,
     },
-    // ReturnSemantics {
-    //     expr: Option<ExprData>,
-    // },
+    // ReturnSemantics == Return, type is known as equivalent to func return type.
 }
 
 // Generic node wrapper to add extra info

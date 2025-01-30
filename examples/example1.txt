@@ -6,10 +6,13 @@ fn example1() {
     //let x: u32 = (10 - 2) * 3 + 5 / (3 + 5);
 
     
-    {
+    if true {
         let inner_scope_var: i32 = -10 + 5;
-        let outer_scope_var: i16 = -5 + inner_scope_var;
-    }
+     
+        let outer_scope_var: i64 = -5 + inner_scope_var;
+    } 
+    //else {
+    //}
 
 }
 

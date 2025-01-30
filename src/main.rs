@@ -42,13 +42,10 @@ fn main() {
     std::env::set_var("RUST_LIB_BACKTRACE", "1");
 
     // Print Banner
-    match text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0) {
-        Ok(art) => println!("{}", art),
-        Err(e) => {
-            println!("[COMPILER] Error: {e}");
-            return;
-        }
-    }
+    println!(
+        "{}",
+        text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0).unwrap()
+    );
 
     // Get file contents, init to global buffer
     Contents::init();
@@ -64,7 +61,7 @@ fn main() {
 ----------------------------------------------------------------------------------------*/
 
 fn lex(contents: &[&str]) -> Lexer {
-    Logger::set_prefix(LogPrefix::Lexical);
+    Logger::set_prefix(LogPrefix::Lex);
 
     if Logger::print_logs() {
         println!("\nContents:\n{contents:#?}\n");
@@ -109,9 +106,9 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
     ast
 }
 
-// fn semantic_check(ast: Ast) -> (Checker, Option<Error>) {
 fn semantic_check(ast: Ast) -> Checker {
     Logger::set_prefix(LogPrefix::Semantic);
+    formatting::set_node_dbg_fmt(true);
 
     let (checker, error) = Checker::new().check_ast(ast);
 
@@ -126,6 +123,7 @@ fn semantic_check(ast: Ast) -> Checker {
         handle_error(checker, e, start, end);
     }
 
+    formatting::set_node_dbg_fmt(false);
     if Logger::print_output() {
         println!("\n{:#?}\n", checker);
     }
