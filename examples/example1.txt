@@ -1,18 +1,18 @@
-fn example1() {
+fn example1() -> bool {
     let a: u32 = 0;
     //let b: u64 = a + 10;
     //let mut y: u32 = 20;
     //y += 10; // this is one crazy error message!
     //let x: u32 = (10 - 2) * 3 + 5 / (3 + 5);
 
-    
     if true {
         let inner_scope_var: i32 = -10 + 5;
      
         let outer_scope_var: i64 = -5 + inner_scope_var;
+        return inner_scope_var && outer_scope_var;
     } 
-    //else {
-    //}
+    else {
+    }
 
 }
 

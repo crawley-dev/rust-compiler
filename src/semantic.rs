@@ -265,6 +265,7 @@ impl Checker {
 
         /*
         // TODO(TOM): for ref, cpp "main" function either:
+        //  - Main must return int - exit code.
         //      - takes no arguments, main().
         //      - takes 2 arguments, main(int argc, char* argv[]).
         //          - argc: amount of arguments given when the program is run (cmd line!)
@@ -383,12 +384,11 @@ impl Checker {
                 self.ctx.func.return_type = return_type;
                 
                 // Create lambda for custom scope check
-                println!("\n\n\n");
-                debug!("checking {signature}'s statements!");
-                let mut scope_check_result;
+                println!("{}", text_to_ascii_art::to_art(signature.to_owned(), "small", 2, 0, 0).unwrap());
+                let mut scope_check;
                 unsafe {
                     let mut_self = self as *mut Self;
-                    scope_check_result = (*mut_self).check_scope(
+                    scope_check = (*mut_self).check_scope(
                         scope,
                         Some(|stmts: Vec<Node<Stmt>>| -> CompilerResult<Scope> {
 
@@ -442,6 +442,7 @@ impl Checker {
                                         }
                                     }
                                 }
+
                                 debug!("added\n{:#?}", checked_stmts.last())
                             }
 
@@ -449,51 +450,13 @@ impl Checker {
                                 stmts: checked_stmts,
                                 inherits_stmts: false,
                             };
-
-                            // match self.ctx.func { // can't do if let with other conditionals (21.1.25)
-                            //     Some(ref func) if !func.valid_return => {
-                            //         return comp_err!((scope),"Not all code paths return in '{signature}'")
-                            //     }
-                            //     _ => CompilerResult::Ok(scope),
-                            // }
                             CompilerResult::Ok(scope)
-
-                            // cleans up  args for me! (check_scope() that is)
                         }),
                     );
                 }
 
-                // TODO(TOM): Check for valid returns 
-                /*
-                // Avoid function return semantics
-                // if self.ctx.function_decl_name.is_none() {
-                //     return Ok(NodeStmt::If {
-                //         condition,
-                //         scope: checked_scope,
-                //         branches: new_branches,
-                //     });
-                // }
-
-                // if a return statement is present within the 'if' scope:
-                // - check for an 'else'.
-                // //  - if present, a 'return' MUST be present.
-                // let found_return = checked_scope.node.stmts.iter().rev().find(|stmt| match stmt {
-                //     Stmt::ReturnSemantics { .. } => true,
-                //     _ => false,
-                // });
-
-                // if let Some(NodeStmt::Else(scope)) = new_branches.last() {
-                //     let found_return_else = scope.stmts.iter().rev().find(|stmt| match stmt {
-                //         NodeStmt::ReturnSemantics { .. } => true,
-                //         _ => false,
-                //     });
-                //     if found_return.is_some() != found_return_else.is_some() {
-                //         return err!(self, "An unconditional 'if' .. 'else if' statement must both return or neither:\nif: {found_return:#?}\nelse if: {found_return_else:#?}");
-                //     }
-                // }
-                */
-
-                let (checked_scope, error) = match scope_check_result {
+                
+                let (checked_scope, func_body_error) = match scope_check {
                     CompilerResult::Ok(node) => (node, None),
                     CompilerResult::Err { data, error } => {
                         let data = match data {
@@ -507,30 +470,80 @@ impl Checker {
                                 },
                             }
                         };
-
+                        
                         (data, Some(error))
                     }
                 };
 
-                self.fn_map.insert(signature.clone(), self.fn_vec.len());
-                self.fn_vec.push(Function {
+                
+                let fn_sem = Node {
+                    start: checked_scope.start,
+                    end: checked_scope.end,
+                    node: Stmt::FnSemantics {id: self.fn_vec.len()} // haven't pushed to vec yet
+                };
+                
+                let function = Function {
                     ident,
-                    signature,
-                    scope: checked_scope,
+                    signature: signature.clone(),
                     args: args_semantics,
+                    scope: checked_scope,
                     return_type: self.ctx.func.return_type.clone(),
-                });
+                };
+                
+                self.fn_vec.push(function);
+                self.fn_map.insert(signature.clone(), self.fn_vec.len() - 1);   
 
-                let data = Node { start: stmt.start, end: stmt.end, node: Stmt::FnSemantics {
-                    id: self.fn_vec.len() - 1,
-                }};
-                match error {
-                    Some(error) => CompilerResult::Err {
-                        data: Some(data),
-                        error,
-                    },
-                    None => CompilerResult::Ok(data),
+
+                if let Some(error) = func_body_error {
+                    return CompilerResult::Err {data: Some(fn_sem), error}
                 }
+
+
+                // check if its a stmt, or has a scope, which you should check.
+                fn check_scope_returns(node: &Scope) -> bool {
+                    match node.stmts.last() {
+                        Some(stmt) => check_node_returns(&stmt.node),
+                        None => false,
+                    }
+                }
+                fn check_node_returns(stmt: &Stmt) -> bool { 
+                    match &stmt {
+                        Stmt::Return(_) => return true, // already checked to be of valid return type.
+                        Stmt::While { scope, ..} => check_scope_returns(&scope.node), 
+                        Stmt::NakedScope(node) => check_scope_returns(&node.node),
+                        Stmt::If { condition, scope, branches } => {
+                            if !check_scope_returns(&scope.node) {
+                                return false;
+                            }
+
+                            let mut branches_return = true; 
+                            for branch in branches {
+                                if !check_node_returns(&branch.node) {
+                                    return false;
+                                }
+                            }
+
+                            true
+                        }
+                        Stmt::ElseIf { scope, .. } => check_scope_returns(&scope.node),
+                        Stmt::Else(scope) => check_scope_returns(&scope.node),
+                        _ => false,
+                    }   
+                }
+                
+                if self.ctx.func.return_type != Type::Void {
+                    let scope_returns = match self.fn_vec.last().unwrap().scope.node.stmts.last() {
+                        Some(stmt) => check_node_returns(&stmt.node),
+                        None => false,
+                    };
+                    if !scope_returns {
+                        return comp_err!((fn_sem), "Not all code paths return in '{signature}'")
+                    }
+                }
+
+                println!();
+                debug!("Function '{signature}' checked successfully");
+                CompilerResult::Ok(fn_sem)
             }
             _ => comp_err!(
                 "A Program only consists of functions, this is a {stmt:?}"
@@ -625,7 +638,7 @@ impl Checker {
 
     fn check_stmt(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
         Logger::set_pos(stmt.start);
-        println!("\n\n");
+        print!("\n");
         debug!("checking {stmt:?}");
         
         match stmt.node {
@@ -659,7 +672,7 @@ impl Checker {
                     let expected = self.get_type_sem(&var.var_type);
                     let init_expr = self.check_expr(expr)?;
 
-                    debug!("init_expr for'{}'\n{init_expr:#?}", var.ident.str());
+                    debug!("init expr for '{}'\n{init_expr:#?}", var.ident.str());
 
 
                     if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
@@ -744,6 +757,104 @@ impl Checker {
                     }
                 })
             }
+            
+            Stmt::ElseIf { condition, scope } => {
+                let checked = self.check_expr(&condition)?;
+                if checked.type_mode != TypeMode::Boolean {
+                    return comp_err!(
+                        "'ElseIf' statement condition not 'boolean'\n{condition:#?}"
+                    );
+                }
+
+                match self.check_scope_default(scope) {
+                    CompilerResult::Ok(checked_scope) => CompilerResult::Ok(Node {
+                        start: stmt.start,
+                        end: stmt.end,
+                        node: Stmt::ElseIf {
+                            condition,
+                            scope: checked_scope
+                        },
+                    }),
+                    CompilerResult::Err { data, error } => {
+                        let data = match data {
+                            Some(node) => node,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
+                        CompilerResult::Err {
+                            data: Some(Node {
+                                start: stmt.start,
+                                end: stmt.end,
+                                node: Stmt::ElseIf {
+                                    condition,
+                                    scope: data,
+                                },
+                            }),
+                            error,
+                        }
+                    }
+                }
+            }
+            Stmt::Else(scope) => match self.check_scope_default(scope) {
+                CompilerResult::Ok(scope) => CompilerResult::Ok(Node {
+                    start: stmt.start,
+                    end: stmt.end,
+                    node: Stmt::Else(scope),
+                }),
+                CompilerResult::Err { data, error } => {
+                    let data = match data {
+                        Some(node) => node,
+                        None => return CompilerResult::Err { data: None, error },
+                    };
+                    CompilerResult::Err {
+                        data: Some(Node {
+                            start: stmt.start,
+                            end: stmt.end,
+                            node: Stmt::Else(data),
+                        }),
+                        error,
+                    }
+                }
+            },
+            Stmt::While { condition, scope } => {
+                self.ctx.loop_count += 1;
+                self.check_expr(&condition)?;
+                let new_scope = match self.check_scope_default(scope) {
+                    CompilerResult::Ok(data) => data,
+                    CompilerResult::Err { data, error } => {
+                        let data = match data {
+                            Some(node) => node,
+                            None => return CompilerResult::Err { data: None, error },
+                        };
+                        return CompilerResult::Err {
+                            data: Some(Node {
+                                start: stmt.start,
+                                end: stmt.end,
+                                node: Stmt::While {
+                                    condition,
+                                    scope: data,
+                                },
+                            }),
+                            error,
+                        }
+                    },
+                };
+                self.ctx.loop_count -= 1;
+
+                CompilerResult::Ok(Node {
+                    start: stmt.start,
+                    end: stmt.end,
+                    node: Stmt::While {
+                        condition,
+                        scope: new_scope,
+                    }
+                })
+            }
+            Stmt::Break => {
+                if self.ctx.loop_count <= 0 {
+                    return comp_err!((stmt), "Not inside a loop! cannot break");
+                }
+                CompilerResult::Ok(stmt)
+            }
             Stmt::Return(ref expr) => {
                 // Void return check
                 let expr = match expr {
@@ -761,92 +872,8 @@ impl Checker {
                 self.check_type_equivalence(&expected_return_sem, &proposed_return_sem)?;
                 
                 CompilerResult::Ok(stmt)
-                // check for return mismatch with void.
-                // let return_type = match self.ctx.return_type_tok {
-                //     Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
-                //     None => {
-                //         return err!(
-                //             self,
-                //             "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
-                //             signature = self.ctx.function_decl_name.as_ref().unwrap(),
-                //         );
-                //     }
-                // };
-                // if let Some(type_id) = self.ctx.func.type_id {
-                //     return comp_err!((stmt), "Mismatched {signature} return type, expected 'void', foun =>\n'{expr_type_data:#?}'", signature = self.ctx.func.signature);
-                // }
-
-
-                // let return_exprsem = self.get_type_sem(var_type)
-                // self.check_type_equivalence(a, b)
-
-                // checked prior to "check_type_equivalence" for better err message
-                // if expr_type_data.addr_mode != self.ctx.type_data.unwrap().addr_mode {
-                //     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
-                // }
-                // self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
-                // self.ctx.valid_return = true;
-
-                // Ok(Stmt::ReturnSemantics {
-                //     expr: Some(expr_type_data),
-                // })
             }
-            /*
-            NodeStmt::Return(_) if self.ctx.function_decl_name.is_none() => {
-                err!(self, "return not expected outside a function declaration.")
-            }
-            
-            NodeStmt::Return(expr) => match &self.ctx.return_type_tok {
-                Some(tok) => {
-                    err!(
-                        self,
-                        "Mismatched function and return type, 'void'\n .. \n'{tok:#?}'"
-                    )
-                }
-                _ => {
-                    self.ctx.valid_return = true;
-                    Ok(NodeStmt::ReturnSemantics { expr: None })
-                }
-            },
-            
-            NodeStmt::ElseIf { condition, scope } => {
-                let checked = self.check_expr(&condition)?;
-                match checked.type_mode {
-                    TypeMode::Bool => Ok(NodeStmt::ElseIf {
-                        condition,
-                        scope: self.check_scope_default(scope)?,
-                    }),
-                    _ => {
-                        err!(
-                            self,
-                            "'ElseIf' statement condition not 'boolean'\n{condition:#?}"
-                        )
-                    }
-                }
-            }
-            NodeStmt::Else(scope) => return Ok(NodeStmt::Else(self.check_scope_default(scope)?)),
-            NodeStmt::While { condition, scope } => {
-                self.ctx.loop_count += 1;
-                self.check_expr(&condition)?;
-                let new_scope = self.check_scope_default(scope)?;
-                self.ctx.loop_count -= 1;
-
-                Ok(NodeStmt::While {
-                    condition,
-                    scope: new_scope,
-                })
-            }
-            NodeStmt::Exit(ref expr) => {
-                self.check_expr(&expr)?;
-                Ok(stmt)
-            }
-            NodeStmt::Break => {
-                if self.ctx.loop_count <= 0 {
-                    return err!(self, "Not inside a loop! cannot break");
-                    }
-                    Ok(stmt)
-                    } */
-           Stmt::NakedScope(scope) => {
+            Stmt::NakedScope(scope) => {
                 match self.check_scope_default(scope) {
                     CompilerResult::Ok(data) => CompilerResult::Ok(
                         Node { 
@@ -871,7 +898,7 @@ impl Checker {
                         }
                     }
                 }
-           }
+            }
             Stmt::FnDecl { ident, .. } => {
                 comp_err!((stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
             }
@@ -1278,6 +1305,36 @@ impl Checker {
 }
 
 /*
+// check for return mismatch with void.
+                // let return_type = match self.ctx.return_type_tok {
+                //     Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
+                //     None => {
+                //         return err!(
+                //             self,
+                //             "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
+                //             signature = self.ctx.function_decl_name.as_ref().unwrap(),
+                //         );
+                //     }
+                // };
+                // if let Some(type_id) = self.ctx.func.type_id {
+                //     return comp_err!((stmt), "Mismatched {signature} return type, expected 'void', foun =>\n'{expr_type_data:#?}'", signature = self.ctx.func.signature);
+                // }
+
+
+                // let return_exprsem = self.get_type_sem(var_type)
+                // self.check_type_equivalence(a, b)
+
+                // checked prior to "check_type_equivalence" for better err message
+                // if expr_type_data.addr_mode != self.ctx.type_data.unwrap().addr_mode {
+                //     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
+                // }
+                // self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
+                // self.ctx.valid_return = true;
+
+                // Ok(Stmt::ReturnSemantics {
+                //     expr: Some(expr_type_data),
+                // })
+
 fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
     match expr {
         NodeExpr::Binary { op, lhs, rhs } => {

@@ -163,9 +163,6 @@ impl PosAwareDebug for Stmt {
             Stmt::Assign { ident, expr } => {
                 dbg.field("ident", ident).field("expr", expr);
             }
-            Stmt::Exit(node) => {
-                dbg.field("node", node);
-            }
             Stmt::NakedScope(node) => {
                 dbg.field("node", node);
             }

@@ -85,7 +85,6 @@ pub enum Stmt {
         ident: Token,
         expr: Node<Expr>,
     },
-    Exit(Node<Expr>),
     NakedScope(Node<Scope>),
     Break,
     Return(Option<Node<Expr>>),
@@ -476,18 +475,6 @@ impl Parser {
                     _ => return comp_err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
                 }
             }
-            TokenKind::Exit => {
-                let tok = self.expect(TokenKind::Exit)?;
-                // TODO(TOM): feels like this will break lol.
-                todo!("panic! trying to parse exit");
-                self.token_equals(TokenKind::OpenParen, 0)?;
-                let expr = self.parse_expr(0)?;
-                Node {
-                    start: tok.start,
-                    end: expr.end,
-                    node: Stmt::Exit(expr),
-                }
-            }
             TokenKind::Break => {
                 let tok = self.expect(TokenKind::Break)?;
                 Node {
@@ -530,14 +517,12 @@ impl Parser {
 
         // statments that require a ';' to end.
         match stmt.node {
-            Stmt::Exit(_)
-            | Stmt::Assign { .. }
-            | Stmt::VarDecl { .. }
-            | Stmt::Break
-            | Stmt::Return(_) => match self.expect(TokenKind::SemiColon) {
-                Ok(_) => CompilerResult::Ok(stmt),
-                Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
-            },
+            Stmt::Assign { .. } | Stmt::VarDecl { .. } | Stmt::Break | Stmt::Return(_) => {
+                match self.expect(TokenKind::SemiColon) {
+                    Ok(_) => CompilerResult::Ok(stmt),
+                    Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
+                }
+            }
             _ => CompilerResult::Ok(stmt),
         }
     }
