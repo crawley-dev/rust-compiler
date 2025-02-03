@@ -290,7 +290,8 @@ impl Parser {
     fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
         let kind = match self.peek(0) {
             Some(tok) => {
-                debug!("\n\nparsing statement: {tok:?}");
+                println!("\n");
+                debug!("parsing statement: {tok:?}");
                 tok.kind
             } // cannot consume here,
             None => return comp_err!("No statement to parse"),

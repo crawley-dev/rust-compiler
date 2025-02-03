@@ -431,6 +431,7 @@ impl Lexer {
 
     fn match_word(&self, buf_str: &str) -> Option<Token> {
         let len = buf_str.len() as u32;
+        debug!("matching word: '{}' .. len: {len}", buf_str);
         match self.reg.get(buf_str) {
             Some(kind) => Some(Token {
                 kind: *kind,
@@ -477,16 +478,16 @@ impl Lexer {
     }
 
     fn consume(&mut self) -> u8 {
-        let i = self.idx;
-        self.idx += 1;
-        Logger::add_pos(pos(1, 0));
-
-        let char = self.input.get(i).copied().unwrap();
+        let char = self.input.get(self.idx).copied().unwrap();
         if char == b'\n' {
             debug!("consuming '{}'", r"\n");
         } else {
             debug!("consuming '{}'", char as char);
         }
+
+        self.idx += 1;
+        Logger::add_pos(pos(1, 0));
+
         char
     }
 

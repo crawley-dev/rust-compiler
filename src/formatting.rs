@@ -8,7 +8,7 @@ use std::{
 };
 
 const PRINT_TERM_POS: bool = false;
-pub static mut SHORT_NODE_PRINT: bool = true;
+pub static mut SHORT_NODE_PRINT: bool = false;
 
 // region: lex.rs
 impl Debug for Token {

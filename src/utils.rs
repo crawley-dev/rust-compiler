@@ -24,7 +24,7 @@ fn count_digits(mut n: u32) -> u32 {
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, true, true, false],
+    print_logs: [false, false, true, false],
     print_output: [true, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
@@ -58,7 +58,7 @@ impl Logger {
     }
 
     pub fn add_pos(delta: Pos) {
-        // if print_logs() {
+        // if Logger::print_logs() {
         //     println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
         // }
 
@@ -69,7 +69,7 @@ impl Logger {
     }
 
     pub fn sub_pos(delta: Pos) {
-        // if print_logs() {
+        // if Logger::print_logs() {
         //     println!("{:?} - {delta:?}", unsafe { self.file_pos });
         // }
 
@@ -80,7 +80,7 @@ impl Logger {
     }
 
     pub fn set_pos(new_pos: Pos) {
-        // if print_logs() {
+        // if Logger::print_logs() {
         //     println!("{:?} -> {new_pos:?}", unsafe { self.file_pos });
         // }
 
@@ -130,7 +130,7 @@ impl Logger {
             LOGGER.current_prefix = new_prefix;
         }
         Self::set_pos(pos(0, 0));
-        if Self::print_logs() || Self::print_output() {
+        if Self::print_logs() {
             match new_prefix {
                 LogPrefix::Lex => {
                     println!(
@@ -283,7 +283,6 @@ impl Contents {
     pub fn get_src_lines(start_y: u32, end_y: u32) -> Vec<&'static str> {
         let last_line_len;
         unsafe {
-            // last_line_len = std::cmp::max(SOURCE.contents.get().unwrap().len() as u32, 1) - 1;
             last_line_len = match SOURCE.contents.get(end_y as usize) {
                 Some(line) => line.len().max(1) as u32 - 1,
                 None => 0,
@@ -432,6 +431,15 @@ impl<T> FromResidual<Self> for CompilerResult<T> {
 
 impl<T> FromResidual<Result<Infallible, anyhow::Error>> for CompilerResult<T> {
     fn from_residual(residual: Result<Infallible, anyhow::Error>) -> Self {
+        CompilerResult::Err {
+            data: None,
+            error: residual.unwrap_err(),
+        }
+    }
+}
+
+impl<T> FromResidual<Result<(), anyhow::Error>> for CompilerResult<T> {
+    fn from_residual(residual: Result<(), anyhow::Error>) -> Self {
         CompilerResult::Err {
             data: None,
             error: residual.unwrap_err(),

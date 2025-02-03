@@ -179,14 +179,13 @@ fn handle_error<T: std::fmt::Debug>(
     if error_start.y == error_end.y {
         highlight_padding = " ".repeat(error_start.x as usize);
         error_highlight = "^".repeat(max(0, error_end.x as i32 - error_start.x as i32) as usize);
-        // dots_after = ".".repeat(error_end.x as usize)
     } else {
-        let mut first_char_pos = src_content[error_end.y as usize]
+        let idx = max(0, error_end.y - error_start.y) as usize;
+        let mut first_char_pos = src_content[idx]
             .find(|x: char| x.is_alphanumeric())
             .unwrap_or(0);
         highlight_padding = " ".repeat(first_char_pos);
         error_highlight = "^".repeat(error_end.x as usize - first_char_pos);
-        // dots_after = ".".repeat(src_content[error_end.y as usize].len() - error_end.x as usize);
     }
 
     let len = error.chain().len();
