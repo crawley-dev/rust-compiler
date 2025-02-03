@@ -85,6 +85,7 @@ fn lex(contents: &[&str]) -> Lexer {
 
 fn parse(tokens: VecDeque<Token>) -> Ast {
     Logger::set_prefix(LogPrefix::Parse);
+    Logger::set_short_fmt(true);
 
     let (ast, error) = Parser::new(tokens).parse_tokens();
 
@@ -99,6 +100,7 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
         handle_error(ast, e, start, end);
     }
 
+    Logger::set_short_fmt(false);
     if Logger::print_output() {
         println!("\n{:#?}\n", ast);
     }
@@ -108,7 +110,7 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
 
 fn semantic_check(ast: Ast) -> Checker {
     Logger::set_prefix(LogPrefix::Semantic);
-    formatting::set_node_dbg_fmt(true);
+    Logger::set_short_fmt(true);
 
     let (checker, error) = Checker::new().check_ast(ast);
 
@@ -123,7 +125,7 @@ fn semantic_check(ast: Ast) -> Checker {
         handle_error(checker, e, start, end);
     }
 
-    formatting::set_node_dbg_fmt(false);
+    Logger::set_short_fmt(false);
     if Logger::print_output() {
         println!("\n{:#?}\n", checker);
     }

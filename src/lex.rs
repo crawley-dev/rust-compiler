@@ -68,7 +68,6 @@ pub enum TokenKind {
     GtEq,   // ">="
 
     // Keywords
-    Exit,
     Let,
     If,
     Else,
@@ -79,6 +78,7 @@ pub enum TokenKind {
     Return,
     True,
     False,
+    Type,
 
     // Primitive Constructs
     Ident,
@@ -303,7 +303,6 @@ impl Lexer {
             ("<=", TokenKind::LtEq),
             (">=", TokenKind::GtEq),
             // Keywords
-            ("exit", TokenKind::Exit),
             ("let", TokenKind::Let),
             ("fn", TokenKind::Fn),
             ("return", TokenKind::Return),
@@ -314,6 +313,7 @@ impl Lexer {
             ("break", TokenKind::Break),
             ("true", TokenKind::True),
             ("false", TokenKind::False),
+            ("type", TokenKind::Type),
         ]);
         Lexer {
             idx: 0,

@@ -88,12 +88,15 @@ pub enum Stmt {
     NakedScope(Node<Scope>),
     Break,
     Return(Option<Node<Expr>>),
+    TypeAlias {
+        ident: Token,
+        parse_type: ParseType,
+    },
     // SEMANTIC STMTs
     VarSemantics(Variable),
     FnSemantics {
         id: usize,
     },
-    // ReturnSemantics == Return, type is known as equivalent to func return type.
 }
 
 // Generic node wrapper to add extra info
@@ -146,7 +149,17 @@ impl Parser {
         (ast, None)
     }
 
+    // region: Top Level
     fn parse_top_level(&mut self) -> CompilerResult<Node<Stmt>> {
+        match self.peek(0) {
+            Some(tok) if tok.kind == TokenKind::Fn => self.parse_fn_decl(),
+            Some(tok) if tok.kind == TokenKind::Type => self.parse_type_alias(),
+            Some(tok) => comp_err!("Invalid Top Level Token => '{tok:?}'"),
+            None => comp_err!("No token to parse"),
+        }
+    }
+
+    fn parse_fn_decl(&mut self) -> CompilerResult<Node<Stmt>> {
         let fn_keyword = self.expect(TokenKind::Fn)?;
 
         let ident = self.expect(TokenKind::Ident)?;
@@ -209,6 +222,24 @@ impl Parser {
             }
         }
     }
+
+    fn parse_type_alias(&mut self) -> CompilerResult<Node<Stmt>> {
+        let type_keyword = self.expect(TokenKind::Type)?;
+        let new_type = self.expect(TokenKind::Ident)?;
+        self.expect(TokenKind::Eq)?;
+        let parse_type = self.parse_type()?;
+        self.expect(TokenKind::SemiColon)?;
+
+        CompilerResult::Ok(Node {
+            start: type_keyword.start,
+            end: parse_type.type_tok.end_pos(),
+            node: Stmt::TypeAlias {
+                ident: new_type,
+                parse_type,
+            },
+        })
+    }
+    // endregion
 
     fn parse_scope(&mut self, inherits_stmts: bool) -> CompilerResult<Node<Scope>> {
         // consumes statements until a closebrace is found.
@@ -326,8 +357,9 @@ impl Parser {
                     // no branches left, exit loop
                     if self.expect(TokenKind::Else).is_err() {
                         break;
-                        // Found an else if, parse condition & scope, push to branches
-                    } else if self.expect(TokenKind::If).is_ok() {
+                    }
+                    // Found an else if, parse condition & scope, push to branches
+                    if self.expect(TokenKind::If).is_ok() {
                         let condition = self.parse_expr(0)?;
                         let scope = match self.parse_scope(true) {
                             CompilerResult::Ok(scope) => scope,
@@ -352,11 +384,11 @@ impl Parser {
                             end: scope.end,
                             node: Stmt::ElseIf { condition, scope },
                         });
+
                         continue;
                     }
 
                     // Found an else, parse scope, push to branches
-                    let condition = self.parse_expr(0)?;
                     let scope = match self.parse_scope(true) {
                         CompilerResult::Ok(scope) => scope,
                         CompilerResult::Err { data, error } => {
@@ -380,7 +412,7 @@ impl Parser {
                         end: scope.end,
                         node: Stmt::Else(scope),
                     });
-                    break;
+                    break; // found an else, this is the last branch
                 }
 
                 let start = condition.start;
@@ -595,7 +627,6 @@ impl Parser {
         Ok(lhs)
     }
 
-    // peeking next token might not work because it could be a close paren?
     fn parse_term(&mut self) -> Result<Node<Expr>> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
@@ -717,6 +748,7 @@ impl Parser {
         })
     }
 
+    // region: little ones
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         self.token_equals(kind, 0)?;
         Ok(self.consume())
@@ -755,4 +787,5 @@ impl Parser {
     fn peek_mut(&mut self, offset: usize) -> Option<&mut Token> {
         self.tokens.get_mut(self.idx + offset)
     }
+    // endregion
 }

@@ -1,3 +1,5 @@
+type MyBool = bool;
+
 fn example1() -> bool {
     let a: u32 = 0;
     //let b: u64 = a + 10;
@@ -12,6 +14,7 @@ fn example1() -> bool {
         return inner_scope_var && outer_scope_var;
     } 
     else {
+        let var: u32 = 5;
     }
 
 }

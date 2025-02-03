@@ -8,13 +8,7 @@ use std::{
 };
 
 const PRINT_TERM_POS: bool = false;
-static mut SHORT_NODE_PRINT: bool = true;
-
-pub fn set_node_dbg_fmt(state: bool) {
-    unsafe {
-        SHORT_NODE_PRINT = state;
-    }
-}
+pub static mut SHORT_NODE_PRINT: bool = true;
 
 // region: lex.rs
 impl Debug for Token {
@@ -170,6 +164,10 @@ impl PosAwareDebug for Stmt {
             Stmt::Return(node) => {
                 dbg.field("node", node);
             }
+            Stmt::TypeAlias { ident, parse_type } => {
+                dbg.field("ident", ident);
+                dbg.field("parse_type", parse_type);
+            }
             Stmt::VarSemantics(variable) => {
                 dbg.field("variable", variable);
             }
@@ -182,7 +180,6 @@ impl PosAwareDebug for Stmt {
     }
 }
 
-// == derive(Debug)
 impl PosAwareDebug for Scope {
     fn get_variant_name(&self) -> String {
         let expr_owned = format!("{:#?}", self);

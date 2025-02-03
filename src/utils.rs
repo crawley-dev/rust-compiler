@@ -6,7 +6,7 @@ use std::{
     ops::{ControlFlow, FromResidual, Try},
 };
 
-use crate::{Node, Scope, Stmt};
+use crate::{formatting::SHORT_NODE_PRINT, Node, Scope, Stmt};
 
 fn count_digits(mut n: u32) -> u32 {
     if n == 0 {
@@ -24,8 +24,8 @@ fn count_digits(mut n: u32) -> u32 {
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, false, true, false],
-    print_output: [true, false, true, false],
+    print_logs: [false, true, true, false],
+    print_output: [true, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
     padding: String::new(),
@@ -51,6 +51,12 @@ pub struct Logger {
 }
 
 impl Logger {
+    pub fn set_short_fmt(state: bool) {
+        unsafe {
+            SHORT_NODE_PRINT = state;
+        }
+    }
+
     pub fn add_pos(delta: Pos) {
         // if print_logs() {
         //     println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });

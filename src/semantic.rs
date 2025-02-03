@@ -653,6 +653,9 @@ impl Checker {
 
                 let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
                 let var_type = self.new_full(base_id, arg.parse_type.addr_mode);
+                if let Type::Void = var_type {
+                    return comp_err!("Cannot declare a variable of type 'void'");
+                }
 
                 let var = Variable {
                     ident: arg.ident,
@@ -1076,7 +1079,7 @@ impl Checker {
             Term::Ident => {
                 let var = self.get_var(&Contents::get_src_oneline(term.start, term.end))?;
                 let addr_mode = match &var.var_type {
-                    Type::Void => todo!("void semantics"),
+                    Type::Void => return err!("Cannot use the void type in expression"),
                     Type::Primitive(full_type) => full_type.addr_mode,
                     Type::Struct {
                         ident,
@@ -1106,7 +1109,34 @@ impl Checker {
                 })
             }
             Term::FnCall { ident, args } => {
-                todo!("check_term fncall")
+                // Function calls:
+                // give the return type.
+                
+                // get function from map
+                let func_semantics = match self.fn_map.get(ident.str()) {
+                    Some(id) => self.fn_vec.get(*id).unwrap(),
+                    None => return err!("Function not found: '{ident:#?}'"),
+                };
+                
+                // check all the args.
+                if func_semantics.args.len() != args.len() {
+                    return err!(
+                        "Function '{ident:#?}' expects {} arguments, found {}", func_semantics.args.len(), args.len()
+                    );
+                }
+
+                for (arg, arg_sem) in func_semantics.args.iter().zip(args.iter()) {
+                    let arg_sem = self.check_expr(arg_sem)?;
+                    let expected = self.get_type_sem(arg);
+                    self.check_type_equivalence(&expected, &arg_sem)?;
+                }
+
+                Ok(ExprSem {
+                    form: ExprForm::Compound,
+                    type_mode: self.get_full_mode(&func_semantics.return_type),
+                    addr_mode: self.get_full_addrmode(&func_semantics.return_type),
+                    width: self.get_full_width(&func_semantics.return_type),
+                })
             }
         }
     }
