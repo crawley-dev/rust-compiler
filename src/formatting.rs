@@ -46,8 +46,6 @@ impl Display for Token {
 
 impl Display for Lexer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#?}\n", Contents::get_contents_ref());
-
         let mut val_max_len = 0;
         let mut x_max_len = 0;
         let mut y_max_len = 0;
@@ -64,12 +62,12 @@ impl Display for Lexer {
         for tok in &self.tokens {
             let val_str = format!("{tok}");
             let val_whitespace = " ".repeat(val_max_len - val_str.len());
-            let x_str = format!("{x:?}", x = tok.start.x);
+            let x_str = format!("{:?}", tok.start.x);
             let x_whitespace = " ".repeat(x_max_len - x_str.len());
-            let y_str = format!("{y:?}", y = tok.start.y);
+            let y_str = format!("{:?}", tok.start.y);
             let y_whitespace = " ".repeat(y_max_len - y_str.len());
             write!(f,
-                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) | len: {:2} }}\n", tok.len
+                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) | len({:2}) }}\n", tok.len
             )?
         }
         Ok(())

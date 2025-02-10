@@ -661,13 +661,13 @@ impl Parser {
                         self.expect(TokenKind::OpenParen)?;
                         let mut args = Vec::new();
 
-                        let mut end = self.expect(TokenKind::OpenParen);
+                        let mut end = self.expect(TokenKind::CloseParen);
                         while end.is_err() {
                             if args.len() > 1 {
                                 self.expect(TokenKind::Comma)?;
                             }
                             args.push(self.parse_expr(0)?);
-                            end = self.expect(TokenKind::OpenParen);
+                            end = self.expect(TokenKind::CloseParen);
                         }
                         let end = end.unwrap().end_pos();
 
