@@ -660,19 +660,23 @@ impl Parser {
                     Some(next) if next.kind == TokenKind::OpenParen => {
                         self.expect(TokenKind::OpenParen)?;
                         let mut args = Vec::new();
-                        while self.expect(TokenKind::CloseParen).is_err() {
+
+                        let mut end = self.expect(TokenKind::OpenParen);
+                        while end.is_err() {
                             if args.len() > 1 {
                                 self.expect(TokenKind::Comma)?;
                             }
                             args.push(self.parse_expr(0)?);
+                            end = self.expect(TokenKind::OpenParen);
                         }
+                        let end = end.unwrap().end_pos();
 
                         Ok(Node {
                             start: tok.start,
-                            end: args.last().unwrap().end,
+                            end,
                             node: Expr::Term(Node {
                                 start: tok.start,
-                                end: args.last().unwrap().end,
+                                end,
                                 node: Term::FnCall { ident: tok, args },
                             }),
                         })

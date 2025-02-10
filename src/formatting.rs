@@ -35,15 +35,19 @@ impl Debug for Token {
 
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let str = self.str().replace("\n", "\\n");
         match self.kind {
-            TokenKind::Ident | TokenKind::IntLit => write!(f, "{:?}({})", self.kind, self.str()),
-            _ => write!(f, "{:?}", self.kind),
+            // TokenKind::Ident | TokenKind::IntLit => write!(f, "{:?}({})", self.kind, self.str()),
+            // _ => write!(f, "{:?}", self.kind),
+            _ => write!(f, "{:?}({str})", self.kind),
         }
     }
 }
 
 impl Display for Lexer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}\n", Contents::get_contents_ref());
+
         let mut val_max_len = 0;
         let mut x_max_len = 0;
         let mut y_max_len = 0;
@@ -65,7 +69,7 @@ impl Display for Lexer {
             let y_str = format!("{y:?}", y = tok.start.y);
             let y_whitespace = " ".repeat(y_max_len - y_str.len());
             write!(f,
-                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) }}\n"
+                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) | len: {:2} }}\n", tok.len
             )?
         }
         Ok(())

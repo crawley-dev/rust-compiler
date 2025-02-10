@@ -1,5 +1,9 @@
 type test = bool;
 
+fn example0_1234() -> i32 {
+    return 10;
+}
+
 fn example3_1234(ident1: bool) -> i32 {
     return 5;
 }
@@ -12,12 +16,15 @@ fn example1() -> bool {
     //let x: u32 = (10 - 2) * 3 + 5 / (3 + 5);
 
     if true {
-        let inner_scope_var: i32 = -10 + 5;
-     
+        let inner_scope_var: i32 = example0_1234();
+        let inner_scope_var_i64: i64 = inner_scope_var;
+
+
         let outer_scope_var: i64 = -5 + inner_scope_var;
-        return inner_scope_var && outer_scope_var;
+        return inner_scope_var_i64 == outer_scope_var;
     } 
     else {
+        return true;
     }
 
 }

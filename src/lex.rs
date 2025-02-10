@@ -160,15 +160,16 @@ impl TokenKind {
             TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
             TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
 
+            // e.g. 'CmpAnd' is not actually a cmp operation, but a logical operation
             TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
-            TokenKind::CmpAnd => TokenFlags::CMP | TokenFlags::LOG,                  // "&&"
-            TokenKind::CmpOr => TokenFlags::CMP | TokenFlags::LOG,                   // "||"
-            TokenKind::CmpEq => TokenFlags::CMP,                                     // "=="
-            TokenKind::NotEq => TokenFlags::CMP,                                     // "!="
-            TokenKind::Lt => TokenFlags::CMP,                                        // "<"
-            TokenKind::Gt => TokenFlags::CMP,                                        // ">"
-            TokenKind::LtEq => TokenFlags::CMP,                                      // "<="
-            TokenKind::GtEq => TokenFlags::CMP,                                      // ">="
+            TokenKind::CmpAnd => TokenFlags::LOG, // "&&" /* TokenFlags::CMP | */
+            TokenKind::CmpOr => TokenFlags::LOG,  // "||" /* TokenFlags::CMP | */
+            TokenKind::CmpEq => TokenFlags::CMP,  // "=="
+            TokenKind::NotEq => TokenFlags::CMP,  // "!="
+            TokenKind::Lt => TokenFlags::CMP,     // "<"
+            TokenKind::Gt => TokenFlags::CMP,     // ">"
+            TokenKind::LtEq => TokenFlags::CMP,   // "<="
+            TokenKind::GtEq => TokenFlags::CMP,   // ">="
 
             _ => TokenFlags::empty(),
         }
@@ -455,7 +456,7 @@ impl Lexer {
                     // early return if the symbol
                     return Some(Token {
                         kind: *kind,
-                        start: Logger::get_pos(),
+                        start: Self::get_start(buf_len as u32),
                         len: buf_len as u32,
                     });
                 }

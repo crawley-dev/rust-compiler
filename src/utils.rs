@@ -24,7 +24,7 @@ fn count_digits(mut n: u32) -> u32 {
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, false, true, false],
+    print_logs: [true, true, true, false],
     print_output: [true, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },

@@ -985,6 +985,7 @@ impl Checker {
                             "[PTR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
+                    // TODO:(TOM) this need to be changed, 
                     AddressingMode::Primitive => {
                         // 'CMP'   => T, T       => bool
                         // 'LOG'   => bool, bool => bool
