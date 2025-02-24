@@ -74,3 +74,60 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
   - [] array subscript: '[]'
   - [ ] struct member: '.' | '->'
   - cast: (type)
+
+### Notes/Next Steps
+
+- CompilerResult Issue: Result -> CompilerResult returns 'None' for error. Fix!
+
+- Need to re-write the parser, encorporate more syntax into precedence parsing#
+  - ASSOCIATIVITY IS NOT A THING!!! e.g. let z: ^i32 = x&; <- VALID!
+
+  - e.g var = (test = 10); cpp evals assignment to result, rust to unit type  
+  - UNIT TYPE: include one!, zig uses '{}', rust uses: '()' pref rust tbh
+
+  - [ ] ',' commas are not being parsed correctly for fn calls.
+  - [ ] '=' assignment operators directly into
+  - [ ] '()' not sure, but current impl MUST have holes in it.
+
+#### Rust's Parse Levels
+
+',' Comma 1 (Lowest) Left-to-right
+'=' Assignment 2 Right-to-left
+'+=' Addition assignment 2 Right-to-left
+'-=' Subtraction assignment 2 Right-to-left
+'*=' Multiplication assignment 2 Right-to-left
+'/=' Division assignment 2 Right-to-left
+'%=' Modulus assignment 2 Right-to-left
+'<<=' Left shift assignment 2 Right-to-left
+'>>=' Right shift assignment 2 Right-to-left
+'&=' Bitwise AND assignment 2 Right-to-left
+'^=' Bitwise XOR assignment 2 Right-to-left
+'|=' Bitwise OR assignment 2 Right-to-left
+'?' Try operator (error propagation) 3 Left-to-right
+'||' Logical OR 4 Left-to-right
+'&&' Logical AND 5 Left-to-right
+'|' Bitwise OR 6 Left-to-right
+'^' Bitwise XOR 7 Left-to-right
+'&' Bitwise AND 8 Left-to-right
+'==' Equal to 9 Left-to-right
+'!=' Not equal to 9 Left-to-right
+'<' Less than 10 Left-to-right
+'<=' Less than or equal 10 Left-to-right
+'>' eater than 10 Left-to-right
+'>=' Greater than or equal 10 Left-to-right
+'<<' Left shift 11 Left-to-right
+'>>' ight shift 11 Left-to-right
+'+' Addition 12 Left-to-right
+'-' Subtraction 12 Left-to-right
+'*' Multiplication 13 Left-to-right
+'/' Division 13 Left-to-right
+'%' Modulus 13 Left-to-right
+'!' Logical NOT 14 Right-to-left
+'-' (unary) Unary minus 14 Right-to-left
+'*' Dereference 14 Right-to-left
+'&' Borrow 14 Right-to-left
+'&mut' Mutable borrow 14 Right-to-left
+'as' Type cast 15 Left-to-right
+'()' Function call 16 Left-to-right
+'[]' Array indexing 16 Left-to-right
+'.' Member access 16 Left-to-right

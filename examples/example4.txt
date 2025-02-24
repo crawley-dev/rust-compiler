@@ -1,14 +1,48 @@
 fn main() {
-    plus5(1);
+    let x: i32 = 5;
+    let y: ^i32 = &x;
+    let z: ^i32 = x&;
 
+    let mut a: i64 = 10;
+    let mut b: i64 = 5;
+    let mut c: i64;
+    let mut d: bool;
+
+    // Unary operations
+    c = -a;          // Unary minus
+    d = !!(a==b);    // Logical NOT
+    c = !b;        // Bitwise NOT
+    c = ^&a;       // Dereference and address-of cancel out
+
+    /*
+    // Binary operations
+    c = a + b;   // Addition
+    c = a - b;   // Subtraction
+    c = a * b;   // Multiplication
+    c = a / b;   // Division
+    c = a % b;   // Modulus
+    c = a << 2;  // Left shift
+    c = a >> 1;  // Right shift
+    c = a & b;   // Bitwise AND
+    c = a | b;   // Bitwise OR
+    c = a ^ b;   // Bitwise XOR
+    c = a && b;  // Logical AND
+    c = a || b;  // Logical OR
     
+    // Assignment operations
+    a += 5;  // a = a + 5
+    b *= 2;  // b = b * 2
+    
+    // Ternary operator
+    c = (a > b) ? a : b;
+    */
 }
 
+/*
 fn plus5(arg1: i32) -> i32 {
     return arg1 + 5;
 }
 
-/*
 fn plus5(arg1: i32, arg2: bool, arg3: i64, arg4: u8) -> i32 {
     return arg1 + 5;
 }

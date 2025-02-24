@@ -47,6 +47,9 @@ fn main() {
         text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0).unwrap()
     );
 
+    let mut var = 5;
+    let test = var = 10;
+
     // Get file contents, init to global buffer
     Contents::init();
 

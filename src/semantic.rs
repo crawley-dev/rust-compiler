@@ -1134,7 +1134,7 @@ impl Checker {
                 // 'Ptr Deref' ptr               => var
                 match checked.addr_mode {
                     AddressingMode::Array(_) => {
-                        err!("[ARR] Invalid Unary Expression: {op:?}\n{checked:#?}")
+                        err!("[ARRAY] Invalid Unary Expression: {op:?}\n{checked:#?}")
                     }
                     AddressingMode::Pointer(depth) => {
                         match op {
@@ -1178,14 +1178,15 @@ impl Checker {
                                     addr_mode: AddressingMode::Primitive,
                                     width: checked.width,
                                 }),
-                                _ => err!("UnarySub expects a signed integer, found {checked:#?}")
+                                _ => err!("'UnarySub' expects a signed integer, found {checked:#?}")
                             }
                            
-                            // TODO(TOM): bitwise not on signed integers?
-                            TokenKind::Not if checked.type_mode != TypeMode::Boolean && checked.type_mode != TypeMode::Int(false) => err!("Not expects a boolean or unsigned integer, found {checked:#?}"), 
-                            TokenKind::Not => Ok(checked),
+                            TokenKind::Not => match checked.type_mode {
+                                TypeMode::Boolean | TypeMode::Int(_) => Ok(checked),
+                                _ => err!("'Not' expects a boolean or integer, found {checked:#?}")
+                            }
 
-                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("AddressOf expects a variable, found {checked:#?}"),
+                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("'AddressOf' expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
                                 form: ExprForm::Compound,
                                 type_mode: checked.type_mode,
@@ -1193,7 +1194,7 @@ impl Checker {
                                 width: PTR,
                             }),
 
-                            _ => err!("Invalid Unary Expression on Primitive: {op:?}..\n{checked:#?}"),
+                            _ => err!("[PRIMITIVE] Invalid Unary Expression: {op:?}..\n{checked:#?}"),
                         }
                     }
                 }
@@ -1350,6 +1351,8 @@ impl Checker {
         Ok(expr_sem)
     }
 
+    // region: Small_Components
+
     fn create_func_signature(&self, ident: &str, args_semantics: &[Type<FullType>]) -> String {
         match ident {
             "main" => "main".to_owned(), // NOTE(TOM): main is a special case, no overloading
@@ -1368,8 +1371,6 @@ impl Checker {
             }
         }
     }
-
-    // region: Small_Components
 
     fn add_type(&mut self, new_base: BaseType) {
         self.type_map
@@ -1511,36 +1512,6 @@ impl Checker {
 }
 
 /*
-// check for return mismatch with void.
-                // let return_type = match self.ctx.return_type_tok {
-                //     Some(ref ident) => self.types.get(self.get_type_id(ident.as_str())?).unwrap(),
-                //     None => {
-                //         return err!(
-                //             self,
-                //             "Mismatched '{signature}' return, expected 'void', found =>\n'{expr_type_data:#?}'",
-                //             signature = self.ctx.function_decl_name.as_ref().unwrap(),
-                //         );
-                //     }
-                // };
-                // if let Some(type_id) = self.ctx.func.type_id {
-                //     return comp_err!((stmt), "Mismatched {signature} return type, expected 'void', foun =>\n'{expr_type_data:#?}'", signature = self.ctx.func.signature);
-                // }
-
-
-                // let return_exprsem = self.get_type_sem(var_type)
-                // self.check_type_equivalence(a, b)
-
-                // checked prior to "check_type_equivalence" for better err message
-                // if expr_type_data.addr_mode != self.ctx.type_data.unwrap().addr_mode {
-                //     return err!(self,"Mismatched function and return type, '{return_type:#?}'\n .. \n'{expr_type_data:#?}'");
-                // }
-                // self.check_type_equivalence(&self.ctx.return_type_data.unwrap(), &expr_type_data)?;
-                // self.ctx.valid_return = true;
-
-                // Ok(Stmt::ReturnSemantics {
-                //     expr: Some(expr_type_data),
-                // })
-
 fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
     match expr {
         NodeExpr::Binary { op, lhs, rhs } => {
@@ -1683,279 +1654,4 @@ fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
         NodeExpr::Term(term) => self.check_term(term),
     }
 }
-
-fn check_term(&self, term: &NodeTerm) -> Result<ExprData, String> {
-    match term {
-        NodeTerm::IntLit(tok) => {
-            self.set_pos(tok.pos);
-
-            Ok(ExprData {
-                ptr: None,
-                width: 0,
-                type_mode: TypeMode::IntLit,
-                addr_mode: AddressingMode::Primitive,
-            })
-        }
-        NodeTerm::Ident(tok) => {
-            self.set_pos(tok.pos);
-
-            let var = self.get_var(tok.as_str())?;
-            match &self.types.get(var.type_id).unwrap().form {
-                TypeForm::Base { type_mode } => Ok(ExprData {
-                    ptr: Some(self.new_nonnull(var)?),
-                    width: var.width,
-                    type_mode: *type_mode,
-                    addr_mode: var.addr_mode,
-                }),
-                TypeForm::Struct {} => {
-                    todo!("check_term Ident Struct")
-                }
-                TypeForm::Union {} => todo!("check_term Ident Union"),
-            }
-        }
-
-        NodeTerm::True | NodeTerm::False => {
-            let type_ref = self.types.get(*self.type_map.get("bool").unwrap()).unwrap();
-            match &type_ref.form {
-                TypeForm::Base { type_mode } => Ok(ExprData {
-                    ptr: None,
-                    width: type_ref.width,
-                    type_mode: *type_mode,
-                    addr_mode: AddressingMode::Primitive,
-                }),
-                TypeForm::Struct {} => todo!("check_term boolean struct"),
-                TypeForm::Union {} => todo!("check_term boolean union"),
-            }
-        }
-        NodeTerm::FnCall { ident, args } => {
-            self.set_pos(ident.pos);
-
-            // check fn of that name exists
-            // iterating over hash map aswell! bad!!!
-
-            // check args are of valid type
-            // for (i, arg) in args.into_iter().enumerate() {
-            //     let arg_expr = self.check_expr(&arg)?;
-            //     let fn_arg =
-            //         self.get_exprdata(fn_ref.arg_semantics.get(i).as_ref().unwrap())?;
-            //     self.check_type_equivalence(&fn_arg, &arg_expr)?;
-            // }
-
-            let fn_str = ident.as_str();
-            let mut args_data = Vec::with_capacity(args.len());
-            for arg in args.into_iter() {
-                args_data.push(self.check_expr(arg)?);
-            }
-
-            // https://en.wikipedia.org/wiki/Type_inference
-            // https://en.wikipedia.org/wiki/Hindley%E2%80%93Milner_type_system
-
-            // need to perform type inference on "args_data"
-            // to get the names of the types
-            // then to construct a function signature
-            // then to check if that exists.
-
-            let signature = match ident.as_str() {
-                "main" => "main".to_owned(),
-                name @ _ => {
-                    let mut str = String::new();
-                    str += name;
-                    str += "(";
-                    for (i, arg) in args_data.iter().enumerate() {
-                        // ExprData => Type
-                        // str += self.types.get(arg.type_id).unwrap().ident.as_str();
-                        str += ",";
-                    }
-                    str.pop(); // removes extra ','
-                    str + ")"
-                }
-            };
-
-            // iterate over fn_map
-            // compare to attempted fncall
-            //      - amount of args first
-            //      - compare each arg id.
-            //      - then by name (delimit by '(')
-            // match to see if associated function is found for call.
-            // for (sig, fn_ref) in &self.fn_map {
-            //     if fn_ref.arg_semantics.len() != args.len() {
-            //         continue;
-            //     }
-            // }
-
-            // let is_fn_name_valid = self.fn_map.iter().find(|(sig, fn_ref)| {
-            //     sig.as_str()
-            //         .split('(')
-            //         .collect::<Vec<&str>>()
-            //         .get(0)
-            //         .unwrap()
-            //         == &fn_str
-            // });
-            // let (signature, fn_ref) = match is_fn_name_valid {
-            //     Some((sig, fn_ref)) => (sig.as_str(), fn_ref),
-            //     None => {
-            //         return err!(
-            //             self,
-            //             "No associated function with attempted call. '{fn_str}'"
-            //         )
-            //     }
-            // };
-
-            // check correct amount of arguments
-            // if args.len() != fn_ref.arg_semantics.len() {
-            //     return err!(
-            //         self,
-            //         "Incorrect amount of arguments for function '{signature}'. {} missing",
-            //         fn_ref.arg_semantics.len() - args.len()
-            //     );
-            // }
-
-            // Ok(fn_ref.return_type_data.unwrap())
-            todo!("")
-        }
-    }
-}
-
-// AddrMode, TypeMode, Width
-fn check_type_equivalence(
-    &self,
-    assigner: &ExprData,
-    assignee: &ExprData,
-) -> Result<(), String> {
-    // Check Addressing Mode
-    if assigner.addr_mode != assignee.addr_mode {
-        return err!(
-            self,
-            "Expr of different AddrMode! {:?} vs {:?} =>\n{assigner:#?}\n.. {assignee:#?}",
-            assigner.addr_mode,
-            assignee.addr_mode
-        );
-    }
-
-    // Check Type Mode
-    let msg = format!("Expr of different Type! =>\n{assigner:#?}\n.. {assignee:#?}");
-    self.check_type_mode(assigner.type_mode, assignee.type_mode, &msg)?;
-
-    // Check for Type Narrowing
-    if assigner.width < assignee.width {
-        return err!(
-            self,
-            "Illegal Type Narrowing, Assignee({}) < Assigner({}) =>\n{assigner:#?}\n.. {assignee:#?}",
-            assignee.width, assigner.width
-        );
-    }
-    Ok(())
-}
-
-fn get_exprdata(&self, var: &SemVariable) -> Result<ExprData, String> {
-    match &self.types.get(var.type_id).unwrap().form {
-        TypeForm::Base { type_mode } => Ok(ExprData {
-            ptr: Some(self.new_nonnull(var)?),
-            width: var.width,
-            type_mode: *type_mode,
-            addr_mode: var.addr_mode,
-        }),
-        TypeForm::Struct { .. } => {
-            todo!("Struct type mode")
-        }
-        TypeForm::Union {} => todo!("Union type mode"),
-    }
-}
-
-fn check_type_mode(
-    &self,
-    assigner: TypeMode,
-    assignee: TypeMode,
-    msg: &str,
-) -> Result<(), String> {
-    if assigner == assignee {
-        return Ok(());
-    }
-
-    // Check integer sign equality
-    let sign_match = match assigner {
-        TypeMode::IntLit => return Ok(()),
-        TypeMode::Int { signed: sign1 } | TypeMode::Float { signed: sign1 } => match assignee {
-            TypeMode::IntLit => return Ok(()),
-            TypeMode::Int { signed: sign2 } | TypeMode::Float { signed: sign2 } => {
-                sign1 == sign2
-            }
-            TypeMode::Bool | TypeMode::Void => false,
-        },
-        TypeMode::Bool | TypeMode::Void => false,
-    };
-
-    if !sign_match {
-        return err!(
-            self,
-            "Expr sign mismatch! {assigner:?} vs {assignee:?} => {msg}"
-        );
-    }
-    Ok(())
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-
-fn get_expr_ident(&self, expr: &NodeExpr, right_side: bool) -> String {
-    match expr {
-        NodeExpr::Binary { lhs, rhs, .. } => {
-            if right_side {
-                self.get_expr_ident(&*rhs, false)
-            } else {
-                self.get_expr_ident(&*lhs, false)
-            }
-        }
-        NodeExpr::Unary { expr, .. } => self.get_expr_ident(&*expr, false),
-        NodeExpr::Term(term) => match term {
-            NodeTerm::True => "true".to_string(),
-            NodeTerm::False => "false".to_string(),
-            NodeTerm::IntLit(tok)
-            | NodeTerm::Ident(tok)
-            | NodeTerm::FnCall { ident: tok, .. } => tok.as_str().to_string(),
-        },
-    }
-}
-
-fn get_var(&self, ident: &str) -> Result<&SemVariable, String> {
-    match self.var_map.get(ident) {
-        Some(idx) if self.ctx.scope_inherit_bounds_id.is_none() => {
-            Ok(self.vars.get(*idx).unwrap())
-        }
-        Some(idx) => {
-            let var = self.vars.get(*idx).unwrap();
-            if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
-                return err!(
-                    self,
-                    "Variable '{ident}' outside scope inheritance bounds, {} < {}",
-                    var.scope_id,
-                    self.ctx.scope_inherit_bounds_id.unwrap()
-                );
-            }
-            Ok(var)
-        }
-        None => err!(self, "Variable '{ident}' not found"),
-    }
-}
-
-fn get_var_mut(&mut self, ident: &str) -> Result<&mut SemVariable, String> {
-    match self.var_map.get(ident) {
-        Some(idx) if self.ctx.scope_inherit_bounds_id.is_none() => {
-            Ok(self.vars.get_mut(*idx).unwrap())
-        }
-        Some(idx) => {
-            let var = self.vars.get_mut(*idx).unwrap();
-            if var.scope_id < self.ctx.scope_inherit_bounds_id.unwrap() {
-                return err!(
-                    self,
-                    "Variable '{ident}' outside scope inheritance bounds, {} < {}",
-                    var.scope_id,
-                    self.ctx.scope_inherit_bounds_id.unwrap()
-                );
-            }
-            Ok(var)
-        }
-        None => err!(self, "Variable '{ident}' not found"),
-    }
-}
-
 */

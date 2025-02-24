@@ -28,7 +28,7 @@
   - e.g "!(5 + 5 *(10 - 3* 2 / 5) == 10)"
   - operators also have associativity, which determines how precedence is 'climbed' as an expression is parsed.
 
-- Parens           '()' prec = infinite
+- Parens           '()' prec = 14
 - Logical Not      '!'  prec = 13
 - Multiply         '*'  prec = 12
 - Divide           '/'  prec = 12

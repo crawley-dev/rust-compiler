@@ -739,14 +739,12 @@ impl Parser {
         let mut depth: u32 = 0;
         let addr_mode = match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Ptr => {
-                depth += 1;
                 while self.expect(TokenKind::Ptr).is_ok() {
                     depth += 1;
                 }
                 AddressingMode::Pointer(depth)
             }
             Some(tok) if tok.kind == TokenKind::Array => {
-                depth += 1;
                 while self.expect(TokenKind::Array).is_ok() {
                     depth += 1;
                 }
