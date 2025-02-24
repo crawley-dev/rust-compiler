@@ -86,6 +86,7 @@ pub enum Stmt {
         expr: Node<Expr>,
     },
     NakedScope(Node<Scope>),
+    NakedExpr(Node<Expr>),
     Break,
     Return(Option<Node<Expr>>),
     TypeAlias {
@@ -505,7 +506,14 @@ impl Parser {
                             node: Stmt::Assign { ident, expr },
                         }
                     }
-                    _ => return comp_err!("Naked Expression => '{:?}', Not Valid", self.peek(0)),
+                    _ => {
+                        let expr = self.parse_expr(0)?;
+                        Node {
+                            start: expr.start,
+                            end: expr.end,
+                            node: Stmt::NakedExpr(expr),
+                        }
+                    } // _ => return comp_err!("Invalid Expression => '{:?}'", self.peek(0)),
                 }
             }
             TokenKind::Break => {
@@ -550,12 +558,14 @@ impl Parser {
 
         // statments that require a ';' to end.
         match stmt.node {
-            Stmt::Assign { .. } | Stmt::VarDecl { .. } | Stmt::Break | Stmt::Return(_) => {
-                match self.expect(TokenKind::SemiColon) {
-                    Ok(_) => CompilerResult::Ok(stmt),
-                    Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
-                }
-            }
+            Stmt::Assign { .. }
+            | Stmt::VarDecl { .. }
+            | Stmt::Break
+            | Stmt::Return(_)
+            | Stmt::NakedExpr(_) => match self.expect(TokenKind::SemiColon) {
+                Ok(_) => CompilerResult::Ok(stmt),
+                Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
+            },
             _ => CompilerResult::Ok(stmt),
         }
     }

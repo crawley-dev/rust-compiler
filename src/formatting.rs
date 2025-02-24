@@ -162,6 +162,9 @@ impl PosAwareDebug for Stmt {
             Stmt::NakedScope(node) => {
                 dbg.field("node", node);
             }
+            Stmt::NakedExpr(expr) => {
+                dbg.field("expr", expr);
+            }
             Stmt::Break => (),
             Stmt::Return(node) => {
                 dbg.field("node", node);

@@ -151,20 +151,15 @@ pub struct Variable {
     scope_id: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct IndexedFunction {
-    // this contains the signature and a possible function,
-    // this is so we can index all functions so other funcs can reference them.
-    signature: String,
-    args: Vec<Type<FullType>>,
-    return_type: Type<FullType>,
-    decl: Option<Function>,
-}
-
+// this contains the signature and a possible function,
+// this is so we can index all functions so other funcs can reference them.
 #[derive(Debug, Clone)]
 pub struct Function {
     ident: Token,
-    scope: Node<Scope>,
+    signature: String,
+    args: Vec<Type<FullType>>,
+    return_type: Type<FullType>,
+    scope: Option<Node<Scope>>,
 }
 
 #[derive(Debug)]
@@ -202,7 +197,7 @@ pub struct Checker {
     // this stores the names of all functions names,
     // this then gives us a list of all overloads for this function.
     pub fn_map: HashMap<String, Vec<usize>>,
-    pub fn_vec: Vec<IndexedFunction>,
+    pub fn_vec: Vec<Function>,
 }
 
 // endregion
@@ -326,16 +321,18 @@ impl Checker {
     // region: Top Level
     fn index_top_level(&mut self, stmt: &Node<Stmt>) -> Result<()> {
         // index all the functions and type aliases, so we can call a func later in the file & recurse.
+        debug!("Indexing top level stmt: {stmt:?}");
+
         match &stmt.node {
             Stmt::FnDecl { ident, args, scope, return_type } => {
                 let fn_ident = ident.str();
 
-                let semantics = self.create_arg_semantics(&args, fn_ident);
-                
-                let _ = self.get_matching_overload(&semantics, fn_ident)?;
+                let semantics = self.create_arg_semantics(&args, fn_ident)?;
                 
                 let signature = self.create_func_signature(ident.str(), &semantics);
                 
+                self.get_matching_overload(&semantics, fn_ident)?;
+
                 let return_type = match return_type {
                     Some(parse_type) => {
                         let base_id = *self.type_map.get(parse_type.type_tok.str()).unwrap();
@@ -344,11 +341,12 @@ impl Checker {
                     None => Type::Void,
                 };
 
-                self.fn_vec.push(IndexedFunction {
+                self.fn_vec.push(Function {
+                    ident: ident.clone(),
                     signature,
                     args: semantics,
                     return_type,
-                    decl: None,
+                    scope: None,
                 });
                 if self.fn_map.contains_key(fn_ident) {
                     self.fn_map.get_mut(fn_ident).unwrap().push(self.fn_vec.len() - 1);
@@ -390,28 +388,39 @@ impl Checker {
         // check for name collisions
         let fn_ident = ident.str();
 
-        // if has overloads: this is guranteed to be the first func without a decl.
-        let overload;
+        // checks overloads, first non declared function is this one. (indexed in order)
+        let mut function = None;
+        let mut function_index = None;
         let overloads = self.fn_map.get(fn_ident).unwrap();
-        for overload_idx in overloads {
-            let _overload = self.fn_vec.get(*overload_idx).unwrap();
 
-            if _overload.decl.is_none() {
-                overload = _overload;
+        debug!("Checking function '{}'", fn_ident);
+
+        for overload_idx in overloads {
+            let overload = self.fn_vec.get(*overload_idx).unwrap();
+
+            debug!("Checking overload: '{}'", overload.signature);
+
+            if overload.scope.is_none() {
+                function = Some(overload);
+                function_index = Some(*overload_idx);
                 break;
             }
         }
 
-        // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
-        self.ctx.func.signature = overload.signature.clone();
+        // these should always be the same, as we are checking an indexed func, but compiler cannot be sure.
+        let (function, function_index)= match (function, function_index) {
+            (Some(function), Some(function_index)) => (function, function_index),
+            _ => return comp_err!((Node { start, end, node: Stmt::FnSemantics {id: self.fn_vec.len()} }), "Function '{}' does not exist with the same signature", fn_ident),
+        };
 
-       
-        self.ctx.func.return_type = overload.return_type.clone();
+
+        self.ctx.func.signature = function.signature.clone();
+        self.ctx.func.return_type = function.return_type.clone();
         
         // Create lambda for custom scope check
-        println!("{}", text_to_ascii_art::to_art(overload.signature.clone(), "small", 2, 0, 0).unwrap());
+        println!("{}", text_to_ascii_art::to_art(function.signature.clone(), "small", 2, 0, 0).unwrap());
         
-        let (checked_scope, func_body_error) = match self.check_fn_scope(scope, &overload.args, &args) {
+        let (checked_scope, func_body_error) = match self.check_fn_scope(scope, &function.args, &args) {
             CompilerResult::Ok(node) => (node, None),
             CompilerResult::Err { data, error } => {
             let data = match data {
@@ -430,24 +439,15 @@ impl Checker {
             }
         };
 
-         
         let fn_sem = Node {
             start: checked_scope.start,
             end: checked_scope.end,
             node: Stmt::FnSemantics {id: self.fn_vec.len()} // haven't pushed to vec yet
         };
         
-        // if is_overload {
-        //     self.fn_map.get_mut(ident.str()).unwrap().push(self.fn_vec.len() - 1);
-        // } else {
-        //     self.fn_map.insert(ident.str().to_string(), vec![self.fn_vec.len() - 1]);
-        // }
-        
-
         if let Some(error) = func_body_error {
             return CompilerResult::Err {data: Some(fn_sem), error}
         }
-
 
         // check if its a stmt, or has a scope, which you should check.
         fn check_scope_returns(node: &Scope) -> bool {
@@ -482,24 +482,25 @@ impl Checker {
         }
         
         if self.ctx.func.return_type != Type::Void {
-            let scope_returns = match self.fn_vec.last().unwrap().scope.node.stmts.last() {
+            let scope_returns = match checked_scope.node.stmts.last() {
                 Some(stmt) => check_node_returns(&stmt.node),
-                None => false,
+                None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
             };
-            if !scope_returns {
-                return comp_err!((fn_sem), "Not all code paths return in '{signature}'")
-            }
         }
 
+        // add the checked function scope 
+        let mut_function = self.fn_vec.get_mut(function_index).unwrap();
+        mut_function.scope = Some(checked_scope);
+
         println!();
-        debug!("Function '{signature}' checked successfully");
+        debug!("Function '{}' checked successfully", mut_function.signature);
         CompilerResult::Ok(fn_sem)
     }
     
     // Create arg semantics
     // - check for duplicates
     // - check for used names (keywords & other variables)
-    fn create_arg_semantics(&self, args: &[Arg], fn_ident: &str) -> Vec<Type<FullType>> {
+    fn create_arg_semantics(&self, args: &[Arg], fn_ident: &str) -> Result<Vec<Type<FullType>>> {
         let mut semantics = Vec::new();
         for arg in args {
             let arg_ident = arg.ident.str();
@@ -510,29 +511,34 @@ impl Checker {
                 .find(|x| *x == arg_ident)
                 .is_some()
             {
-                return comp_err!(
+                return err!(
                     "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
                 );
             } else if self.stack_var_map.contains_key(arg_ident) {
-                return comp_err!(
+                return err!(
                     "Argument name in use: {arg_ident} in function: {fn_ident}"
                 );
             } else if self.type_map.contains_key(arg_ident) {
-                return comp_err!(
+                return err!(
                     "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                 );
             }
             let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
             semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
         }
-        semantics
+
+        Ok(semantics)
     }
 
     // iters over all overloads of a function, 
     // checks if the function already exists with the same signature 
     // if it finds a single match it returns its idx, else err.
     fn get_matching_overload(&self, semantics: &[Type<FullType>], fn_ident: &str) -> Result<usize> {
-        let overloads = self.fn_map.get(fn_ident).unwrap();
+        let overloads = match self.fn_map.get(fn_ident) {
+            Some(overloads) => overloads,
+            None => return Ok(0), // no existing overloads, this is the first index.
+        };
+
         let mut matching = None;
 
         for overload in overloads {
@@ -555,11 +561,11 @@ impl Checker {
 
         match matching {
             Some(overload) => Ok(overload),
-            None => err!("Function '{fn_ident}' does not exist with the same signature")
+            None => Ok(0) // no existing overloads, this is the first index.
         }
     }
 
-    fn check_fn_scope(&mut self, scope: Node<Scope>, semantics: &[Type<FullType>], args: &[Arg]) -> CompilerResult<Node<Scope>>{
+    fn check_fn_scope(&self, scope: Node<Scope>, semantics: &[Type<FullType>], args: &[Arg]) -> CompilerResult<Node<Scope>>{
         let mut scope_check;
         unsafe {
             let mut_self = self as *const Self as *mut Self;
@@ -583,7 +589,7 @@ impl Checker {
                                 },
                             }
                         };
-                        match self.check_stmt(arg_stmt) {
+                        match (*mut_self).check_stmt(arg_stmt) {
                             CompilerResult::Ok(data) => checked_stmts.push(data),
                             CompilerResult::Err { data, error } => {
                                 if let Some(data) = data {
@@ -602,7 +608,7 @@ impl Checker {
                     }
 
                     for stmt in stmts {
-                        match self.check_stmt(stmt) {
+                        match (*mut_self).check_stmt(stmt) {
                             CompilerResult::Ok(data) => checked_stmts.push(data),
                             CompilerResult::Err { data, error } => {
                                 if let Some(data) = data {
@@ -1028,6 +1034,10 @@ impl Checker {
                     }
                 }
             }
+            Stmt::NakedExpr(ref expr) => {
+                self.check_expr(expr)?;
+                CompilerResult::Ok(stmt)
+            }
             Stmt::FnDecl { ident, .. } => {
                 comp_err!((stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
             }
@@ -1238,9 +1248,6 @@ impl Checker {
             Term::FnCall { ident, args } => {
                 // Function calls:
                 // give the return type.
-
-
-                 
 
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {
