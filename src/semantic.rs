@@ -152,12 +152,19 @@ pub struct Variable {
 }
 
 #[derive(Debug, Clone)]
-pub struct Function {
-    ident: Token,
+pub struct IndexedFunction {
+    // this contains the signature and a possible function,
+    // this is so we can index all functions so other funcs can reference them.
     signature: String,
     args: Vec<Type<FullType>>,
+    return_type: Type<FullType>,
+    decl: Option<Function>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    ident: Token,
     scope: Node<Scope>,
-    return_type: Type<FullType>, // none == void
 }
 
 #[derive(Debug)]
@@ -195,8 +202,7 @@ pub struct Checker {
     // this stores the names of all functions names,
     // this then gives us a list of all overloads for this function.
     pub fn_map: HashMap<String, Vec<usize>>,
-    pub fn_vec: Vec<Function>,
-    
+    pub fn_vec: Vec<IndexedFunction>,
 }
 
 // endregion
@@ -252,10 +258,19 @@ impl Checker {
             stmts: Vec::with_capacity(ast.stmts.len()),
         };
 
+
+        // Index all top level data. function decl ordering doesn't matter!
+        for stmt in &ast.stmts {
+             if let Result::Err(error)  = self.index_top_level(stmt) {
+                return (self, Some(error))
+            };
+        }
+
+        // Now check all the functions.
         for stmt in ast.stmts {
-             match self.check_top_level(stmt) {
-                 CompilerResult::Ok(Some(data)) => sem_ast.stmts.push(data),
-                 CompilerResult::Ok(None) => (),
+            match self.check_top_level(stmt) {
+                CompilerResult::Ok(Some(data)) => sem_ast.stmts.push(data),
+                CompilerResult::Ok(None) => (),
                 CompilerResult::Err { data, error } => {
                     if let Some(Some(data)) = data {
                         sem_ast.stmts.push(data);
@@ -264,8 +279,9 @@ impl Checker {
                     self.ast = sem_ast;
                     return (self, Some(error))
                 },
-            };
+            }
         }
+
         self.ast = sem_ast;
 
         /*
@@ -308,6 +324,49 @@ impl Checker {
     }
 
     // region: Top Level
+    fn index_top_level(&mut self, stmt: &Node<Stmt>) -> Result<()> {
+        // index all the functions and type aliases, so we can call a func later in the file & recurse.
+        match &stmt.node {
+            Stmt::FnDecl { ident, args, scope, return_type } => {
+                let fn_ident = ident.str();
+
+                let semantics = self.create_arg_semantics(&args, fn_ident);
+                
+                let _ = self.get_matching_overload(&semantics, fn_ident)?;
+                
+                let signature = self.create_func_signature(ident.str(), &semantics);
+                
+                let return_type = match return_type {
+                    Some(parse_type) => {
+                        let base_id = *self.type_map.get(parse_type.type_tok.str()).unwrap();
+                        self.new_full(base_id, parse_type.addr_mode)
+                    }
+                    None => Type::Void,
+                };
+
+                self.fn_vec.push(IndexedFunction {
+                    signature,
+                    args: semantics,
+                    return_type,
+                    decl: None,
+                });
+                if self.fn_map.contains_key(fn_ident) {
+                    self.fn_map.get_mut(fn_ident).unwrap().push(self.fn_vec.len() - 1);
+                } else {
+                    self.fn_map.insert(fn_ident.to_string(), vec![self.fn_vec.len() - 1]);
+                }
+
+                Ok(())
+            }  
+            Stmt::TypeAlias { ident, parse_type } => {
+                self.check_type_alias(ident.str(), parse_type.type_tok.str())
+            }, 
+            _ => err!(
+                "A Program only consists of Top-Level Statements, this is a {stmt:?}"
+            ),
+        }
+    }
+
     fn check_top_level(&mut self, stmt: Node<Stmt>) -> CompilerResult<Option<Node<Stmt>>> {
         match stmt.node {
             Stmt::FnDecl {
@@ -320,30 +379,132 @@ impl Checker {
                     CompilerResult::Ok(data) => CompilerResult::Ok(Some(data)),
                     CompilerResult::Err { data, error } => CompilerResult::Err { data: Some(data), error }}
             },
-            Stmt::TypeAlias { ident, parse_type } => {
-                match self.check_type_alias(ident, parse_type) {
-                    Ok(_) => CompilerResult::Ok(None),
-                    Err(error) => CompilerResult::Err { data: None, error },
-                }
-            }, 
             _ => comp_err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
         }
     }
 
+    // region: check_function
     fn check_fn_decl(&mut self, start: Pos, end: Pos, ident: Token, args: Vec<Arg>, scope: Node<Scope>, return_type: Option<ParseType>) -> CompilerResult<Node<Stmt>> {
         // check for name collisions
         let fn_ident = ident.str();
 
-        // Create arg semantics
-        // - check for duplicates
-        // - check for used names (keywords & other variables)
-        let mut args_semantics = Vec::new();
-        for arg in &args {
+        // if has overloads: this is guranteed to be the first func without a decl.
+        let overload;
+        let overloads = self.fn_map.get(fn_ident).unwrap();
+        for overload_idx in overloads {
+            let _overload = self.fn_vec.get(*overload_idx).unwrap();
+
+            if _overload.decl.is_none() {
+                overload = _overload;
+                break;
+            }
+        }
+
+        // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
+        self.ctx.func.signature = overload.signature.clone();
+
+       
+        self.ctx.func.return_type = overload.return_type.clone();
+        
+        // Create lambda for custom scope check
+        println!("{}", text_to_ascii_art::to_art(overload.signature.clone(), "small", 2, 0, 0).unwrap());
+        
+        let (checked_scope, func_body_error) = match self.check_fn_scope(scope, &overload.args, &args) {
+            CompilerResult::Ok(node) => (node, None),
+            CompilerResult::Err { data, error } => {
+            let data = match data {
+                    Some(node) => node,
+                    None => Node {
+                        start,
+                        end,
+                        node: Scope {
+                            stmts: Vec::new(),
+                            inherits_stmts: false,
+                        },
+                    }
+                };
+                
+                (data, Some(error))
+            }
+        };
+
+         
+        let fn_sem = Node {
+            start: checked_scope.start,
+            end: checked_scope.end,
+            node: Stmt::FnSemantics {id: self.fn_vec.len()} // haven't pushed to vec yet
+        };
+        
+        // if is_overload {
+        //     self.fn_map.get_mut(ident.str()).unwrap().push(self.fn_vec.len() - 1);
+        // } else {
+        //     self.fn_map.insert(ident.str().to_string(), vec![self.fn_vec.len() - 1]);
+        // }
+        
+
+        if let Some(error) = func_body_error {
+            return CompilerResult::Err {data: Some(fn_sem), error}
+        }
+
+
+        // check if its a stmt, or has a scope, which you should check.
+        fn check_scope_returns(node: &Scope) -> bool {
+            match node.stmts.last() {
+                Some(stmt) => check_node_returns(&stmt.node),
+                None => false,
+            }
+        }
+        fn check_node_returns(stmt: &Stmt) -> bool { 
+            match &stmt {
+                Stmt::Return(_) => return true, // already checked to be of valid return type.
+                Stmt::While { scope, ..} => check_scope_returns(&scope.node), 
+                Stmt::NakedScope(node) => check_scope_returns(&node.node),
+                Stmt::If { condition, scope, branches } => {
+                    if !check_scope_returns(&scope.node) {
+                        return false;
+                    }
+
+                    let mut branches_return = true; 
+                    for branch in branches {
+                        if !check_node_returns(&branch.node) {
+                            return false;
+                        }
+                    }
+
+                    true
+                }
+                Stmt::ElseIf { scope, .. } => check_scope_returns(&scope.node),
+                Stmt::Else(scope) => check_scope_returns(&scope.node),
+                _ => false,
+            }   
+        }
+        
+        if self.ctx.func.return_type != Type::Void {
+            let scope_returns = match self.fn_vec.last().unwrap().scope.node.stmts.last() {
+                Some(stmt) => check_node_returns(&stmt.node),
+                None => false,
+            };
+            if !scope_returns {
+                return comp_err!((fn_sem), "Not all code paths return in '{signature}'")
+            }
+        }
+
+        println!();
+        debug!("Function '{signature}' checked successfully");
+        CompilerResult::Ok(fn_sem)
+    }
+    
+    // Create arg semantics
+    // - check for duplicates
+    // - check for used names (keywords & other variables)
+    fn create_arg_semantics(&self, args: &[Arg], fn_ident: &str) -> Vec<Type<FullType>> {
+        let mut semantics = Vec::new();
+        for arg in args {
             let arg_ident = arg.ident.str();
 
-            if args_semantics
+            if semantics
                 .iter()
                 .map(|x| self.get_full_ident(x))
                 .find(|x| *x == arg_ident)
@@ -362,54 +523,46 @@ impl Checker {
                 );
             }
             let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
-            args_semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
+            semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
         }
+        semantics
+    }
 
-        // check if this overload already exists.
-        let is_overload = self.fn_map.contains_key(ident.str());
-        if is_overload {
-            let overloads = self.fn_map.get(ident.str()).unwrap();
-            let mut matches = true;
+    // iters over all overloads of a function, 
+    // checks if the function already exists with the same signature 
+    // if it finds a single match it returns its idx, else err.
+    fn get_matching_overload(&self, semantics: &[Type<FullType>], fn_ident: &str) -> Result<usize> {
+        let overloads = self.fn_map.get(fn_ident).unwrap();
+        let mut matching = None;
 
-            for overload in overloads {
-                let overload = self.fn_vec.get(*overload).unwrap();
-                if overload.args.len() != args_semantics.len() {
-                    continue;
-                }
+        for overload in overloads {
+            let overload = self.fn_vec.get(*overload).unwrap();
+            if overload.args.len() != semantics.len() {
+                continue;
+            }
 
-                for (overload, new) in overload.args.iter().zip(args_semantics.iter()) {
-                    if overload != new {
-                        matches = false;
-                        break;
+            for (idx, (overload, new)) in overload.args.iter().zip(semantics.iter()).enumerate() {
+                if overload == new {
+                    match matching {
+                        Some(overload) => return err!(
+                            "Function '{fn_ident}' already exists with the same signature"
+                        ),
+                        None => matching = Some(idx),                        
                     }
                 }
-
-                if matches {
-                    return comp_err!(
-                        "Function '{fn_ident}' already exists with the same signature"
-                    );
-                }
             }
-        } 
+        }
 
-        // Creates a function signature, to allow for overloading, e.g plus5(i32,i32)
-        let signature = self.create_func_signature(ident.str(), &args_semantics);
-        self.ctx.func.signature = signature.clone();
+        match matching {
+            Some(overload) => Ok(overload),
+            None => err!("Function '{fn_ident}' does not exist with the same signature")
+        }
+    }
 
-        let return_type = match return_type {
-            Some(parse_type) => {
-                let base_id = *self.type_map.get(parse_type.type_tok.str()).unwrap();
-                self.new_full(base_id, parse_type.addr_mode)
-            }
-            None => Type::Void,
-        };
-        self.ctx.func.return_type = return_type;
-        
-        // Create lambda for custom scope check
-        println!("{}", text_to_ascii_art::to_art(signature.to_owned(), "small", 2, 0, 0).unwrap());
+    fn check_fn_scope(&mut self, scope: Node<Scope>, semantics: &[Type<FullType>], args: &[Arg]) -> CompilerResult<Node<Scope>>{
         let mut scope_check;
         unsafe {
-            let mut_self = self as *mut Self;
+            let mut_self = self as *const Self as *mut Self;
             scope_check = (*mut_self).check_scope(
                 scope,
                 Some(|stmts: Vec<Node<Stmt>>| -> CompilerResult<Scope> {
@@ -417,7 +570,7 @@ impl Checker {
                     let mut checked_stmts = Vec::with_capacity(stmts.len());
 
                     // add each arg as a variable for use in the function
-                    for (arg_type, parse) in args_semantics.iter().zip(args.iter()) {
+                    for (arg_type, parse) in semantics.iter().zip(args.iter()) {
                         let arg_stmt = Node {
                             start: parse.ident.start,
                             end: parse.parse_type.type_tok.end_pos(),
@@ -477,123 +630,33 @@ impl Checker {
             );
         }
 
-        let (checked_scope, func_body_error) = match scope_check {
-            CompilerResult::Ok(node) => (node, None),
-            CompilerResult::Err { data, error } => {
-            let data = match data {
-                    Some(node) => node,
-                    None => Node {
-                        start,
-                        end,
-                        node: Scope {
-                            stmts: Vec::new(),
-                            inherits_stmts: false,
-                        },
-                    }
-                };
-                
-                (data, Some(error))
-            }
-        };
-
-         
-        let fn_sem = Node {
-            start: checked_scope.start,
-            end: checked_scope.end,
-            node: Stmt::FnSemantics {id: self.fn_vec.len()} // haven't pushed to vec yet
-        };
-        
-        let function = Function {
-            ident,
-            signature: signature.clone(),
-            args: args_semantics,
-            scope: checked_scope,
-            return_type: self.ctx.func.return_type.clone(),
-        };
-        
-        // Add the fn to vec, then if its an overload add it to the list, or if its new insert a new entry into the map
-        self.fn_vec.push(function);
-        if is_overload {
-            self.fn_map.get_mut(ident.str()).unwrap().push(self.fn_vec.len() - 1);
-        } else {
-            self.fn_map.insert(ident.str().to_string(), vec![self.fn_vec.len() - 1]);
-        }
-
-        if let Some(error) = func_body_error {
-            return CompilerResult::Err {data: Some(fn_sem), error}
-        }
-
-
-        // check if its a stmt, or has a scope, which you should check.
-        fn check_scope_returns(node: &Scope) -> bool {
-            match node.stmts.last() {
-                Some(stmt) => check_node_returns(&stmt.node),
-                None => false,
-            }
-        }
-        fn check_node_returns(stmt: &Stmt) -> bool { 
-            match &stmt {
-                Stmt::Return(_) => return true, // already checked to be of valid return type.
-                Stmt::While { scope, ..} => check_scope_returns(&scope.node), 
-                Stmt::NakedScope(node) => check_scope_returns(&node.node),
-                Stmt::If { condition, scope, branches } => {
-                    if !check_scope_returns(&scope.node) {
-                        return false;
-                    }
-
-                    let mut branches_return = true; 
-                    for branch in branches {
-                        if !check_node_returns(&branch.node) {
-                            return false;
-                        }
-                    }
-
-                    true
-                }
-                Stmt::ElseIf { scope, .. } => check_scope_returns(&scope.node),
-                Stmt::Else(scope) => check_scope_returns(&scope.node),
-                _ => false,
-            }   
-        }
-        
-        if self.ctx.func.return_type != Type::Void {
-            let scope_returns = match self.fn_vec.last().unwrap().scope.node.stmts.last() {
-                Some(stmt) => check_node_returns(&stmt.node),
-                None => false,
-            };
-            if !scope_returns {
-                return comp_err!((fn_sem), "Not all code paths return in '{signature}'")
-            }
-        }
-
-        println!();
-        debug!("Function '{signature}' checked successfully");
-        CompilerResult::Ok(fn_sem)
+        scope_check
     }
+    // endregion
     
-    fn check_type_alias(&mut self, ident: Token, parse_type: ParseType) -> Result<()> {
-        debug!("checking type alias: {ident}");
+    fn check_type_alias(&mut self, ident_str: &str, parse_type_str: &str) -> Result<()> {
+        debug!("checking type alias: {ident_str}");
 
         // check if its already a type
-        if self.type_map.get(ident.str()).is_some() {
-            return err!("Duplicate definition of a Type: '{}'", ident.str());
-        } else if self.stack_var_map.contains_key(ident.str()) {
-            return err!("Illegal Type name, Variables are reserved: '{}'", ident.str());
+        if self.type_map.get(ident_str).is_some() {
+            return err!("Duplicate definition of a Type: '{}'", ident_str);
+        } else if self.stack_var_map.contains_key(ident_str) {
+            return err!("Illegal Type name, Variables are reserved: '{}'", ident_str);
         }
 
-        let original_id = match self.type_map.get(parse_type.type_tok.str()) {
+        let original_id = match self.type_map.get(parse_type_str) {
             Some(id) => *id,
-            None => return err!("Type not found: '{}'", parse_type.type_tok.str()),
+            None => return err!("Type not found: '{}'", parse_type_str),
         };
         let original_type = self.type_vec.get(original_id).unwrap();
 
         self.type_vec.push(original_type.clone());
-        self.type_map.insert(ident.str().to_string(), original_id); // points to original.
+        self.type_map.insert(ident_str.to_string(), original_id); // points to original.
         
         Ok(())
     }
     // endregion
-
+    
     // region: Scope
     fn check_scope<F>(
         &mut self,

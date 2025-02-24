@@ -9,7 +9,9 @@ fn example3_1234(ident1: bool) -> i32 {
 }
 
 fn example1() -> bool {
-    let inner_scope_var: i32 = example3_1234(true);
+    let fib: i64 = fibonacci(5);
+
+    return true;
     /*
 
     let a: u32 = 0;
@@ -29,7 +31,14 @@ fn example1() -> bool {
         return true;
     }
     */
-    return true;
 }
 
-// bearded theme monokai reversed
+fn fibonacci(n: i32) -> i32 {
+    if n == 0 {
+        return 0;
+    } else if n == 1 {
+        return 1;
+    } else {
+        return fibonacci(n-1) + fibonacci(n-2);
+    }
+}
