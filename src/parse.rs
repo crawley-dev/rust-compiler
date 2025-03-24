@@ -50,9 +50,7 @@ pub enum Expr {
         op: TokenKind,
         expr: Box<Node<Expr>>,
     },
-    // It contains itself, so Node<Expr::Term> is ~ Node<Term>
-    // But still have to pass an extra Node<> Wrapper w(ﾟДﾟ)w
-    Term(Node<Term>),
+    Term(Term),
 }
 
 #[derive(Debug, Clone)]
@@ -684,22 +682,14 @@ impl Parser {
                         Ok(Node {
                             start: tok.start,
                             end,
-                            node: Expr::Term(Node {
-                                start: tok.start,
-                                end,
-                                node: Term::FnCall { ident: tok, args },
-                            }),
+                            node: Expr::Term(Term::FnCall { ident: tok, args }),
                         })
                     }
                     // Just an Ident
                     Some(_) => Ok(Node {
                         start: tok.start,
                         end: tok.end_pos(),
-                        node: Expr::Term(Node {
-                            start: tok.start,
-                            end: tok.end_pos(),
-                            node: Term::Ident,
-                        }),
+                        node: Expr::Term(Term::Ident),
                     }),
                     None => err!("Incomplete expression, nothing after =>\n{tok:#?}"),
                 }
@@ -707,29 +697,17 @@ impl Parser {
             TokenKind::IntLit => Ok(Node {
                 start: tok.start,
                 end: tok.end_pos(),
-                node: Expr::Term(Node {
-                    start: tok.start,
-                    end: tok.end_pos(),
-                    node: Term::IntLit,
-                }),
+                node: Expr::Term(Term::IntLit),
             }),
             TokenKind::True => Ok(Node {
                 start: tok.start,
                 end: tok.end_pos(),
-                node: Expr::Term(Node {
-                    start: tok.start,
-                    end: tok.end_pos(),
-                    node: Term::True,
-                }),
+                node: Expr::Term(Term::True),
             }),
             TokenKind::False => Ok(Node {
                 start: tok.start,
                 end: tok.end_pos(),
-                node: Expr::Term(Node {
-                    start: tok.start,
-                    end: tok.end_pos(),
-                    node: Term::False,
-                }),
+                node: Expr::Term(Term::False),
             }),
             _ => err!("Invalid Term =>\n{tok:#?}"),
         }

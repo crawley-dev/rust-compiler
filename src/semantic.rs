@@ -1047,7 +1047,7 @@ impl Checker {
 
     fn check_expr(&self, expr: &Node<Expr>) -> Result<ExprSem> {
         match &expr.node {
-            Expr::Term(term) => self.check_term(term),
+            Expr::Term(term) => self.check_term(term, expr.start, expr.end),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_checked = self.check_expr(lhs)?;
                 let rhs_checked = self.check_expr(rhs)?;
@@ -1202,12 +1202,12 @@ impl Checker {
         }
     }
 
-    fn check_term(&self, term: &Node<Term>) -> Result<ExprSem> {
+    fn check_term(&self, term: &Term, start: Pos, end: Pos) -> Result<ExprSem> {
         // TODO(TOM): NodeTerm really should unconditionally contain a position,
         //  >> detach pos from token and give it to the node itself
-        Logger::set_pos(term.start);
+        Logger::set_pos(start);
 
-        match &term.node {
+        match &term {
             Term::True | Term::False => Ok(ExprSem {
                 form: ExprForm::Literal,
                 type_mode: TypeMode::Boolean,
@@ -1215,7 +1215,7 @@ impl Checker {
                 width: 1,
             }),
             Term::Ident => {
-                let var = self.get_var(&Contents::get_src_oneline(term.start, term.end))?;
+                let var = self.get_var(&Contents::get_src_oneline(start, end))?;
                 let addr_mode = match &var.var_type {
                     Type::Void => return err!("Cannot use the void type in expression"),
                     Type::Primitive(full_type) => full_type.addr_mode,
@@ -1225,7 +1225,7 @@ impl Checker {
                         width,
                     } => todo!("struct semantics"),
                     Type::Union {
-                        ident,
+                        ident,  
                         members,
                         width,
                     } => todo!("union semantics"),

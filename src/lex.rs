@@ -28,6 +28,7 @@ pub enum TokenKind {
 
     // Operators
     Array,     // "[]"
+    Dot,       // "." Member Access
     Ptr,       // "^"
     Eq,        // "="
     Add,       // "+"
@@ -57,8 +58,8 @@ pub enum TokenKind {
     ShrEq,    // ">>="
 
     // Comparison
-    CmpAnd, // "&&"
-    CmpOr,  // "||"
+    LogAnd, // "&&"
+    LogOr,  // "||"
     CmpEq,  // "=="
     Not,    // "!" BitNot and CmpNot
     NotEq,  // "!="
@@ -134,42 +135,51 @@ bitflags! {
 impl TokenKind {
     pub fn get_flags(self) -> TokenFlags {
         match self {
-            TokenKind::Ptr => TokenFlags::UNARY,                     // "^"
-            TokenKind::Eq => TokenFlags::ASSIGN,                     // "="
-            TokenKind::Add => TokenFlags::ARITH,                     // "+"
-            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-"
-            TokenKind::Mul => TokenFlags::ARITH,                     // "*"
-            TokenKind::Quo => TokenFlags::ARITH,                     // "/"
-            TokenKind::Mod => TokenFlags::ARITH,                     // "%"
-            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
-            TokenKind::Bar => TokenFlags::BIT,                       // "|"
-            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~"
-            TokenKind::AndNot => TokenFlags::BIT,                    // "&~"
-            TokenKind::Shl => TokenFlags::BIT,                       // "<<"
-            TokenKind::Shr => TokenFlags::BIT,                       // ">>"
+            // Arithmetic
+            TokenKind::Add => TokenFlags::ARITH, // "+"
+            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-" (unary minus)
+            TokenKind::Mul => TokenFlags::ARITH, // "*"
+            TokenKind::Quo => TokenFlags::ARITH, // "/"
+            TokenKind::Mod => TokenFlags::ARITH, // "%"
 
+            // Comparison
+            TokenKind::CmpEq => TokenFlags::CMP, // "=="
+            TokenKind::NotEq => TokenFlags::CMP, // "!="
+            TokenKind::Lt => TokenFlags::CMP,    // "<"
+            TokenKind::Gt => TokenFlags::CMP,    // ">"
+            TokenKind::LtEq => TokenFlags::CMP,  // "<="
+            TokenKind::GtEq => TokenFlags::CMP,  // ">="
+
+            // Logical
+            TokenKind::LogAnd => TokenFlags::LOG, // "&&" /* TokenFlags::CMP | */
+            TokenKind::LogOr => TokenFlags::LOG,  // "||" /* TokenFlags::CMP | */
+            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
+
+            // Bitwise
+            TokenKind::Bar => TokenFlags::BIT,    // "|"
+            TokenKind::Shl => TokenFlags::BIT,    // "<<"
+            TokenKind::Shr => TokenFlags::BIT,    // ">>"
+            TokenKind::AndNot => TokenFlags::BIT, // "&~"
+            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~" (xor)
+            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
+
+            // Assignment
+            TokenKind::Eq => TokenFlags::ASSIGN, // "="
             TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
             TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
             TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "*="
             TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "/="
             TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "%="
-            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "&="
-            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT,    // "|="
-            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "~="
+            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&="
+            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "|="
+            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "~="
+            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "<<="
+            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT, // ">>="
             TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&~="
-            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // "<<="
-            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT,   // ">>="
 
-            // e.g. 'CmpAnd' is not actually a cmp operation, but a logical operation
-            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
-            TokenKind::CmpAnd => TokenFlags::LOG, // "&&" /* TokenFlags::CMP | */
-            TokenKind::CmpOr => TokenFlags::LOG,  // "||" /* TokenFlags::CMP | */
-            TokenKind::CmpEq => TokenFlags::CMP,  // "=="
-            TokenKind::NotEq => TokenFlags::CMP,  // "!="
-            TokenKind::Lt => TokenFlags::CMP,     // "<"
-            TokenKind::Gt => TokenFlags::CMP,     // ">"
-            TokenKind::LtEq => TokenFlags::CMP,   // "<="
-            TokenKind::GtEq => TokenFlags::CMP,   // ">="
+            // Other operators
+            TokenKind::Ptr => TokenFlags::UNARY,   // "^"
+            TokenKind::Array => TokenFlags::UNARY, // "[]"
 
             _ => TokenFlags::empty(),
         }
@@ -196,8 +206,8 @@ impl TokenKind {
             TokenKind::Ampersand => 7, // BitAnd
             TokenKind::Tilde => 6,     // BitXor
             TokenKind::Bar => 5,
-            TokenKind::CmpAnd => 3,
-            TokenKind::CmpOr => 2,
+            TokenKind::LogAnd => 3,
+            TokenKind::LogOr => 2,
             _ if self.has_flags(TokenFlags::ASSIGN) => 1,
             TokenKind::Comma => 0,
             _ => -100,
@@ -210,9 +220,10 @@ impl TokenKind {
     // .. .. Binary: BitAnd, prec: 7
     // .. .. Unary: Address-of, prec: 13
     pub fn get_prec_unary(&self) -> i32 {
-        match self {
-            _ if self.has_flags(TokenFlags::UNARY) => 13,
-            _ => -100,
+        if self.has_flags(TokenFlags::UNARY) {
+            13
+        } else {
+            -100
         }
     }
 
@@ -295,8 +306,8 @@ impl Lexer {
             ("<<=", TokenKind::ShlEq),
             (">>=", TokenKind::ShrEq),
             // Comparison
-            ("&&", TokenKind::CmpAnd),
-            ("||", TokenKind::CmpOr),
+            ("&&", TokenKind::LogAnd),
+            ("||", TokenKind::LogOr),
             ("==", TokenKind::CmpEq),
             ("!=", TokenKind::NotEq),
             ("<", TokenKind::Lt),
