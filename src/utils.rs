@@ -533,4 +533,51 @@ macro_rules! err {
     }};
 }
 
+// This macro will either give you the 'ok' val, or return an error to the function
+// The syntax mimics a closure, if the input is an error with data, it will bind the data to a
+// variable you name with $upgraded_data. This can then be used in $upgraded_err to return a new type!
+#[macro_export]
+macro_rules! upgrade_err {
+    ($expr:expr, |$upgraded_data:ident| $upgraded_closure:expr) => {{
+        match $expr {
+            CompilerResult::Ok(val) => val,
+            CompilerResult::Err { data: None, error } => {
+                return CompilerResult::Err { data: None, error }
+            }
+            CompilerResult::Err {
+                data: Some($upgraded_data),
+                error,
+            } => {
+                return CompilerResult::Err {
+                    data: Some($upgraded_closure),
+                    error,
+                }
+            }
+        }
+    }};
+}
+
+// This function will upgrade the input to a new result type,
+// if the input is an error with data, it will bind the data to a variable you name with $upgraded_data.
+// This can then be used in $upgraded_closure to return a new type!
+#[macro_export]
+macro_rules! upgrade_result {
+    ($expr:expr, |$upgraded_data:ident| $upgraded_closure:expr) => {{
+        match $expr {
+            CompilerResult::Ok($upgraded_data) => CompilerResult::Ok($upgraded_closure),
+            CompilerResult::Err { data: None, error } => {
+                return CompilerResult::Err { data: None, error }
+            }
+            CompilerResult::Err {
+                data: Some($upgraded_data),
+                error,
+            } => {
+                return CompilerResult::Err {
+                    data: Some($upgraded_closure),
+                    error,
+                }
+            }
+        }
+    }};
+}
 // endregion

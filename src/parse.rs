@@ -2,6 +2,7 @@ use crate::{
     comp_err, debug, err,
     lex::{Associativity, Token, TokenFlags, TokenKind},
     semantic::{AddressingMode, Variable},
+    upgrade_err, upgrade_result,
     utils::{self, pos, CompilerResult, Contents, Logger, Pos},
 };
 use anyhow::{Context, Error, Result};
@@ -165,6 +166,39 @@ impl Parser {
         self.expect(TokenKind::OpenParen)?;
 
         // parsing function arguments
+        let args = self.parse_fn_args()?;
+
+        // parse function return type
+        let return_type = match self.expect(TokenKind::Arrow) {
+            Ok(_) => Some(self.parse_type()?),
+            Err(_) => None,
+        };
+
+        // Parse the scope, if it fails, return the partially parsed function
+        let scope = upgrade_err!(self.parse_scope(false), |scope| Node {
+            start: fn_keyword.start,
+            end: scope.end,
+            node: Stmt::FnDecl {
+                ident,
+                args,
+                scope,
+                return_type,
+            },
+        });
+
+        CompilerResult::Ok(Node {
+            start: fn_keyword.start,
+            end: scope.end,
+            node: Stmt::FnDecl {
+                ident,
+                args,
+                scope,
+                return_type,
+            },
+        })
+    }
+
+    fn parse_fn_args(&mut self) -> Result<Vec<Arg>> {
         let mut args = Vec::new();
         while self.token_equals(TokenKind::CloseParen, 0).is_err() {
             if !args.is_empty() {
@@ -183,50 +217,17 @@ impl Parser {
         }
         self.expect(TokenKind::CloseParen)?;
 
-        // parse function return type
-        let return_type = match self.expect(TokenKind::Arrow) {
-            Ok(_) => Some(self.parse_type()?),
-            Err(_) => None,
-        };
-
-        match self.parse_scope(false) {
-            CompilerResult::Ok(scope) => CompilerResult::Ok(Node {
-                start: fn_keyword.start,
-                end: scope.end,
-                node: Stmt::FnDecl {
-                    ident,
-                    args,
-                    scope,
-                    return_type,
-                },
-            }),
-            CompilerResult::Err { data, error } => {
-                let scope = match data {
-                    Some(scope) => scope,
-                    None => return CompilerResult::Err { data: None, error },
-                };
-                CompilerResult::Err {
-                    data: Some(Node {
-                        start: fn_keyword.start,
-                        end: scope.end,
-                        node: Stmt::FnDecl {
-                            ident,
-                            args,
-                            scope,
-                            return_type,
-                        },
-                    }),
-                    error,
-                }
-            }
-        }
+        return Ok(args);
     }
 
     fn parse_type_alias(&mut self) -> CompilerResult<Node<Stmt>> {
         let type_keyword = self.expect(TokenKind::Type)?;
         let new_type = self.expect(TokenKind::Ident)?;
+
         self.expect(TokenKind::Eq)?;
+
         let parse_type = self.parse_type()?;
+
         self.expect(TokenKind::SemiColon)?;
 
         CompilerResult::Ok(Node {
@@ -241,9 +242,9 @@ impl Parser {
     // endregion
 
     fn parse_scope(&mut self, inherits_stmts: bool) -> CompilerResult<Node<Scope>> {
-        // consumes statements until a closebrace is found.
         let open_brace = self.expect(TokenKind::OpenBrace)?;
 
+        // go through each statement, if it fails. return the partially complete scope.
         let mut stmts = Vec::new();
         while self.expect(TokenKind::CloseBrace).is_err() {
             match self.parse_stmt() {
@@ -297,139 +298,8 @@ impl Parser {
         };
 
         let stmt = match kind {
-            TokenKind::Let => {
-                let let_tok = self.expect(TokenKind::Let)?;
-                let mutable = self.expect(TokenKind::Mut).is_ok();
-                let ident = self.expect(TokenKind::Ident)?;
-
-                self.expect(TokenKind::Colon)?;
-                let parse_type = self.parse_type()?;
-
-                let init_expr = match self.expect(TokenKind::Eq) {
-                    Ok(_) => InitExpr::Some(self.parse_expr(0)?),
-                    Err(_) => InitExpr::None,
-                };
-
-                let end = match init_expr {
-                    InitExpr::Some(ref expr) => expr.end,
-                    _ => parse_type.type_tok.end_pos(),
-                };
-                Node {
-                    start: let_tok.start,
-                    end,
-                    node: Stmt::VarDecl {
-                        init_expr,
-                        arg: Arg {
-                            ident,
-                            mutable,
-                            parse_type,
-                        },
-                    },
-                }
-            }
-            TokenKind::If => {
-                let if_tok = self.expect(TokenKind::If)?;
-                let condition = self.parse_expr(0)?;
-                let scope = match self.parse_scope(true) {
-                    CompilerResult::Ok(scope) => scope,
-                    CompilerResult::Err { data, error } => {
-                        let scope = match data {
-                            Some(scope) => scope,
-                            None => return CompilerResult::Err { data: None, error },
-                        };
-                        return CompilerResult::Err {
-                            data: Some(Node {
-                                start: if_tok.start,
-                                end: scope.end,
-                                node: Stmt::If {
-                                    condition,
-                                    scope,
-                                    branches: Vec::new(),
-                                },
-                            }),
-                            error,
-                        };
-                    }
-                };
-
-                let mut branches = Vec::new();
-                loop {
-                    // no branches left, exit loop
-                    if self.expect(TokenKind::Else).is_err() {
-                        break;
-                    }
-                    // Found an else if, parse condition & scope, push to branches
-                    if self.expect(TokenKind::If).is_ok() {
-                        let condition = self.parse_expr(0)?;
-                        let scope = match self.parse_scope(true) {
-                            CompilerResult::Ok(scope) => scope,
-                            CompilerResult::Err { data, error } => {
-                                let scope = match data {
-                                    Some(scope) => scope,
-                                    None => return CompilerResult::Err { data: None, error },
-                                };
-                                return CompilerResult::Err {
-                                    data: Some(Node {
-                                        start: if_tok.start,
-                                        end: scope.end,
-                                        node: Stmt::ElseIf { condition, scope },
-                                    }),
-                                    error,
-                                };
-                            }
-                        };
-
-                        branches.push(Node {
-                            start: condition.start,
-                            end: scope.end,
-                            node: Stmt::ElseIf { condition, scope },
-                        });
-
-                        continue;
-                    }
-
-                    // Found an else, parse scope, push to branches
-                    let scope = match self.parse_scope(true) {
-                        CompilerResult::Ok(scope) => scope,
-                        CompilerResult::Err { data, error } => {
-                            let scope = match data {
-                                Some(scope) => scope,
-                                None => return CompilerResult::Err { data: None, error },
-                            };
-                            return CompilerResult::Err {
-                                data: Some(Node {
-                                    start: if_tok.start,
-                                    end: scope.end,
-                                    node: Stmt::Else(scope),
-                                }),
-                                error,
-                            };
-                        }
-                    };
-
-                    branches.push(Node {
-                        start: condition.start,
-                        end: scope.end,
-                        node: Stmt::Else(scope),
-                    });
-                    break; // found an else, this is the last branch
-                }
-
-                let start = condition.start;
-                let end = match branches.last() {
-                    Some(branch) => branch.end,
-                    None => scope.end,
-                };
-                Node {
-                    start,
-                    end,
-                    node: Stmt::If {
-                        condition,
-                        scope,
-                        branches,
-                    },
-                }
-            }
+            TokenKind::Let => self.parse_var_decl()?,
+            TokenKind::If => self.parse_if()?,
             TokenKind::Return => {
                 let tok = self.expect(TokenKind::Return)?;
                 match self.peek(0) {
@@ -449,29 +319,11 @@ impl Parser {
                 let tok = self.expect(TokenKind::While)?;
                 let condition = self.parse_expr(0)?;
 
-                let scope = match self.parse_scope(true) {
-                    CompilerResult::Ok(scope) => scope,
-                    CompilerResult::Err { data, error } => {
-                        let scope = match data {
-                            Some(scope) => scope,
-                            None => return CompilerResult::Err { data: None, error },
-                        };
-                        return CompilerResult::Err {
-                            data: Some(Node {
-                                start: tok.start,
-                                end: scope.end,
-                                node: Stmt::While { condition, scope },
-                            }),
-                            error,
-                        };
-                    }
-                };
-
-                Node {
+                upgrade_result!(self.parse_scope(true), |scope| Node {
                     start: tok.start,
                     end: scope.end,
                     node: Stmt::While { condition, scope },
-                }
+                })?
             }
             TokenKind::Ident => {
                 match self.peek(1) {
@@ -524,29 +376,12 @@ impl Parser {
             }
             TokenKind::OpenBrace => {
                 let tok = *self.peek(0).unwrap();
-                let scope = match self.parse_scope(true) {
-                    CompilerResult::Ok(scope) => scope,
-                    CompilerResult::Err { data, error } => {
-                        let scope = match data {
-                            Some(scope) => scope,
-                            None => return CompilerResult::Err { data: None, error },
-                        };
-                        return CompilerResult::Err {
-                            data: Some(Node {
-                                start: tok.start,
-                                end: scope.end,
-                                node: Stmt::NakedScope(scope),
-                            }),
-                            error,
-                        };
-                    }
-                };
 
-                Node {
+                upgrade_result!(self.parse_scope(true), |scope| Node {
                     start: tok.start,
                     end: scope.end,
                     node: Stmt::NakedScope(scope),
-                }
+                })?
             }
             TokenKind::Fn => {
                 return comp_err!("Functions cannot be nested, they're top level statements")
@@ -566,6 +401,110 @@ impl Parser {
             },
             _ => CompilerResult::Ok(stmt),
         }
+    }
+
+    fn parse_var_decl(&mut self) -> Result<Node<Stmt>> {
+        let let_tok = self.expect(TokenKind::Let)?;
+        let mutable = self.expect(TokenKind::Mut).is_ok();
+        let ident = self.expect(TokenKind::Ident)?;
+
+        self.expect(TokenKind::Colon)?;
+        let parse_type = self.parse_type()?;
+
+        let init_expr = match self.expect(TokenKind::Eq) {
+            Ok(_) => InitExpr::Some(self.parse_expr(0)?),
+            Err(_) => InitExpr::None,
+        };
+
+        let end = match init_expr {
+            InitExpr::Some(ref expr) => expr.end,
+            _ => parse_type.type_tok.end_pos(),
+        };
+
+        Ok(Node {
+            start: let_tok.start,
+            end,
+            node: Stmt::VarDecl {
+                init_expr,
+                arg: Arg {
+                    ident,
+                    mutable,
+                    parse_type,
+                },
+            },
+        })
+    }
+
+    fn parse_if(&mut self) -> CompilerResult<Node<Stmt>> {
+        let if_tok = self.expect(TokenKind::If)?;
+        let condition = self.parse_expr(0)?;
+        let scope = match self.parse_scope(true) {
+            CompilerResult::Ok(scope) => scope,
+            CompilerResult::Err { data, error } => {
+                let scope = match data {
+                    Some(scope) => scope,
+                    None => return CompilerResult::Err { data: None, error },
+                };
+                return CompilerResult::Err {
+                    data: Some(Node {
+                        start: if_tok.start,
+                        end: scope.end,
+                        node: Stmt::If {
+                            condition,
+                            scope,
+                            branches: Vec::new(),
+                        },
+                    }),
+                    error,
+                };
+            }
+        };
+
+        let mut branches = Vec::new();
+        loop {
+            // no branches left, exit loop
+            if self.expect(TokenKind::Else).is_err() {
+                break;
+            }
+            // Found an else if, parse condition & scope, push to branches
+            if self.expect(TokenKind::If).is_ok() {
+                let condition = self.parse_expr(0)?;
+
+                let upgraded_stmt = upgrade_result!(self.parse_scope(true), |scope| Node {
+                    start: if_tok.start,
+                    end: scope.end,
+                    node: Stmt::ElseIf { condition, scope },
+                })?;
+
+                branches.push(upgraded_stmt);
+                continue;
+            }
+
+            // Found an else, parse scope, push to branches
+            let upgraded_stmt = upgrade_result!(self.parse_scope(true), |scope| Node {
+                start: if_tok.start,
+                end: scope.end,
+                node: Stmt::Else(scope),
+            })?;
+
+            branches.push(upgraded_stmt);
+            break; // found an else, this is the last branch
+        }
+
+        let end = match branches.last() {
+            Some(branch) => branch.end,
+            None => scope.end,
+        };
+
+        CompilerResult::Ok(Node {
+            start: condition.start,
+            end,
+            node: Stmt::If {
+                condition,
+                scope,
+                branches,
+            },
+        })
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {

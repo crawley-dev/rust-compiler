@@ -58,7 +58,7 @@
 */
 
 use crate::{
-    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, Term}, utils::{self, CompilerResult, Contents, Logger, Pos}
+    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, Term}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
 };
 use anyhow::{Error, Result};
 use educe::Educe;
@@ -83,7 +83,6 @@ pub enum AddressingMode {
 enum TypeMode {
     Boolean,
     Int(bool), // sign
-    // Void, // TODO(TOM): only place I can really put it..
     Struct,
     Union,
 }
@@ -326,9 +325,7 @@ impl Checker {
         match &stmt.node {
             Stmt::FnDecl { ident, args, scope, return_type } => {
                 let fn_ident = ident.str();
-
                 let semantics = self.create_arg_semantics(&args, fn_ident)?;
-                
                 let signature = self.create_func_signature(ident.str(), &semantics);
                 
                 self.get_matching_overload(&semantics, fn_ident)?;
@@ -377,6 +374,7 @@ impl Checker {
                     CompilerResult::Ok(data) => CompilerResult::Ok(Some(data)),
                     CompilerResult::Err { data, error } => CompilerResult::Err { data: Some(data), error }}
             },
+            Stmt::TypeAlias { .. } => CompilerResult::Ok(None),
             _ => comp_err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
@@ -408,7 +406,7 @@ impl Checker {
         }
 
         // these should always be the same, as we are checking an indexed func, but compiler cannot be sure.
-        let (function, function_index)= match (function, function_index) {
+        let (function, function_index) = match (function, function_index) {
             (Some(function), Some(function_index)) => (function, function_index),
             _ => return comp_err!((Node { start, end, node: Stmt::FnSemantics {id: self.fn_vec.len()} }), "Function '{}' does not exist with the same signature", fn_ident),
         };
@@ -420,6 +418,7 @@ impl Checker {
         // Create lambda for custom scope check
         println!("{}", text_to_ascii_art::to_art(function.signature.clone(), "small", 2, 0, 0).unwrap());
         
+        // Does not error here, so I can construct 'fn_sem', to then error with that information.
         let (checked_scope, func_body_error) = match self.check_fn_scope(scope, &function.args, &args) {
             CompilerResult::Ok(node) => (node, None),
             CompilerResult::Err { data, error } => {
@@ -449,41 +448,9 @@ impl Checker {
             return CompilerResult::Err {data: Some(fn_sem), error}
         }
 
-        // check if its a stmt, or has a scope, which you should check.
-        fn check_scope_returns(node: &Scope) -> bool {
-            match node.stmts.last() {
-                Some(stmt) => check_node_returns(&stmt.node),
-                None => false,
-            }
-        }
-        fn check_node_returns(stmt: &Stmt) -> bool { 
-            match &stmt {
-                Stmt::Return(_) => return true, // already checked to be of valid return type.
-                Stmt::While { scope, ..} => check_scope_returns(&scope.node), 
-                Stmt::NakedScope(node) => check_scope_returns(&node.node),
-                Stmt::If { condition, scope, branches } => {
-                    if !check_scope_returns(&scope.node) {
-                        return false;
-                    }
-
-                    let mut branches_return = true; 
-                    for branch in branches {
-                        if !check_node_returns(&branch.node) {
-                            return false;
-                        }
-                    }
-
-                    true
-                }
-                Stmt::ElseIf { scope, .. } => check_scope_returns(&scope.node),
-                Stmt::Else(scope) => check_scope_returns(&scope.node),
-                _ => false,
-            }   
-        }
-        
         if self.ctx.func.return_type != Type::Void {
             let scope_returns = match checked_scope.node.stmts.last() {
-                Some(stmt) => check_node_returns(&stmt.node),
+                Some(stmt) => Self::check_node_returns(&stmt.node),
                 None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
             };
         }
@@ -561,8 +528,40 @@ impl Checker {
 
         match matching {
             Some(overload) => Ok(overload),
-            None => Ok(0) // no existing overloads, this is the first index.
+            None => Ok(0) // no existing overloads, this is the first appearance of this function
         }
+    }
+
+    // check if its a stmt, or has a scope, which you should check.
+    fn check_scope_returns(node: &Scope) -> bool {
+        match node.stmts.last() {
+            Some(stmt) => Self::check_node_returns(&stmt.node),
+            None => false,
+        }
+    }
+    fn check_node_returns(stmt: &Stmt) -> bool { 
+        match &stmt {
+            Stmt::Return(_) => return true, // already checked to be of valid return type.
+            //Stmt::While { scope, ..} => Self::check_scope_returns(&scope.node), 
+            Stmt::NakedScope(node) => Self::check_scope_returns(&node.node),
+            Stmt::If { condition, scope, branches } => {
+                if !Self::check_scope_returns(&scope.node) {
+                    return false;
+                }
+
+                let mut branches_return = true; 
+                for branch in branches {
+                    if !Self::check_node_returns(&branch.node) {
+                        return false;
+                    }
+                }
+
+                true
+            }
+            Stmt::ElseIf { scope, .. } => Self::check_scope_returns(&scope.node),
+            Stmt::Else(scope) => Self::check_scope_returns(&scope.node),
+            _ => false,
+        }   
     }
 
     fn check_fn_scope(&self, scope: Node<Scope>, semantics: &[Type<FullType>], args: &[Arg]) -> CompilerResult<Node<Scope>>{
@@ -589,6 +588,7 @@ impl Checker {
                                 },
                             }
                         };
+
                         match (*mut_self).check_stmt(arg_stmt) {
                             CompilerResult::Ok(data) => checked_stmts.push(data),
                             CompilerResult::Err { data, error } => {
@@ -627,11 +627,10 @@ impl Checker {
                         debug!("added\n{:#?}", checked_stmts.last())
                     }
 
-                    let scope = Scope {
+                    CompilerResult::Ok(Scope {
                         stmts: checked_stmts,
                         inherits_stmts: false,
-                    };
-                    CompilerResult::Ok(scope)
+                    })
                 }),
             );
         }
@@ -847,29 +846,15 @@ impl Checker {
                     }
                 }
 
-                let checked_scope = match self.check_scope_default(scope) {
-                    CompilerResult::Ok(node) => node,
-                    CompilerResult::Err { data, error } => {
-                        return match data {
-                            Some(data) => {
-                                CompilerResult::Err {
-                                    data: Some(Node {
-                                        start: stmt.start,
-                                        end: data.end,   
-                                        node: Stmt::If {
-                                            condition,
-                                            scope: data,
-                                            branches,
-                                        },
-                                    }),
-                                    error,
-                                }
-                            },
-                            None => CompilerResult::Err { data: None, error },
-                        };
-                        
+                let checked_scope = upgrade_err!(self.check_scope_default(scope), |scope| Node {
+                    start: stmt.start,
+                    end: scope.end,
+                    node: Stmt::If {
+                        condition,
+                        scope,
+                        branches,
                     },
-                };
+                });
 
                 let mut new_branches = Vec::new();
                 for branch in branches {
@@ -894,86 +879,33 @@ impl Checker {
                     );
                 }
 
-                match self.check_scope_default(scope) {
-                    CompilerResult::Ok(checked_scope) => CompilerResult::Ok(Node {
-                        start: stmt.start,
-                        end: stmt.end,
-                        node: Stmt::ElseIf {
-                            condition,
-                            scope: checked_scope
-                        },
-                    }),
-                    CompilerResult::Err { data, error } => {
-                        let mut end = stmt.end;
-                        let data = match data {
-                            Some(node) => {
-                                end = node.end;
-                                node
-                            },
-                            None => return CompilerResult::Err { data: None, error },
-                        };
-                        CompilerResult::Err {
-                            data: Some(Node {
-                                start: stmt.start,
-                                end,
-                                node: Stmt::ElseIf {
-                                    condition,
-                                    scope: data,
-                                },
-                            }),
-                            error,
-                        }
-                    }
-                }
-            }
-            Stmt::Else(scope) => match self.check_scope_default(scope) {
-                CompilerResult::Ok(scope) => CompilerResult::Ok(Node {
+                upgrade_result!(self.check_scope_default(scope), |scope| Node {
                     start: stmt.start,
-                    end: stmt.end,
+                    end: scope.end,
+                    node: Stmt::ElseIf {
+                        condition,
+                        scope,
+                    },
+                })
+            }
+            Stmt::Else(scope) => {
+                upgrade_result!(self.check_scope_default(scope), |scope| Node {
+                    start: stmt.start,
+                    end: scope.end,
                     node: Stmt::Else(scope),
-                }),
-                CompilerResult::Err { data, error } => {
-                    let data = match data {
-                        Some(node) => node,
-                        None => return CompilerResult::Err { data: None, error },
-                    };
-                    CompilerResult::Err {
-                        data: Some(Node {
-                            start: stmt.start,
-                            end: stmt.end,
-                            node: Stmt::Else(data),
-                        }),
-                        error,
-                    }
-                }
-            },
+                })
+            }
             Stmt::While { condition, scope } => {
                 self.ctx.loop_count += 1;
                 self.check_expr(&condition)?;
-                let new_scope = match self.check_scope_default(scope) {
-                    CompilerResult::Ok(data) => data,
-                    CompilerResult::Err { data, error } => {
-                        let mut end = stmt.end;
-                        let data = match data {
-                            Some(node) => {
-                                end = node.end;
-                                node
-                            },
-                            None => return CompilerResult::Err { data: None, error },
-                        };
-                        return CompilerResult::Err {
-                            data: Some(Node {
-                                start: stmt.start,
-                                end,
-                                node: Stmt::While {
-                                    condition,
-                                    scope: data,
-                                },
-                            }),
-                            error,
-                        }
+                let new_scope = upgrade_err!(self.check_scope_default(scope), |scope| Node {
+                    start: stmt.start,
+                    end: scope.end,
+                    node: Stmt::While {
+                        condition,
+                        scope,
                     },
-                };
+                });
                 self.ctx.loop_count -= 1;
 
                 CompilerResult::Ok(Node {
@@ -1009,30 +941,11 @@ impl Checker {
                 CompilerResult::Ok(stmt)
             }
             Stmt::NakedScope(scope) => {
-                match self.check_scope_default(scope) {
-                    CompilerResult::Ok(data) => CompilerResult::Ok(
-                        Node { 
-                            start: data.start, 
-                            end: data.end, 
-                            node: Stmt::NakedScope(data) 
-                        }),
-                    CompilerResult::Err {data, error} => {
-                        let data = match data {
-                            Some(node) => node,
-                            None => return CompilerResult::Err { data: None, error},
-                        };
-                        // TODO(TOM): is this not a bit ridiculous? 
-                        // node containg a singular item. so much wasted data on pos
-                        CompilerResult::Err { 
-                            data: Some(Node {
-                                start: stmt.start,
-                                end: stmt.end,
-                                node: Stmt::NakedScope(data),
-                            }),
-                            error
-                        }
-                    }
-                }
+                upgrade_result!(self.check_scope_default(scope), |scope| Node {
+                    start: stmt.start,
+                    end: scope.end,
+                    node: Stmt::NakedScope(scope),
+                })
             }
             Stmt::NakedExpr(ref expr) => {
                 self.check_expr(expr)?;
@@ -1203,8 +1116,6 @@ impl Checker {
     }
 
     fn check_term(&self, term: &Term, start: Pos, end: Pos) -> Result<ExprSem> {
-        // TODO(TOM): NodeTerm really should unconditionally contain a position,
-        //  >> detach pos from token and give it to the node itself
         Logger::set_pos(start);
 
         match &term {
@@ -1247,9 +1158,6 @@ impl Checker {
                 })
             }
             Term::FnCall { ident, args } => {
-                // Function calls:
-                // give the return type.
-
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {
                     Some(ids) => ids.as_slice(),
