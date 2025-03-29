@@ -152,12 +152,16 @@ pub struct Variable {
 
 // this contains the signature and a possible function,
 // this is so we can index all functions so other funcs can reference them.
-#[derive(Debug, Clone)]
+
+#[derive(Educe, Clone)]
+#[educe(Debug)]
 pub struct Function {
+    #[educe(Debug(ignore))]
     ident: Token,
     signature: String,
     args: Vec<Type<FullType>>,
     return_type: Type<FullType>,
+    #[educe(Debug(method = "crate::formatting::format_optional"))]
     scope: Option<Node<Scope>>,
 }
 

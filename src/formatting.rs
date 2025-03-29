@@ -75,7 +75,7 @@ impl Display for Lexer {
 }
 // endregion
 
-// region: parse.rs
+// region: parse.rs, semantic.rs
 
 // Not directly done on Node<Stmt> because ...(*￣０￣)ノ . (～￣▽￣)～ ... I don't remember
 pub trait PosAwareDebug {
@@ -116,6 +116,7 @@ impl PosAwareDebug for Stmt {
             .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
             .to_string()
     }
+
     fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
         // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
         // could I just do this in the match below? yes. did I? no.
@@ -195,6 +196,7 @@ impl PosAwareDebug for Scope {
             .trim_end_matches(|c| c == '(' || c == '{' || c == ' ')
             .to_owned()
     }
+
     fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
         f.debug_struct("Scope")
             .field("pos", &format_args!("{}", start.fmt_range(end)))
@@ -285,3 +287,17 @@ impl Debug for Ast {
     }
 }
 // endregion
+pub fn format_optional<T: fmt::Debug>(
+    field: &Option<T>,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    if let Some(value) = field {
+        if f.alternate() {
+            write!(f, "{:#?}", value)
+        } else {
+            write!(f, "{:?}", value)
+        }
+    } else {
+        write!(f, "None")
+    }
+}
