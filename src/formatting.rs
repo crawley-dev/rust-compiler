@@ -221,7 +221,13 @@ impl PosAwareDebug for Expr {
         let variant_name = self.get_variant_name();
         match self {
             Expr::Term(term) => {
-                write!(f, "{term:?}")
+                // fncalls are printed alternate, they are big!
+                // have to check here to not print "Expr::Term" in the debug output
+                if let Term::FnCall { .. } = term {
+                    write!(f, "{term:#?}")
+                } else {
+                    write!(f, "{term:?}")
+                }
             }
             Expr::Unary { op, expr } => f
                 .debug_struct(&variant_name)
