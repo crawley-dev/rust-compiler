@@ -332,7 +332,7 @@ impl Checker {
                 let semantics = self.create_arg_semantics(&args, fn_ident)?;
                 let signature = self.create_func_signature(ident.str(), &semantics);
                 
-                self.get_matching_overload(&semantics, fn_ident)?;
+                self.check_fn_overloads(&semantics, fn_ident)?;
 
                 let return_type = match return_type {
                     Some(parse_type) => {
@@ -349,6 +349,7 @@ impl Checker {
                     return_type,
                     scope: None,
                 });
+
                 if self.fn_map.contains_key(fn_ident) {
                     self.fn_map.get_mut(fn_ident).unwrap().push(self.fn_vec.len() - 1);
                 } else {
@@ -414,7 +415,6 @@ impl Checker {
             (Some(function), Some(function_index)) => (function, function_index),
             _ => return comp_err!((Node { start, end, node: Stmt::FnSemantics {id: self.fn_vec.len()} }), "Function '{}' does not exist with the same signature", fn_ident),
         };
-
 
         self.ctx.func.signature = function.signature.clone();
         self.ctx.func.return_type = function.return_type.clone();
@@ -504,7 +504,7 @@ impl Checker {
     // iters over all overloads of a function, 
     // checks if the function already exists with the same signature 
     // if it finds a single match it returns its idx, else err.
-    fn get_matching_overload(&self, semantics: &[Type<FullType>], fn_ident: &str) -> Result<usize> {
+    fn check_fn_overloads(&self, semantics: &[Type<FullType>], fn_ident: &str) -> Result<usize> {
         let overloads = match self.fn_map.get(fn_ident) {
             Some(overloads) => overloads,
             None => return Ok(0), // no existing overloads, this is the first index.
@@ -1422,148 +1422,3 @@ impl Checker {
 
     // endregion
 }
-
-/*
-fn check_expr(&self, expr: &NodeExpr) -> Result<ExprData, String> {
-    match expr {
-        NodeExpr::Binary { op, lhs, rhs } => {
-            let ldata = self.check_expr(lhs)?;
-            let rdata = self.check_expr(rhs)?;
-            // debug!(self, "lhs: {ldata:#?}\nrhs: {rdata:#?}");
-
-            // Binary ops allowed for primitives && pointers.
-            match ldata.addr_mode {
-                AddressingMode::Primitive | AddressingMode::Pointer => match rdata.addr_mode {
-                    AddressingMode::Primitive | AddressingMode::Pointer => (),
-                    _ => {
-                        return err!(
-                            self,
-                            "Binary Expressions invalid for {:?}",
-                            ldata.addr_mode
-                        )
-                    }
-                },
-                _ => return err!(self, "Binary Expressions invalid for {:?}", ldata.addr_mode),
-            }
-
-            let err_msg = format!("Expr of different Type! => {ldata:#?}\n.. {rdata:#?}");
-            self.check_type_mode(ldata.type_mode, rdata.type_mode, &err_msg)?;
-
-            // cmp        type, type => bool
-            // logical    bool, bool => bool
-            // arithmetic int,  int  => int
-            let op_flags = op.get_flags();
-
-            match op_flags {
-                _ if op_flags.contains(TokenFlags::CMP) => Ok(ExprData {
-                    ptr: None,
-                    width: ldata.width,
-                    type_mode: TypeMode::Bool,
-                    addr_mode: AddressingMode::Primitive,
-                }),
-                _ if op_flags.contains(TokenFlags::LOG) => match ldata.type_mode {
-                    TypeMode::Bool => Ok(ExprData {
-                        ptr: None,
-                        type_mode: TypeMode::Bool,
-                        addr_mode: AddressingMode::Primitive,
-                        width: ldata.width,
-                    }),
-                    _ => {
-                        err!(
-                            self,
-                            "'{op:?}' requires expr to be a boolean =>\n{ldata:#?}"
-                        )
-                    }
-                },
-                _ if op_flags.intersects(TokenFlags::ARITH | TokenFlags::BIT) => {
-                    match ldata.type_mode {
-                        TypeMode::Int { .. } | TypeMode::Float { .. } | TypeMode::IntLit => {
-                            Ok(ExprData {
-                                ptr: None,
-                                width: ldata.width,
-                                type_mode: ldata.type_mode,
-                                addr_mode: ldata.addr_mode,
-                            })
-                        }
-                        _ => {
-                            err!(self, "'{op:?}' requires expr to be an integer or float =>\n{ldata:#?}")
-                        }
-                    }
-                }
-                _ => err!(
-                    self,
-                    "Illegal binary expression =>\n{lhs:#?}\n.. '{op:?}' ..\n{rhs:#?}"
-                ),
-            }
-        }
-        NodeExpr::Unary { op, expr } => {
-            let checked = self.check_expr(&*expr)?;
-            // debug!(self, "{checked:#?}");
-
-            // 'Unary sub' signed int or lit => int | signed
-            // 'Cmp Not'   bool => bool
-            // 'Bit Not'   primitive => primitive
-            // 'Addr of'   var => ptr
-            // 'Ptr Deref' ptr => var
-
-            // let inherited_width = match checked.form {
-            //     ExprForm::Variable { ptr } => unsafe { (*ptr.as_ptr()).width },
-            //     ExprForm::Expr { inherited_width } => inherited_width,
-            // };
-            match op {
-                TokenKind::Tilde => match checked.addr_mode  {
-                    AddressingMode::Primitive => Ok(checked),
-                    _ => err!(self, "'~' unary operator requires 'primitive' addressing =>\n{checked:#?}")
-                }
-                TokenKind::Sub => match checked.type_mode {
-                    TypeMode::Int { signed } | TypeMode::Float { signed } if signed => {
-                        Ok(ExprData {
-                            ptr: None,
-                            width: checked.width,
-                            type_mode: TypeMode::Int { signed },
-                            addr_mode: AddressingMode::Primitive,
-                        })
-                    }
-                    TypeMode::IntLit => Ok(ExprData {
-                        ptr: None,
-                        width: checked.width,
-                        type_mode: TypeMode::Int { signed: true },
-                        addr_mode: AddressingMode::Primitive,
-                    }),
-                    _ => err!(self, "'-' unary operator requires expr to be a signed integers =>\n{checked:#?}"),
-                },
-                TokenKind::CmpNot => match checked.type_mode {
-                    TypeMode::Bool => Ok(ExprData {
-                        ptr: None,
-                        width: checked.width,
-                        type_mode: TypeMode::Bool,
-                        addr_mode: AddressingMode::Primitive,
-                    }),
-                    _ => err!(self, "'!' unary operator requires expr to be a boolean =>\n{checked:#?}"),
-                },
-                TokenKind::Ampersand => match checked.addr_mode {
-                    AddressingMode::Primitive if checked.ptr.is_some() =>
-                        Ok(ExprData {
-                                    ptr: None, // TODO(TOM): use variable's ptr?
-                                    width: PTR,
-                                    type_mode: checked.type_mode,
-                                    addr_mode: AddressingMode::Pointer,
-                                }),
-                    _ => err!(self, "'&' unary operator requires expr to have a memory address =>\n{checked:#?}"),
-                },
-                TokenKind::Ptr => match checked.addr_mode {
-                    AddressingMode::Pointer => Ok(ExprData {
-                        ptr: None,
-                        width: checked.width, // TODO(TOM): not sure about this?
-                        type_mode: checked.type_mode,
-                        addr_mode: AddressingMode::Primitive,
-                    }),
-                    _ => err!(self, "'^' unary operator requires expr to be a pointer =>\n{checked:#?}"),
-                },
-                _ => err!(self, "Illegal unary Expression '{op:?}' =>\n{checked:#?}"),
-            }
-        }
-        NodeExpr::Term(term) => self.check_term(term),
-    }
-}
-*/

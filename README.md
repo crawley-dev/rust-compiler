@@ -2,6 +2,10 @@
 
 This is a compiler frontend (own codegen impl coming later!), for a language that i've created.
 
+## Current TODO
+
+- Add better error chaining, currently root error is returned. it would be nice to chain as I propgate upwards.
+
 ## Core Functionality Required
 
 - [x] variables
