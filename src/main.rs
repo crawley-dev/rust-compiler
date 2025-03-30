@@ -52,6 +52,10 @@ fn main() {
 
     // Get file contents, init to global buffer
     Contents::init();
+    println!(
+        "[COMPILER] File contents initialized:\n{:#?}",
+        Contents::get_contents_ref()
+    );
 
     let lexer = lex(Contents::get_contents_ref());
     let ast = parse(lexer.tokens);
@@ -88,7 +92,7 @@ fn lex(contents: &[&str]) -> Lexer {
 
 fn parse(tokens: VecDeque<Token>) -> Ast {
     Logger::set_prefix(LogPrefix::Parse);
-    Logger::set_short_fmt(true);
+    // Logger::set_short_fmt(true);
 
     let (ast, error) = Parser::new(tokens).parse_tokens();
 
@@ -103,7 +107,7 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
         handle_error(ast, e, start, end);
     }
 
-    Logger::set_short_fmt(false);
+    // Logger::set_short_fmt(false);
     if Logger::print_output() {
         println!("\n{:#?}\n", ast);
     }
@@ -195,15 +199,12 @@ fn handle_error<T: std::fmt::Debug>(
     let mut error_chain = String::from("[\n");
     for (i, err) in error.chain().enumerate() {
         error_chain.push_str("");
-        error_chain.push_str(&format!(
-            "    {}\n",
-            err.to_string().replace("\n", "\n    ")
-        ));
+        error_chain.push_str(&format!("    {}", err.to_string().replace("\n", "\n    ")));
         if i != len - 1 {
             error_chain.push_str(",\n");
         }
     }
-    error_chain.push_str("]");
+    error_chain.push_str("\n]");
 
     println!(
         "\n{panic_banner}\n\

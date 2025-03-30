@@ -166,11 +166,16 @@ impl Parser {
         self.expect(TokenKind::OpenParen)?;
 
         // parsing function arguments
-        let args = self.parse_fn_args()?;
+        let args = self
+            .parse_fn_args()
+            .with_context(|| "failed to parse function arguments")?;
 
         // parse function return type
         let return_type = match self.expect(TokenKind::Arrow) {
-            Ok(_) => Some(self.parse_type()?),
+            Ok(_) => Some(
+                self.parse_type()
+                    .with_context(|| "faield to parse function return type")?,
+            ),
             Err(_) => None,
         };
 
@@ -208,7 +213,10 @@ impl Parser {
             let mutable = self.expect(TokenKind::Mut).is_ok();
             let ident = self.expect(TokenKind::Ident)?;
             self.expect(TokenKind::Colon)?;
-            let parse_type = self.parse_type()?;
+            let parse_type = self
+                .parse_type()
+                .with_context(|| "failed to parse type for function argument")?;
+
             args.push(Arg {
                 ident,
                 mutable,
@@ -226,7 +234,9 @@ impl Parser {
 
         self.expect(TokenKind::Eq)?;
 
-        let parse_type = self.parse_type()?;
+        let parse_type = self
+            .parse_type()
+            .with_context(|| "failed to parse type for type alias")?;
 
         self.expect(TokenKind::SemiColon)?;
 
@@ -267,7 +277,8 @@ impl Parser {
                             },
                         }),
                         error,
-                    };
+                    }
+                    .with_context(|| "failed to parse scope");
                 }
             }
         }
@@ -298,8 +309,12 @@ impl Parser {
         };
 
         let stmt = match kind {
-            TokenKind::Let => self.parse_var_decl()?,
-            TokenKind::If => self.parse_if()?,
+            TokenKind::Let => self
+                .parse_var_decl()
+                .with_context(|| "failed to parse variable declaration")?,
+            TokenKind::If => self
+                .parse_if()
+                .with_context(|| "failed to parse if statement")?,
             TokenKind::Return => {
                 let tok = self.expect(TokenKind::Return)?;
                 match self.peek(0) {
@@ -311,13 +326,18 @@ impl Parser {
                     _ => Node {
                         start: tok.start,
                         end: tok.end_pos(),
-                        node: Stmt::Return(Some(self.parse_expr(0)?)),
+                        node: Stmt::Return(Some(
+                            self.parse_expr(0)
+                                .with_context(|| "failed to parse return expression")?,
+                        )),
                     },
                 }
             }
             TokenKind::While => {
                 let tok = self.expect(TokenKind::While)?;
-                let condition = self.parse_expr(0)?;
+                let condition = self
+                    .parse_expr(0)
+                    .with_context(|| "failed to parse while condition")?;
 
                 upgrade_result!(self.parse_scope(true), |scope| Node {
                     start: tok.start,
@@ -331,7 +351,9 @@ impl Parser {
                     Some(tok) if tok.kind == TokenKind::Eq => {
                         let ident = self.expect(TokenKind::Ident)?;
                         self.expect(TokenKind::Eq)?;
-                        let expr = self.parse_expr(0)?;
+                        let expr = self
+                            .parse_expr(0)
+                            .with_context(|| "failed to parse assignment expression")?;
                         Node {
                             start: ident.start,
                             end: expr.end,
@@ -340,7 +362,7 @@ impl Parser {
                     }
                     // Compound Assign: clone ident, swap assign to arith counterpart, parse expr
                     //      - 'ident += 5;' => 'ident = ident + 5;'
-                    Some(tok) if tok.kind.has_flags(TokenFlags::ASSIGN) => {
+                    Some(tok) if tok.kind.has_flags_binary(TokenFlags::ASSIGN) => {
                         let ident = self.peek(0).copied().unwrap();
 
                         let assign = self.peek_mut(1).unwrap();
@@ -348,7 +370,9 @@ impl Parser {
                         assign.start = pos(assign.start.x - 1, assign.start.y);
                         assign.len = 1;
 
-                        let expr = self.parse_expr(0)?;
+                        let expr = self
+                            .parse_expr(0)
+                            .with_context(|| "failed to parse compound assign expression")?;
 
                         Node {
                             start: ident.start,
@@ -357,13 +381,15 @@ impl Parser {
                         }
                     }
                     _ => {
-                        let expr = self.parse_expr(0)?;
+                        let expr = self
+                            .parse_expr(0)
+                            .with_context(|| "failed to parse naked expression")?;
                         Node {
                             start: expr.start,
                             end: expr.end,
                             node: Stmt::NakedExpr(expr),
                         }
-                    } // _ => return comp_err!("Invalid Expression => '{:?}'", self.peek(0)),
+                    }
                 }
             }
             TokenKind::Break => {
@@ -375,8 +401,7 @@ impl Parser {
                 }
             }
             TokenKind::OpenBrace => {
-                let tok = *self.peek(0).unwrap();
-
+                let tok = self.expect(TokenKind::OpenBrace)?;
                 upgrade_result!(self.parse_scope(true), |scope| Node {
                     start: tok.start,
                     end: scope.end,
@@ -437,28 +462,18 @@ impl Parser {
 
     fn parse_if(&mut self) -> CompilerResult<Node<Stmt>> {
         let if_tok = self.expect(TokenKind::If)?;
-        let condition = self.parse_expr(0)?;
-        let scope = match self.parse_scope(true) {
-            CompilerResult::Ok(scope) => scope,
-            CompilerResult::Err { data, error } => {
-                let scope = match data {
-                    Some(scope) => scope,
-                    None => return CompilerResult::Err { data: None, error },
-                };
-                return CompilerResult::Err {
-                    data: Some(Node {
-                        start: if_tok.start,
-                        end: scope.end,
-                        node: Stmt::If {
-                            condition,
-                            scope,
-                            branches: Vec::new(),
-                        },
-                    }),
-                    error,
-                };
-            }
-        };
+        let condition = self
+            .parse_expr(0)
+            .with_context(|| "failed to parse if statement's condition")?;
+        let scope = upgrade_err!(self.parse_scope(true), |scope| Node {
+            start: if_tok.start,
+            end: scope.end,
+            node: Stmt::If {
+                condition,
+                scope,
+                branches: Vec::new(),
+            },
+        });
 
         let mut branches = Vec::new();
         loop {
@@ -468,7 +483,9 @@ impl Parser {
             }
             // Found an else if, parse condition & scope, push to branches
             if self.expect(TokenKind::If).is_ok() {
-                let condition = self.parse_expr(0)?;
+                let condition = self
+                    .parse_expr(0)
+                    .with_context(|| "failed to parse else if statement's condition")?;
 
                 let upgraded_stmt = upgrade_result!(self.parse_scope(true), |scope| Node {
                     start: if_tok.start,
@@ -507,61 +524,66 @@ impl Parser {
         })
     }
 
+    // PROBLEM:
+    // loop will look for an operator
+    // if the operator is unary, cool! return a unary expr.
+    // .. I only want the lhs to be a unary?
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
-        let mut lhs = self.parse_term()?;
+        println!();
+        debug!("parsing expression with min_prec: {min_prec}");
+        let mut lhs = self
+            .parse_term()
+            .with_context(|| "failed to parse lhs of the expression")?;
 
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!("No token to parse near =>\n{lhs:#?}"),
+                None => return err!("No token to parse for the expression rhs =>\n{lhs:#?}"),
             };
-            // unary expressions don't recurse as no rhs, only iterate so
-            let bin_prec = op.get_prec_binary();
-            let un_prec = op.get_prec_unary();
 
-            // NOTE: tokens with no precedence are valued at -1, therefore always exit loop.
+            let un_prec = op.get_prec_unary();
+            let bin_prec = op.get_prec_binary();
+
+            debug!(
+                "checking if {:?} is a valid unary op: {bin_prec:?}, {un_prec:?}, {}",
+                self.peek(0).unwrap(),
+                op.has_flags_unary(TokenFlags::LHS),
+            );
+
+            let is_valid_unary = un_prec >= 0 && !op.has_flags_unary(TokenFlags::LHS);
+            // if unary is the only valid operator, and its lhs. its not valid here, so lets return a nice error msg.
+            if bin_prec < 0 && is_valid_unary {
+                return err!("{op:?} is a lhs unary operator, cannot be used here.");
+            } else if is_valid_unary {
+                // LHS unary operators are caught in parse_term(), can only allow rhs operators, e.g. ptr deref.
+                let op_token = self.consume();
+                lhs = Node {
+                    start: lhs.start,
+                    end: op_token.end_pos(),
+                    node: Expr::Unary {
+                        op: op_token.kind,
+                        expr: Box::new(lhs),
+                    },
+                };
+                continue; // there might be more unary operators, e.g. "i^^ + 5"
+            }
+
+            // NOTE: tokens with no precedence are valued as negative, therefore they always exit the loop.
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
-            if bin_prec < min_prec && un_prec < min_prec {
+            if bin_prec < min_prec {
                 debug!("precedence climb ended: {op:?}({bin_prec}) < {min_prec}");
                 break;
             }
 
-            let is_unary = un_prec >= 0;
-            if is_unary {
-                let tok = match self.peek(1) {
-                    Some(tok) => tok,
-                    None => return err!("No token to parse near =>\n{lhs:#?}"),
-                };
-                match tok.kind {
-                    // tok is an expression, must be binary
-                    TokenKind::IntLit | TokenKind::Ident | TokenKind::OpenParen => {
-                        debug!("found rhs of an expression '{tok:?}', operator must not be unary!")
-                    }
-                    // not a 'NodeTerm', must be unary.
-                    _ => {
-                        // TODO(TOM): start,end dependent on whether its a lhs or rhs operator.
-                        // e.g. "array[i]" or "&array"
-                        lhs = Node {
-                            start: lhs.start,
-                            end: tok.end_pos(),
-                            node: Expr::Unary {
-                                op: self.consume().kind,
-                                expr: Box::new(lhs),
-                            },
-                        };
-                        continue;
-                    }
-                }
-            }
-
-            let next_prec = match op.get_associativity(is_unary) {
+            let next_prec = match op.get_associativity(false) {
                 Associativity::Right => bin_prec,
                 Associativity::Left => bin_prec + 1,
-                // Associativity::None => return err!(self, "non-associative operator => '{op:?}'"),
             };
 
             let op = self.consume().kind;
-            let rhs = self.parse_expr(next_prec)?;
+            let rhs = self
+                .parse_expr(next_prec)
+                .with_context(|| "failed to parse rhs of the expression")?;
             lhs = Node {
                 start: lhs.start,
                 end: rhs.end,
@@ -582,9 +604,11 @@ impl Parser {
         };
 
         match tok.kind {
-            op @ _ if op.has_flags(TokenFlags::UNARY) => {
+            op @ _ if op.has_flags_unary(TokenFlags::LHS) => {
                 debug!("found unary expression: '{op:?}'");
-                let expr = self.parse_expr(op.get_prec_unary() + 1)?;
+                let expr = self
+                    .parse_expr(op.get_prec_unary() + 1)
+                    .with_context(|| "failed to parse unary term")?;
                 Ok(Node {
                     start: tok.start,
                     end: expr.end,
@@ -596,7 +620,9 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 // greedily consume everything in parenthesis.
-                let expr = self.parse_expr(0)?;
+                let expr = self
+                    .parse_expr(0)
+                    .with_context(|| "failed to parse parentheses term")?;
                 debug!("parsed parens {expr:#?}");
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
@@ -605,7 +631,8 @@ impl Parser {
                 match self.peek(0) {
                     // Function Calls
                     Some(next) if next.kind == TokenKind::OpenParen => {
-                        self.expect(TokenKind::OpenParen)?;
+                        self.expect(TokenKind::OpenParen)
+                            .with_context(|| "failed to parse function call")?;
                         let mut args = Vec::new();
 
                         let mut end = self.expect(TokenKind::CloseParen);

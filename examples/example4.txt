@@ -1,18 +1,20 @@
 fn main() {
-    let x: i32 = 5;
-    let y: ^i32 = &x;
-    let z: ^i32 = x&;
+    //let x: i32 = 5;
+    //let y: ^i32 = &x;
+    //let z: ^i32 = x&;
 
+    let a: i32 = 5-;
+
+    /*
     let mut a: i64 = 10;
     let mut b: i64 = 5;
     let mut c: i64;
     let mut d: bool;
-
     // Unary operations
-    c = -a;          // Unary minus
-    d = !!(a==b);    // Logical NOT
-    c = !b;        // Bitwise NOT
-    c = ^&a;       // Dereference and address-of cancel out
+    c = -a;         // Unary minus
+    d = !!(a==b);   // Logical NOT
+    c = !b;         // Bitwise NOT
+    c = ^&a;        // Dereference and address-of cancel out
 
     /*
     // Binary operations
@@ -35,6 +37,7 @@ fn main() {
     
     // Ternary operator
     c = (a > b) ? a : b;
+    */
     */
 }
 
@@ -67,3 +70,4 @@ fn test(mut arg1: i32, arg2: usize, arg3: u8) -> i32 {
 fn void_test() {
     return;
 }
+*/

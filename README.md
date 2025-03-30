@@ -83,9 +83,6 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
 
 - CompilerResult Issue: Result -> CompilerResult returns 'None' for error. Fix!
 
-- Need to re-write the parser, encorporate more syntax into precedence parsing#
-  - ASSOCIATIVITY IS NOT A THING!!! e.g. let z: ^i32 = x&; <- VALID!
-
   - e.g var = (test = 10); cpp evals assignment to result, rust to unit type  
   - UNIT TYPE: include one!, zig uses '{}', rust uses: '()' pref rust tbh
 

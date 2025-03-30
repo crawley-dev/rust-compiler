@@ -24,7 +24,7 @@ fn count_digits(mut n: u32) -> u32 {
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, false, true, false],
+    print_logs: [false, true, true, false],
     print_output: [false, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
@@ -53,6 +53,7 @@ pub struct Logger {
 impl Logger {
     pub fn set_short_fmt(state: bool) {
         unsafe {
+            println!("changing short node print to {state}");
             SHORT_NODE_PRINT = state;
         }
     }
@@ -403,6 +404,33 @@ impl<T> CompilerResult<T> {
             CompilerResult::Err { .. } => true,
         }
     }
+
+    pub fn context<M>(self, msg: M) -> Self
+    where
+        M: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
+    {
+        match self {
+            CompilerResult::Ok(_) => self,
+            CompilerResult::Err { data, error } => CompilerResult::Err {
+                data,
+                error: error.context(msg),
+            },
+        }
+    }
+
+    pub fn with_context<F, C>(self, f: F) -> Self
+    where
+        C: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
+        F: FnOnce() -> C,
+    {
+        match self {
+            CompilerResult::Ok(_) => self,
+            CompilerResult::Err { data, error } => CompilerResult::Err {
+                data,
+                error: error.context(f()),
+            },
+        }
+    }
 }
 
 impl<T> Try for CompilerResult<T> {
@@ -446,6 +474,37 @@ impl<T> FromResidual<Result<(), anyhow::Error>> for CompilerResult<T> {
         }
     }
 }
+
+// We can't implement anyhow::Context for CompilerResult because it's a sealed trait.
+// Instead, we can implement our own context method if needed.
+// impl<T> CompilerResult<T> {
+//     pub fn context<M>(self, msg: M) -> Self
+//     where
+//         M: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
+//     {
+//         match self {
+//             CompilerResult::Ok(_) => self,
+//             CompilerResult::Err { data, error } => CompilerResult::Err {
+//                 data,
+//                 error: error.context(msg),
+//             },
+//         }
+//     }
+
+//     pub fn with_context<M, F>(self, f: F) -> Self
+//     where
+//         M: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
+//         F: FnOnce() -> T,
+//     {
+//         match self {
+//             CompilerResult::Ok(_) => self,
+//             CompilerResult::Err { data, error } => CompilerResult::Err {
+//                 data: Some(f()),
+//                 error: error.context(f()),
+//             },
+//         }
+//     }
+// }
 
 #[macro_export]
 macro_rules! comp_err {

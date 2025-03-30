@@ -988,7 +988,7 @@ impl Checker {
                         // 'LOG'   => bool, bool => bool
                         // 'Arith' => int, int   => int
                         match op {
-                            _ if op.has_flags(TokenFlags::CMP) => {
+                            _ if op.has_flags_binary(TokenFlags::CMP) => {
                                 Ok(ExprSem {
                                     form: resultant_form.form,
                                     type_mode: TypeMode::Boolean,
@@ -997,7 +997,7 @@ impl Checker {
                                 })
                             }
 
-                            _ if op.has_flags(TokenFlags::LOG) => {
+                            _ if op.has_flags_binary(TokenFlags::LOG) => {
                                 match resultant_form.type_mode { 
                                     TypeMode::Boolean => { 
                                         Ok(ExprSem {
@@ -1011,7 +1011,7 @@ impl Checker {
                                 }
                             }
 
-                            _ if op.has_flags(TokenFlags::ARITH) => {
+                            _ if op.has_flags_binary(TokenFlags::ARITH) => {
                                 match resultant_form.type_mode {
                                     TypeMode::Int(_) => Ok(ExprSem {
                                         form: resultant_form.form,
@@ -1023,7 +1023,7 @@ impl Checker {
                                 }
                             }
                             
-                            _ if op.has_flags(TokenFlags::BIT) => {
+                            _ if op.has_flags_binary(TokenFlags::BIT) => {
                                 match resultant_form.type_mode {
                                     TypeMode::Int(_) => Ok(ExprSem {
                                         form: resultant_form.form,

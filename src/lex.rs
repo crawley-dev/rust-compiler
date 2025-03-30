@@ -123,65 +123,69 @@ pub struct Lexer {
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct TokenFlags: u8 {
-        const ASSIGN = 1 << 0;
-        const ARITH = 1 << 1;
-        const CMP = 1 << 2;
-        const LOG = 1 << 3;
-        const BIT = 1 << 4;
-        const UNARY = 1 << 5;
+        const ASSIGN = 1 << 0; // this flag indicates whether its an assignment operator
+        const ARITH = 1 << 1; // this flag indicates whether its an arithmetic operator
+        const CMP = 1 << 2; // this flag indicates whether its a comparison operator
+        const LOG = 1 << 3; // this flag indicates whether its a logical operator
+        const BIT = 1 << 4; // this flag indicates whether its a bitwise operator
+        const MEM = 1 << 5; // this flag indicates whether its a memory operator (e.g. dereference)
+        const LHS = 1 << 6; // this flag indicates whether the operator is on the left or right of an expression.
     }
 }
 
+/*
 impl TokenKind {
     pub fn get_flags(self) -> TokenFlags {
+        use TokenFlags as Flag;
+        use TokenKind as Kind;
         match self {
             // Arithmetic
-            TokenKind::Add => TokenFlags::ARITH, // "+"
-            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::UNARY, // "-" (unary minus)
-            TokenKind::Mul => TokenFlags::ARITH, // "*"
-            TokenKind::Quo => TokenFlags::ARITH, // "/"
-            TokenKind::Mod => TokenFlags::ARITH, // "%"
+            Kind::Add => Flag::ARITH,               // "+"
+            Kind::Sub => Flag::ARITH | Flag::UNARY, // "-" (unary minus)
+            Kind::Mul => Flag::ARITH,               // "*"
+            Kind::Quo => Flag::ARITH,               // "/"
+            Kind::Mod => Flag::ARITH,               // "%"
 
             // Comparison
-            TokenKind::CmpEq => TokenFlags::CMP, // "=="
-            TokenKind::NotEq => TokenFlags::CMP, // "!="
-            TokenKind::Lt => TokenFlags::CMP,    // "<"
-            TokenKind::Gt => TokenFlags::CMP,    // ">"
-            TokenKind::LtEq => TokenFlags::CMP,  // "<="
-            TokenKind::GtEq => TokenFlags::CMP,  // ">="
+            Kind::CmpEq => Flag::CMP, // "=="
+            Kind::NotEq => Flag::CMP, // "!="
+            Kind::Lt => Flag::CMP,    // "<"
+            Kind::Gt => Flag::CMP,    // ">"
+            Kind::LtEq => Flag::CMP,  // "<="
+            Kind::GtEq => Flag::CMP,  // ">="
 
             // Logical
-            TokenKind::LogAnd => TokenFlags::LOG, // "&&" /* TokenFlags::CMP | */
-            TokenKind::LogOr => TokenFlags::LOG,  // "||" /* TokenFlags::CMP | */
-            TokenKind::Not => TokenFlags::LOG | TokenFlags::BIT | TokenFlags::UNARY, // "!"
+            Kind::LogAnd => Flag::LOG, // "&&" /* Flag::CMP | */
+            Kind::LogOr => Flag::LOG,  // "||" /* Flag::CMP | */
+            Kind::Not => Flag::LOG | Flag::BIT | Flag::UNARY, // "!"
 
             // Bitwise
-            TokenKind::Bar => TokenFlags::BIT,    // "|"
-            TokenKind::Shl => TokenFlags::BIT,    // "<<"
-            TokenKind::Shr => TokenFlags::BIT,    // ">>"
-            TokenKind::AndNot => TokenFlags::BIT, // "&~"
-            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::UNARY, // "~" (xor)
-            TokenKind::Ampersand => TokenFlags::BIT | TokenFlags::UNARY, // "&"
+            Kind::Bar => Flag::BIT,                     // "|"
+            Kind::Shl => Flag::BIT,                     // "<<"
+            Kind::Shr => Flag::BIT,                     // ">>"
+            Kind::AndNot => Flag::BIT,                  // "&~"
+            Kind::Tilde => Flag::BIT | Flag::UNARY,     // "~" (xor)
+            Kind::Ampersand => Flag::BIT | Flag::UNARY, // "&"
 
             // Assignment
-            TokenKind::Eq => TokenFlags::ASSIGN, // "="
-            TokenKind::AddEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "+="
-            TokenKind::SubEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "-="
-            TokenKind::MulEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "*="
-            TokenKind::QuoEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "/="
-            TokenKind::ModEq => TokenFlags::ASSIGN | TokenFlags::ARITH, // "%="
-            TokenKind::AndEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&="
-            TokenKind::OrEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "|="
-            TokenKind::XorEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "~="
-            TokenKind::ShlEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "<<="
-            TokenKind::ShrEq => TokenFlags::ASSIGN | TokenFlags::BIT, // ">>="
-            TokenKind::AndNotEq => TokenFlags::ASSIGN | TokenFlags::BIT, // "&~="
+            Kind::Eq => Flag::ASSIGN,                   // "="
+            Kind::AddEq => Flag::ASSIGN | Flag::ARITH,  // "+="
+            Kind::SubEq => Flag::ASSIGN | Flag::ARITH,  // "-="
+            Kind::MulEq => Flag::ASSIGN | Flag::ARITH,  // "*="
+            Kind::QuoEq => Flag::ASSIGN | Flag::ARITH,  // "/="
+            Kind::ModEq => Flag::ASSIGN | Flag::ARITH,  // "%="
+            Kind::AndEq => Flag::ASSIGN | Flag::BIT,    // "&="
+            Kind::OrEq => Flag::ASSIGN | Flag::BIT,     // "|="
+            Kind::XorEq => Flag::ASSIGN | Flag::BIT,    // "~="
+            Kind::ShlEq => Flag::ASSIGN | Flag::BIT,    // "<<="
+            Kind::ShrEq => Flag::ASSIGN | Flag::BIT,    // ">>="
+            Kind::AndNotEq => Flag::ASSIGN | Flag::BIT, // "&~="
 
             // Other operators
-            TokenKind::Ptr => TokenFlags::UNARY,   // "^"
-            TokenKind::Array => TokenFlags::UNARY, // "[]"
+            Kind::Ptr => Flag::UNARY,   // "^"
+            Kind::Array => Flag::UNARY, // "[]"
 
-            _ => TokenFlags::empty(),
+            _ => Flag::empty(),
         }
     }
 
@@ -250,6 +254,123 @@ impl TokenKind {
             _ if is_unary => Associativity::Right,
             _ => Associativity::Left,
         }
+    }
+}
+*/
+
+impl TokenKind {
+    /// Returns the flags for this token when it is used in a unary context.
+    /// - Tokens that are not valid in a unary context return empty.
+    pub fn get_flags_unary(self) -> TokenFlags {
+        match self {
+            // Only valid in a unary position.
+            TokenKind::Sub => TokenFlags::ARITH | TokenFlags::LHS,
+            TokenKind::Not => TokenFlags::LOG | TokenFlags::LHS,
+            TokenKind::Tilde => TokenFlags::BIT | TokenFlags::LHS,
+            TokenKind::Ampersand => TokenFlags::MEM | TokenFlags::LHS,
+            TokenKind::Ptr => TokenFlags::MEM, // needed to be able to give this a flag.
+            _ => TokenFlags::empty(),
+        }
+    }
+
+    /// Returns the flags for this token when it is used in a binary context.
+    ///
+    /// For binary operators we not only tag the operator’s intrinsic role but also
+    /// include the `LHS` flag to indicate that it binds with a left-hand side operand.
+    pub fn get_flags_binary(self) -> TokenFlags {
+        use TokenFlags as F;
+        use TokenKind as K;
+        match self {
+            // Arithmetic binary operators.
+            K::Add | K::Sub | K::Mul | K::Quo | K::Mod => F::ARITH | F::LHS,
+            // Comparison binary operators.
+            K::CmpEq | K::NotEq | K::Lt | K::Gt | K::LtEq | K::GtEq => F::CMP | F::LHS,
+            // Logical binary operators.
+            K::LogAnd | K::LogOr => F::LOG | F::LHS,
+            // Bitwise binary operators.
+            K::Bar | K::Shl | K::Shr | K::AndNot | K::Ampersand => F::BIT | F::LHS,
+            // Assignment operators.
+            K::Eq => F::ASSIGN | F::LHS,
+            K::AddEq | K::SubEq | K::MulEq | K::QuoEq | K::ModEq => F::ASSIGN | F::ARITH | F::LHS,
+            K::AndEq | K::OrEq | K::XorEq | K::ShlEq | K::ShrEq | K::AndNotEq => {
+                F::ASSIGN | F::BIT | F::LHS
+            }
+            // In this design, we treat commas (or similar separators) as nonoperators.
+            K::Comma => F::empty(),
+            _ => F::empty(),
+        }
+    }
+
+    /// Returns the binary operator precedence.
+    /// Higher precedence is evaluated first.
+    pub fn get_prec_binary(&self) -> i32 {
+        match self {
+            _ if self.get_flags_binary().contains(TokenFlags::ASSIGN) => 1,
+            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
+            TokenKind::Add | TokenKind::Sub => 11,
+            TokenKind::Shl | TokenKind::Shr => 10,
+            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
+            TokenKind::CmpEq | TokenKind::NotEq => 8,
+            TokenKind::Ampersand => 7,
+            TokenKind::Bar => 5,
+            TokenKind::LogAnd => 3,
+            TokenKind::LogOr => 2,
+            TokenKind::Comma => 0,
+            _ => -100,
+        }
+    }
+
+    /// Returns the unary operator precedence.
+    ///
+    /// In our language, valid unary operators have a fixed precedence of 13;
+    /// tokens that aren’t valid in a unary context yield a low precedence.
+    pub fn get_prec_unary(&self) -> i32 {
+        match self {
+            _ if !self.get_flags_unary().is_empty() => 13,
+            _ => -100,
+        }
+    }
+
+    /// For compound assignment operators (like `+=`), returns the underlying arithmetic operator.
+    ///
+    /// For example, `AddEq` converts to `Add`.
+    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
+        match self {
+            TokenKind::AddEq => Ok(TokenKind::Add),
+            TokenKind::SubEq => Ok(TokenKind::Sub),
+            TokenKind::MulEq => Ok(TokenKind::Mul),
+            TokenKind::QuoEq => Ok(TokenKind::Quo),
+            TokenKind::ModEq => Ok(TokenKind::Mod),
+            TokenKind::AndEq => Ok(TokenKind::Ampersand),
+            TokenKind::OrEq => Ok(TokenKind::Bar),
+            TokenKind::XorEq => Ok(TokenKind::Tilde),
+            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
+            TokenKind::ShlEq => Ok(TokenKind::Shl),
+            TokenKind::ShrEq => Ok(TokenKind::Shr),
+            _ => err!("{:?} cannot be converted to an arithmetic operator", self),
+        }
+    }
+
+    /// Returns the associativity of an operator.
+    ///
+    /// In many languages assignment and unary operators are right associative,
+    /// whereas most binary operators are left associative.
+    ///
+    /// The caller passes `true` for unary operators.
+    pub fn get_associativity(&self, is_unary: bool) -> Associativity {
+        if self.get_flags_binary().contains(TokenFlags::ASSIGN) || is_unary {
+            Associativity::Right
+        } else {
+            Associativity::Left
+        }
+    }
+
+    pub fn has_flags_binary(&self, flags: TokenFlags) -> bool {
+        self.get_flags_binary().contains(flags)
+    }
+
+    pub fn has_flags_unary(&self, flags: TokenFlags) -> bool {
+        self.get_flags_unary().contains(flags)
     }
 }
 

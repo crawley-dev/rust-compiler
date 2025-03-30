@@ -25,9 +25,9 @@ impl Debug for Token {
             write!(f, "}}")
         } else {
             f.debug_struct("Token")
+                .field("str", &self.str())
                 .field("kind", &self.kind)
                 .field("pos", &self.start)
-                .field("str", &self.str())
                 .finish()
         }
     }
@@ -83,6 +83,7 @@ pub trait PosAwareDebug {
     fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result;
 }
 
+// For Any type of Node<T>, it will use "PosAwareDebug" to print the contents with position as an additional field.
 impl<T: PosAwareDebug + Debug> Debug for Node<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         unsafe {
@@ -266,7 +267,7 @@ impl PosAwareDebug for Term {
             Term::Ident | Term::IntLit | Term::False | Term::True => {
                 let src = Contents::get_src_oneline(start, end);
                 if PRINT_TERM_POS {
-                    write!(f, "{variant_name}({src}) | {pos}",)
+                    write!(f, "{variant_name}({src}) | {pos}")
                 } else {
                     write!(f, "{variant_name}({src})")
                 }
