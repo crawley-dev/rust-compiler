@@ -709,6 +709,7 @@ impl Parser {
                             node: Expr::Term(Term::FnCall { ident: tok, args }),
                         })
                     }
+                    // Struct Literals
                     Some(next) if next.kind == TokenKind::OpenBrace => {
                         self.expect(TokenKind::OpenBrace)?;
 
@@ -736,6 +737,29 @@ impl Parser {
                             node: Expr::Term(Term::StructLit { ident: tok, fields }),
                         })
                     }
+                    // // Struct field access
+                    // Some(next) if next.kind == TokenKind::Dot => {
+                    //     self.expect(TokenKind::Dot)?;
+                    //     let field = self.expect(TokenKind::Ident)?;
+                    //     // Ok(Node {
+                    //     //     start: tok.start,
+                    //     //     end: expr.end,
+                    //     //     node: Expr::Binary {
+                    //     //         op: TokenKind::Dot,
+                    //     //         lhs: Box::new(Node {
+                    //     //             start: tok.start,
+                    //     //             end: tok.end_pos(),
+                    //     //             node: Expr::Term(Term::Ident),
+                    //     //         }),
+                    //     //         rhs: Box::new(expr),
+                    //     //     },
+                    //     // })
+                    //     Ok(Node{
+                    //         start: tok.start,
+                    //         end: field.end_pos(),
+                    //         node: Expr::Term(Term::)
+                    //     })
+                    // }
                     // Just an Ident, nothing special afterwards to indicate otherwise.
                     Some(_) => Ok(Node {
                         start: tok.start,

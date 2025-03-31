@@ -1,3 +1,7 @@
+/* >>TOKENIZER<< Splits up the source code into semantic tokens.
+    TODO(TOM): Handle Nested multi-line comments
+*/
+
 use crate::{
     debug, err,
     utils::{self, pos, Contents, Logger, Pos},
@@ -153,26 +157,35 @@ impl TokenKind {
     /// For binary operators we not only tag the operator’s intrinsic role but also
     /// include the `LHS` flag to indicate that it binds with a left-hand side operand.
     pub fn get_flags_binary(self) -> TokenFlags {
-        use TokenFlags as F;
-        use TokenKind as K;
+        use TokenFlags as Flag;
+        use TokenKind as Kind;
         match self {
             // Arithmetic binary operators.
-            K::Add | K::Sub | K::Mul | K::Quo | K::Mod => F::ARITH | F::LHS,
+            Kind::Add | Kind::Sub | Kind::Mul | Kind::Quo | Kind::Mod => Flag::ARITH,
             // Comparison binary operators.
-            K::CmpEq | K::NotEq | K::Lt | K::Gt | K::LtEq | K::GtEq => F::CMP | F::LHS,
+            Kind::CmpEq | Kind::NotEq | Kind::Lt | Kind::Gt | Kind::LtEq | Kind::GtEq => Flag::CMP,
             // Logical binary operators.
-            K::LogAnd | K::LogOr => F::LOG | F::LHS,
+            Kind::LogAnd | Kind::LogOr => Flag::LOG,
             // Bitwise binary operators.
-            K::Bar | K::Shl | K::Shr | K::AndNot | K::Ampersand => F::BIT | F::LHS,
+            Kind::Bar | Kind::Shl | Kind::Shr | Kind::AndNot | Kind::Ampersand => Flag::BIT,
+
             // Assignment operators.
-            K::Eq => F::ASSIGN | F::LHS,
-            K::AddEq | K::SubEq | K::MulEq | K::QuoEq | K::ModEq => F::ASSIGN | F::ARITH | F::LHS,
-            K::AndEq | K::OrEq | K::XorEq | K::ShlEq | K::ShrEq | K::AndNotEq => {
-                F::ASSIGN | F::BIT | F::LHS
+            Kind::Eq => Flag::ASSIGN,
+            // Arithmetic Compound assignment operators.
+            Kind::AddEq | Kind::SubEq | Kind::MulEq | Kind::QuoEq | Kind::ModEq => {
+                Flag::ASSIGN | Flag::ARITH
             }
+            // Bitwise compound assignment operators.
+            Kind::AndEq | Kind::OrEq | Kind::XorEq | Kind::ShlEq | Kind::ShrEq | Kind::AndNotEq => {
+                Flag::ASSIGN | Flag::BIT
+            }
+
+            // Member Access
+            Kind::Dot => Flag::MEM,
+
             // In this design, we treat commas (or similar separators) as nonoperators.
-            K::Comma => F::empty(),
-            _ => F::empty(),
+            Kind::Comma => Flag::empty(),
+            _ => Flag::empty(),
         }
     }
 
@@ -181,6 +194,7 @@ impl TokenKind {
     pub fn get_prec_binary(&self) -> i32 {
         match self {
             _ if self.get_flags_binary().contains(TokenFlags::ASSIGN) => 1,
+            TokenKind::Dot => 14,
             TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
             TokenKind::Add | TokenKind::Sub => 11,
             TokenKind::Shl | TokenKind::Shr => 10,

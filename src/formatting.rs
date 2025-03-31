@@ -76,8 +76,6 @@ impl Display for Lexer {
 // endregion
 
 // region: parse.rs, semantic.rs
-
-// Not directly done on Node<Stmt> because ...(*￣０￣)ノ . (～￣▽￣)～ ... I don't remember
 pub trait PosAwareDebug {
     fn get_variant_name(&self) -> String;
     fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result;
