@@ -212,7 +212,7 @@ fn handle_error<T: std::fmt::Debug>(
         \n{line_digits}  {highlight_padding}{error_highlight}\n\
         \nError Chain:\
         \n{error_chain}\n",
-        err_line_num = error_start.y,
+        err_line_num = error_start.y + 1,
         line_digits = " ".repeat(count_digits(error_start.y) as usize),
         backtrace = error.backtrace(),
     );
