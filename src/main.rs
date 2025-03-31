@@ -21,7 +21,7 @@ use std::{
 };
 
 mod utils;
-use utils::{pos, Contents, LogPrefix, Logger, Pos};
+use utils::{count_digits, pos, Contents, LogPrefix, Logger, Pos};
 
 mod lex;
 use lex::*;
@@ -97,13 +97,8 @@ fn parse(tokens: VecDeque<Token>) -> Ast {
     let (ast, error) = Parser::new(tokens).parse_tokens();
 
     if let Some(e) = error {
-        let (start, end) = match ast.stmts.last() {
-            Some(node) => match drill_down(node) {
-                Some(stmt) => (stmt.start, stmt.end),
-                None => (pos(0, 0), pos(0, 0)),
-            },
-            None => (pos(0, 0), pos(0, 0)),
-        };
+        let end = Logger::get_pos();
+        let start = Pos { x: 0, y: end.y };
         handle_error(ast, e, start, end);
     }
 
@@ -122,13 +117,8 @@ fn semantic_check(ast: Ast) -> Checker {
     let (checker, error) = Checker::new().check_ast(ast);
 
     if let Some(e) = error {
-        let (start, end) = match checker.ast.stmts.last() {
-            Some(node) => match drill_down(node) {
-                Some(stmt) => (stmt.start, stmt.end),
-                None => (pos(0, 0), pos(0, 0)),
-            },
-            None => (pos(0, 0), pos(0, 0)),
-        };
+        let end = Logger::get_pos();
+        let start = Pos { x: 0, y: end.y };
         handle_error(checker, e, start, end);
     }
 
@@ -176,34 +166,39 @@ fn handle_error<T: std::fmt::Debug>(
         Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
     };
 
+    println!("start: {error_start:#?}, end: {error_end:#?}");
+
     let src_content = Contents::get_src_lines(error_start.y, error_end.y);
-    let erroring_code = src_content // why does Vec<&str> not impl Display???
+    let erroring_code = src_content
         .iter()
         .flat_map(|x| x.chars())
         .collect::<String>();
 
+    // TODO(TOM): this doesn't cover some edge cases.
     let (highlight_padding, error_highlight);
-    if error_start.y == error_end.y {
-        highlight_padding = " ".repeat(error_start.x as usize);
-        error_highlight = "^".repeat(max(0, error_end.x as i32 - error_start.x as i32) as usize);
-    } else {
-        let idx = max(0, error_end.y - error_start.y) as usize;
-        let mut first_char_pos = src_content[idx]
-            .find(|x: char| x.is_alphanumeric())
-            .unwrap_or(0);
-        highlight_padding = " ".repeat(first_char_pos);
-        error_highlight = "^".repeat(error_end.x as usize - first_char_pos);
-    }
+    let first_char = src_content
+        .iter()
+        .flat_map(|x| x.chars())
+        .position(|x| x.is_alphanumeric())
+        .unwrap_or(0);
+    highlight_padding = " ".repeat(first_char);
+    error_highlight = "^".repeat(error_end.x as usize - first_char - 1);
 
     let len = error.chain().len();
     let mut error_chain = String::from("[\n");
-    for (i, err) in error.chain().enumerate() {
-        error_chain.push_str("");
-        error_chain.push_str(&format!("    {}", err.to_string().replace("\n", "\n    ")));
-        if i != len - 1 {
-            error_chain.push_str(",\n");
+    for (i, err) in error.chain().enumerate().rev() {
+        let err_msg = err.to_string();
+        for line in err_msg.lines() {
+            error_chain.push_str(&"    ");
+            error_chain.push_str(line);
+            error_chain.push('\n');
         }
+        if let Some('\n') = error_chain.chars().last() {
+            error_chain.pop();
+        }
+        error_chain.push_str(",\n");
     }
+    error_chain.pop();
     error_chain.push_str("\n]");
 
     println!(
@@ -213,28 +208,16 @@ fn handle_error<T: std::fmt::Debug>(
         \nError Data:\
         \n{error_data:#?}\n\
         \nError Occurred near:\
-        \n'{erroring_code}'\
-        \n{highlight_padding}{error_highlight}\n\
+        \n{err_line_num}: {erroring_code}\
+        \n{line_digits}  {highlight_padding}{error_highlight}\n\
         \nError Chain:\
         \n{error_chain}\n",
+        err_line_num = error_start.y,
+        line_digits = " ".repeat(count_digits(error_start.y) as usize),
         backtrace = error.backtrace(),
     );
 
     exit(0);
-}
-
-fn drill_down(stmt: &Node<Stmt>) -> Option<Node<Stmt>> {
-    match &stmt.node {
-        Stmt::FnDecl { scope, .. } | Stmt::NakedScope(scope) => {
-            if scope.node.stmts.len() == 0 {
-                println!("no stmts in scope");
-                return None;
-            }
-            drill_down(&scope.node.stmts[scope.node.stmts.len() - 1])
-        }
-        _ => return Some(stmt.clone()),
-    };
-    None
 }
 
 // UBUNTU bash script:

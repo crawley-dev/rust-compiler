@@ -9,7 +9,7 @@ fn func_example_2(ident1: bool) -> i32 {
 }
 
 fn func_example_3() -> i32 {
-    return var1;
+    return let i: i32 = 5;
 }
 
 fn func_example_n() -> bool {

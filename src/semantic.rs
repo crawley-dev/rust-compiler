@@ -60,7 +60,7 @@
 use crate::{
     comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, Term}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
 };
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use educe::Educe;
 use std::{
     cmp::max, collections::HashMap, convert::Infallible, ptr::NonNull
@@ -329,10 +329,10 @@ impl Checker {
         match &stmt.node {
             Stmt::FnDecl { ident, args, scope, return_type } => {
                 let fn_ident = ident.str();
-                let semantics = self.create_arg_semantics(&args, fn_ident)?;
+                let semantics = self.create_arg_semantics(&args, fn_ident).with_context(|| "failed to index function arguments")?;
                 let signature = self.create_func_signature(ident.str(), &semantics);
                 
-                self.check_fn_overloads(&semantics, fn_ident)?;
+                self.check_fn_overloads(&semantics, fn_ident).with_context(|| "failed to find a valid overload for this function")?;
 
                 let return_type = match return_type {
                     Some(parse_type) => {

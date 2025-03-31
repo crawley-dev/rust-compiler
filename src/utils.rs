@@ -8,14 +8,17 @@ use std::{
 
 use crate::{formatting::SHORT_NODE_PRINT, Node, Scope, Stmt};
 
-fn count_digits(mut n: u32) -> u32 {
-    if n == 0 {
-        return 1;
+pub fn count_digits<T>(mut n: T) -> T
+where
+    T: Copy + std::cmp::Eq + From<u32> + std::cmp::Ord + std::ops::DivAssign + std::ops::AddAssign,
+{
+    if n == T::from(0) {
+        return T::from(1);
     }
-    let mut count = 0;
-    while n > 0 {
-        count += 1;
-        n /= 10;
+    let mut count = T::from(0);
+    while n > T::from(0) {
+        count += T::from(1);
+        n /= T::from(10);
     }
     count
 }
@@ -59,9 +62,9 @@ impl Logger {
     }
 
     pub fn add_pos(delta: Pos) {
-        // if Logger::print_logs() {
-        //     println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
-        // }
+        if Logger::print_logs() {
+            println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
+        }
 
         unsafe {
             LOGGER.file_pos.x += delta.x;
@@ -70,9 +73,9 @@ impl Logger {
     }
 
     pub fn sub_pos(delta: Pos) {
-        // if Logger::print_logs() {
-        //     println!("{:?} - {delta:?}", unsafe { self.file_pos });
-        // }
+        if Logger::print_logs() {
+            println!("{:?} - {delta:?}", unsafe { LOGGER.file_pos });
+        }
 
         unsafe {
             LOGGER.file_pos.x -= delta.x;
@@ -81,9 +84,9 @@ impl Logger {
     }
 
     pub fn set_pos(new_pos: Pos) {
-        // if Logger::print_logs() {
-        //     println!("{:?} -> {new_pos:?}", unsafe { self.file_pos });
-        // }
+        if Logger::print_logs() {
+            println!("{:?} -> {new_pos:?}", unsafe { LOGGER.file_pos });
+        }
 
         unsafe {
             LOGGER.file_pos = new_pos;

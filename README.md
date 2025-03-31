@@ -75,7 +75,7 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
   - [x] logical not: !
   - [x] unary minus: i.e -10
   - [x] function call: '()'
-  - [] array subscript: '[]'
+  - [ ] array subscript: '[]'
   - [ ] struct member: '.' | '->'
   - cast: (type)
 
