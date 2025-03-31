@@ -59,7 +59,7 @@ fn main() {
 
     let lexer = lex(Contents::get_contents_ref());
     let ast = parse(lexer.tokens);
-    let checker = semantic_check(ast);
+    // let checker = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 
@@ -182,7 +182,7 @@ fn handle_error<T: std::fmt::Debug>(
         .position(|x| x.is_alphanumeric())
         .unwrap_or(0);
     highlight_padding = " ".repeat(first_char);
-    error_highlight = "^".repeat(error_end.x as usize - first_char - 1);
+    error_highlight = "^".repeat(error_end.x as usize - first_char);
 
     let len = error.chain().len();
     let mut error_chain = String::from("[\n");

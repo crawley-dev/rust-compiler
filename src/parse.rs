@@ -20,7 +20,7 @@ pub enum InitExpr {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParseType {
-    pub type_tok: Token,
+    pub ident: Token,
     pub addr_mode: AddressingMode,
 }
 
@@ -32,12 +32,25 @@ pub struct Arg {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StructField {
+    pub ident: Token,
+    pub expr: Node<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
     True,
     False,
     Ident,
     IntLit,
-    FnCall { ident: Token, args: Vec<Node<Expr>> },
+    StructLit {
+        ident: Token,
+        fields: Vec<StructField>,
+    },
+    FnCall {
+        ident: Token,
+        args: Vec<Node<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,6 +104,10 @@ pub enum Stmt {
     TypeAlias {
         ident: Token,
         parse_type: ParseType,
+    },
+    StructDecl {
+        ident: Token,
+        fields: Vec<Arg>,
     },
     // SEMANTIC STMTs
     VarSemantics(Variable),
@@ -154,6 +171,7 @@ impl Parser {
         match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Fn => self.parse_fn_decl(),
             Some(tok) if tok.kind == TokenKind::Type => self.parse_type_alias(),
+            Some(tok) if tok.kind == TokenKind::Struct => self.parse_struct_decl(),
             Some(tok) => comp_err!("Invalid Top Level Token => '{tok:?}'"),
             None => comp_err!("No token to parse"),
         }
@@ -173,7 +191,7 @@ impl Parser {
         // parse function return type
         let return_type = match self.expect(TokenKind::Arrow) {
             Ok(_) => Some(
-                self.parse_type()
+                self.parse_type_param()
                     .with_context(|| "faield to parse function return type")?,
             ),
             Err(_) => None,
@@ -214,7 +232,7 @@ impl Parser {
             let ident = self.expect(TokenKind::Ident)?;
             self.expect(TokenKind::Colon)?;
             let parse_type = self
-                .parse_type()
+                .parse_type_param()
                 .with_context(|| "failed to parse type for function argument")?;
 
             args.push(Arg {
@@ -235,18 +253,62 @@ impl Parser {
         self.expect(TokenKind::Eq)?;
 
         let parse_type = self
-            .parse_type()
+            .parse_type_param()
             .with_context(|| "failed to parse type for type alias")?;
 
         self.expect(TokenKind::SemiColon)?;
 
         CompilerResult::Ok(Node {
             start: type_keyword.start,
-            end: parse_type.type_tok.end_pos(),
+            end: parse_type.ident.end_pos(),
             node: Stmt::TypeAlias {
                 ident: new_type,
                 parse_type,
             },
+        })
+    }
+
+    fn parse_struct_decl(&mut self) -> CompilerResult<Node<Stmt>> {
+        let struct_keyword = self.expect(TokenKind::Struct)?;
+        let ident = self.expect(TokenKind::Ident)?;
+
+        self.expect(TokenKind::OpenBrace)?;
+        let mut fields = Vec::new();
+        while self.token_equals(TokenKind::CloseBrace, 0).is_err() {
+            // do this first in next iter as it may be the last field.
+            if !fields.is_empty() {
+                self.expect(TokenKind::Comma)?;
+            }
+
+            let ident = self.expect(TokenKind::Ident)?;
+            self.expect(TokenKind::Colon)?;
+            let parse_type = self
+                .parse_type_param()
+                .with_context(|| "failed to parse type for struct field")?;
+
+            fields.push(Arg {
+                ident,
+                mutable: false,
+                parse_type,
+            });
+
+            // TODO(TOM): nested type declarations
+            // let next_token = match self.peek(0) {
+            //     Some(tok) => tok,
+            //     None => return comp_err!("No token to parse for struct field"),
+            // };
+            // match next_token.kind {
+            //     TokenKind::Struct => {}
+            //     TokenKind::Ident => {}
+            //     _ => return comp_err!("Invalid token found for struct field => '{next_token:?}'"),
+            // }
+        }
+        let close_brace = self.expect(TokenKind::CloseBrace)?;
+
+        CompilerResult::Ok(Node {
+            start: struct_keyword.start,
+            end: close_brace.end_pos(),
+            node: Stmt::StructDecl { ident, fields },
         })
     }
     // endregion
@@ -256,7 +318,7 @@ impl Parser {
 
         // go through each statement, if it fails. return the partially complete scope.
         let mut stmts = Vec::new();
-        while self.expect(TokenKind::CloseBrace).is_err() {
+        while self.token_equals(TokenKind::CloseBrace, 0).is_err() {
             match self.parse_stmt() {
                 CompilerResult::Ok(stmt) => stmts.push(stmt),
                 CompilerResult::Err { data, error } => {
@@ -282,15 +344,11 @@ impl Parser {
                 }
             }
         }
-
-        let end = match stmts.last() {
-            Some(stmt) => stmt.end,
-            None => open_brace.end_pos(),
-        };
+        let close_brace = self.expect(TokenKind::CloseBrace)?;
 
         CompilerResult::Ok(Node {
             start: open_brace.start,
-            end,
+            end: close_brace.end_pos(),
             node: Scope {
                 stmts,
                 inherits_stmts,
@@ -434,7 +492,7 @@ impl Parser {
         let ident = self.expect(TokenKind::Ident)?;
 
         self.expect(TokenKind::Colon)?;
-        let parse_type = self.parse_type()?;
+        let parse_type = self.parse_type_param()?;
 
         let init_expr = match self.expect(TokenKind::Eq) {
             Ok(_) => InitExpr::Some(self.parse_expr(0)?),
@@ -443,7 +501,7 @@ impl Parser {
 
         let end = match init_expr {
             InitExpr::Some(ref expr) => expr.end,
-            _ => parse_type.type_tok.end_pos(),
+            _ => parse_type.ident.end_pos(),
         };
 
         Ok(Node {
@@ -631,27 +689,54 @@ impl Parser {
                 match self.peek(0) {
                     // Function Calls
                     Some(next) if next.kind == TokenKind::OpenParen => {
-                        self.expect(TokenKind::OpenParen)
-                            .with_context(|| "failed to parse function call")?;
-                        let mut args = Vec::new();
+                        self.expect(TokenKind::OpenParen)?;
 
-                        let mut end = self.expect(TokenKind::CloseParen);
-                        while end.is_err() {
-                            if args.len() > 1 {
+                        let mut args = Vec::new();
+                        while self.token_equals(TokenKind::CloseParen, 0).is_err() {
+                            if !args.is_empty() {
                                 self.expect(TokenKind::Comma)?;
                             }
-                            args.push(self.parse_expr(0)?);
-                            end = self.expect(TokenKind::CloseParen);
+                            args.push(
+                                self.parse_expr(0)
+                                    .with_context(|| "failed to parse function call argument")?,
+                            );
                         }
-                        let end = end.unwrap().end_pos();
+                        let close_paren = self.expect(TokenKind::CloseParen)?;
 
                         Ok(Node {
                             start: tok.start,
-                            end,
+                            end: close_paren.end_pos(),
                             node: Expr::Term(Term::FnCall { ident: tok, args }),
                         })
                     }
-                    // Just an Ident
+                    Some(next) if next.kind == TokenKind::OpenBrace => {
+                        self.expect(TokenKind::OpenBrace)?;
+
+                        let mut fields = Vec::new();
+                        while self.token_equals(TokenKind::CloseBrace, 0).is_err() {
+                            if !fields.is_empty() {
+                                self.expect(TokenKind::Comma)?;
+                            }
+
+                            let ident = self.expect(TokenKind::Ident)?;
+                            self.expect(TokenKind::Colon)?;
+
+                            fields.push(StructField {
+                                ident,
+                                expr: self
+                                    .parse_expr(0)
+                                    .with_context(|| "failed to parse struct literal field")?,
+                            })
+                        }
+                        let close_brace = self.expect(TokenKind::CloseBrace)?;
+
+                        Ok(Node {
+                            start: tok.start,
+                            end: close_brace.end_pos(),
+                            node: Expr::Term(Term::StructLit { ident: tok, fields }),
+                        })
+                    }
+                    // Just an Ident, nothing special afterwards to indicate otherwise.
                     Some(_) => Ok(Node {
                         start: tok.start,
                         end: tok.end_pos(),
@@ -679,7 +764,7 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<ParseType> {
+    fn parse_type_param(&mut self) -> Result<ParseType> {
         let mut depth: u32 = 0;
         let addr_mode = match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Ptr => {
@@ -698,11 +783,8 @@ impl Parser {
             None => return err!("No token to parse"),
         };
 
-        let type_tok = self.expect(TokenKind::Ident)?;
-        Ok(ParseType {
-            type_tok,
-            addr_mode,
-        })
+        let ident = self.expect(TokenKind::Ident)?;
+        Ok(ParseType { ident, addr_mode })
     }
 
     // region: little ones

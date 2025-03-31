@@ -336,7 +336,7 @@ impl Checker {
 
                 let return_type = match return_type {
                     Some(parse_type) => {
-                        let base_id = *self.type_map.get(parse_type.type_tok.str()).unwrap();
+                        let base_id = *self.type_map.get(parse_type.ident.str()).unwrap();
                         self.new_full(base_id, parse_type.addr_mode)
                     }
                     None => Type::Void,
@@ -359,7 +359,7 @@ impl Checker {
                 Ok(())
             }  
             Stmt::TypeAlias { ident, parse_type } => {
-                self.check_type_alias(ident.str(), parse_type.type_tok.str())
+                self.check_type_alias(ident.str(), parse_type.ident.str())
             }, 
             _ => err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
@@ -494,7 +494,7 @@ impl Checker {
                     "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
                 );
             }
-            let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
+            let base_id = *self.type_map.get(arg.parse_type.ident.str()).unwrap();
             semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
         }
 
@@ -582,7 +582,7 @@ impl Checker {
                     for (arg_type, parse) in semantics.iter().zip(args.iter()) {
                         let arg_stmt = Node {
                             start: parse.ident.start,
-                            end: parse.parse_type.type_tok.end_pos(),
+                            end: parse.parse_type.ident.end_pos(),
                             node: Stmt::VarDecl {
                                 init_expr: InitExpr::None,
                                 arg: Arg {
@@ -778,7 +778,7 @@ impl Checker {
                     return comp_err!("Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let base_id = *self.type_map.get(arg.parse_type.type_tok.str()).unwrap();
+                let base_id = *self.type_map.get(arg.parse_type.ident.str()).unwrap();
                 let var_type = self.new_full(base_id, arg.parse_type.addr_mode);
                 if let Type::Void = var_type {
                     return comp_err!("Cannot declare a variable of type 'void'");
@@ -974,12 +974,12 @@ impl Checker {
                 match resultant_form.addr_mode {
                     AddressingMode::Array(_) => {
                         err!(
-                            "[ARR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                            "[ARRAY] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
                     AddressingMode::Pointer(_) => {
                         err!(
-                            "[PTR] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                            "[POINTER] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                         )
                     }
                     // TODO:(TOM) this need to be changed, 
@@ -1007,7 +1007,7 @@ impl Checker {
                                             width: 1,
                                         })
                                     }
-                                    _ => err!("logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                    _ => err!("[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                                 }
                             }
 
@@ -1019,7 +1019,7 @@ impl Checker {
                                         addr_mode: AddressingMode::Primitive,
                                         width: resultant_form.width,
                                     }),
-                                    _ => err!("Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                    _ => err!("[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                                 }
                             }
                             
@@ -1031,11 +1031,11 @@ impl Checker {
                                         addr_mode: AddressingMode::Primitive,
                                         width: resultant_form.width,
                                     }),
-                                    _ => err!("Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                                    _ => err!("[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                                 }
                             }
 
-                            _ => err!("[PRM] Invalid binary(two) expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
+                            _ => err!("[PRIMITIVE] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
                         }
                     }
                 }
@@ -1058,30 +1058,29 @@ impl Checker {
                             // deref address into a variable.
                             TokenKind::Ptr if depth == 1 => {
                                 Ok(ExprSem {
-                                    form: ExprForm::Variable, // this is going to point to a mem loc, a var!
+                                    form: ExprForm::Variable,
                                     type_mode: checked.type_mode,
                                     addr_mode: AddressingMode::Primitive,
-                                    // width: checked.width,
                                     // calculate width of type it was pointing to, e.g. bool == 1.
                                     // because currently checked.width == 8 (ptr)
                                     // not ideal, should have this information saved?
                                     width: match checked.type_mode {
                                         TypeMode::Boolean => 1,
                                         TypeMode::Int(_) => 8, // will be shrunk to match caller.
-                                        _ => todo!("width calculation for type"),
+                                        _ => todo!("struct/union width calculation for type"),
                                     },
                                 })
                             }
                             TokenKind::Ptr => {
                                 Ok(ExprSem {
-                                    form: ExprForm::Variable, // dereferencing into a memory location, must be a var.
+                                    form: ExprForm::Variable,
                                     type_mode: checked.type_mode,
                                     addr_mode: AddressingMode::Pointer(depth - 1),
                                     width: checked.width,
                                 })
                             }
                             _ => err!(
-                                "[PTR] Invalid Unary Expression: {op:?}..\n{checked:#?}"
+                                "[POINTER] Invalid Unary Expression: {op:?}..\n{checked:#?}"
                             ),
                         }
                     }
@@ -1095,15 +1094,15 @@ impl Checker {
                                     addr_mode: AddressingMode::Primitive,
                                     width: checked.width,
                                 }),
-                                _ => err!("'UnarySub' expects a signed integer, found {checked:#?}")
+                                _ => err!("[PRIMITIVE] 'UnarySub' expects a signed integer, found {checked:#?}")
                             }
                            
                             TokenKind::Not => match checked.type_mode {
                                 TypeMode::Boolean | TypeMode::Int(_) => Ok(checked),
-                                _ => err!("'Not' expects a boolean or integer, found {checked:#?}")
+                                _ => err!("[PRIMITIVE] 'Not' expects a boolean or integer, found {checked:#?}")
                             }
 
-                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("'AddressOf' expects a variable, found {checked:#?}"),
+                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("[PRIMITIVE] 'AddressOf' expects a variable, found {checked:#?}"),
                             TokenKind::Ampersand => Ok(ExprSem {
                                 form: ExprForm::Compound,
                                 type_mode: checked.type_mode,
@@ -1161,6 +1160,7 @@ impl Checker {
                     width: 0,
                 })
             }
+            Term::StructLit { ident, fields } => todo!(""),
             Term::FnCall { ident, args } => {
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {

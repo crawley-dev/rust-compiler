@@ -1,4 +1,11 @@
 type test = bool;
+struct StructTest {
+    field1: bool
+}
+struct Struct2 {}
+struct Struct3 {
+    struct_field_1: StructTest
+}
 
 fn func_example_1() -> i32 {
     return 10;
@@ -8,12 +15,17 @@ fn func_example_2(ident1: bool) -> i32 {
     return 5;
 }
 
-fn func_example_3() -> i32 {
-    return let i: i32 = 5;
+fn func_example_3(field1: StructTest, field2: Struct2) -> bool {
+    let test_var: StructTest = StructTest {
+        field1: true
+    };
+
+    return true;
 }
 
 fn func_example_n() -> bool {
     let fib: i64 = fibonacci(5);
+
     return fib == 5;
     /*
 

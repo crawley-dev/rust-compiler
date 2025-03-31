@@ -121,7 +121,6 @@ impl PosAwareDebug for Stmt {
     fn fmt_with_pos(&self, f: &mut Formatter<'_>, start: Pos, end: Pos) -> fmt::Result {
         // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
         // could I just do this in the match below? yes. did I? no.
-
         let mut dbg = f.debug_struct(&self.get_variant_name());
         dbg.field("pos", &format_args!("{}", start.fmt_range(end)));
 
@@ -172,8 +171,10 @@ impl PosAwareDebug for Stmt {
                 dbg.field("node", node);
             }
             Stmt::TypeAlias { ident, parse_type } => {
-                dbg.field("ident", ident);
-                dbg.field("parse_type", parse_type);
+                dbg.field("ident", ident).field("parse_type", parse_type);
+            }
+            Stmt::StructDecl { ident, fields } => {
+                dbg.field("ident", ident).field("fields", fields);
             }
             Stmt::VarSemantics(variable) => {
                 dbg.field("variable", variable);
@@ -223,15 +224,17 @@ impl PosAwareDebug for Expr {
 
         let variant_name = self.get_variant_name();
         match self {
-            Expr::Term(term) => {
-                // fncalls are printed alternate, they are big!
-                // have to check here to not print "Expr::Term" in the debug output
-                if let Term::FnCall { .. } = term {
-                    write!(f, "{term:#?}")
-                } else {
-                    write!(f, "{term:?}")
+            Expr::Term(term) => match term {
+                Term::Ident | Term::IntLit | Term::False | Term::True => {
+                    let src = Contents::get_src_oneline(start, end);
+                    if PRINT_TERM_POS {
+                        write!(f, "{variant_name}({src})")
+                    } else {
+                        write!(f, "{variant_name}({src})")
+                    }
                 }
-            }
+                Term::FnCall { .. } | Term::StructLit { .. } => write!(f, "{term:#?}"),
+            },
             Expr::Unary { op, expr } => f
                 .debug_struct(&variant_name)
                 .field("pos", &format_args!("{}", start.fmt_range(end)))
@@ -249,6 +252,7 @@ impl PosAwareDebug for Expr {
     }
 }
 
+// Practically useles, I don't wrap Term as Node<Term> because its always Node<Expr::Term> anyways
 impl PosAwareDebug for Term {
     fn get_variant_name(&self) -> String {
         let term_owned = format!("{:#?}", self);
@@ -272,6 +276,12 @@ impl PosAwareDebug for Term {
                     write!(f, "{variant_name}({src})")
                 }
             }
+            Term::StructLit { ident, fields } => f
+                .debug_struct(&variant_name)
+                .field("pos", &format_args!("{pos}"))
+                .field("ident", ident)
+                .field("fields", fields)
+                .finish(),
             Term::FnCall { ident, args } => f
                 .debug_struct(&variant_name)
                 .field("pos", &format_args!("{pos}"))

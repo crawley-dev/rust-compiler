@@ -80,6 +80,7 @@ pub enum TokenKind {
     True,
     False,
     Type,
+    Struct,
 
     // Primitive Constructs
     Ident,
@@ -114,7 +115,6 @@ pub struct Lexer {
     reg: HashMap<&'static str, TokenKind>,
     is_linecomment: bool,
     is_multicomment: bool,
-
     pub tokens: VecDeque<Token>,
 }
 
@@ -132,131 +132,6 @@ bitflags! {
         const LHS = 1 << 6; // this flag indicates whether the operator is on the left or right of an expression.
     }
 }
-
-/*
-impl TokenKind {
-    pub fn get_flags(self) -> TokenFlags {
-        use TokenFlags as Flag;
-        use TokenKind as Kind;
-        match self {
-            // Arithmetic
-            Kind::Add => Flag::ARITH,               // "+"
-            Kind::Sub => Flag::ARITH | Flag::UNARY, // "-" (unary minus)
-            Kind::Mul => Flag::ARITH,               // "*"
-            Kind::Quo => Flag::ARITH,               // "/"
-            Kind::Mod => Flag::ARITH,               // "%"
-
-            // Comparison
-            Kind::CmpEq => Flag::CMP, // "=="
-            Kind::NotEq => Flag::CMP, // "!="
-            Kind::Lt => Flag::CMP,    // "<"
-            Kind::Gt => Flag::CMP,    // ">"
-            Kind::LtEq => Flag::CMP,  // "<="
-            Kind::GtEq => Flag::CMP,  // ">="
-
-            // Logical
-            Kind::LogAnd => Flag::LOG, // "&&" /* Flag::CMP | */
-            Kind::LogOr => Flag::LOG,  // "||" /* Flag::CMP | */
-            Kind::Not => Flag::LOG | Flag::BIT | Flag::UNARY, // "!"
-
-            // Bitwise
-            Kind::Bar => Flag::BIT,                     // "|"
-            Kind::Shl => Flag::BIT,                     // "<<"
-            Kind::Shr => Flag::BIT,                     // ">>"
-            Kind::AndNot => Flag::BIT,                  // "&~"
-            Kind::Tilde => Flag::BIT | Flag::UNARY,     // "~" (xor)
-            Kind::Ampersand => Flag::BIT | Flag::UNARY, // "&"
-
-            // Assignment
-            Kind::Eq => Flag::ASSIGN,                   // "="
-            Kind::AddEq => Flag::ASSIGN | Flag::ARITH,  // "+="
-            Kind::SubEq => Flag::ASSIGN | Flag::ARITH,  // "-="
-            Kind::MulEq => Flag::ASSIGN | Flag::ARITH,  // "*="
-            Kind::QuoEq => Flag::ASSIGN | Flag::ARITH,  // "/="
-            Kind::ModEq => Flag::ASSIGN | Flag::ARITH,  // "%="
-            Kind::AndEq => Flag::ASSIGN | Flag::BIT,    // "&="
-            Kind::OrEq => Flag::ASSIGN | Flag::BIT,     // "|="
-            Kind::XorEq => Flag::ASSIGN | Flag::BIT,    // "~="
-            Kind::ShlEq => Flag::ASSIGN | Flag::BIT,    // "<<="
-            Kind::ShrEq => Flag::ASSIGN | Flag::BIT,    // ">>="
-            Kind::AndNotEq => Flag::ASSIGN | Flag::BIT, // "&~="
-
-            // Other operators
-            Kind::Ptr => Flag::UNARY,   // "^"
-            Kind::Array => Flag::UNARY, // "[]"
-
-            _ => Flag::empty(),
-        }
-    }
-
-    pub fn has_flags(&self, flags: TokenFlags) -> bool {
-        self.get_flags().contains(flags)
-    }
-
-    pub fn has_some_flags(&self, flags: TokenFlags) -> bool {
-        self.get_flags().intersects(flags)
-    }
-
-    // Precedence hierarchy: higher = done first
-    // .. going based of c precedence hierarchy.. at: https://ee.hawaii.edu/~tep/EE160/Book/chap5/subsection2.1.4.1.html#:~:text=The%20precedence%20of%20binary%20logical,that%20of%20all%20binary%20operators.
-    // .. c++ associativity: https://en.wikipedia.org/wiki/Operators_in_C_and_C%2B%2B#Operator_precedence
-    pub fn get_prec_binary(&self) -> i32 {
-        match self {
-            TokenKind::Mul | TokenKind::Quo | TokenKind::Mod => 12,
-            TokenKind::Sub | TokenKind::Add => 11,
-            TokenKind::Shl | TokenKind::Shr => 10,
-            TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => 9,
-            TokenKind::CmpEq | TokenKind::NotEq => 8,
-            TokenKind::Ampersand => 7, // BitAnd
-            TokenKind::Tilde => 6,     // BitXor
-            TokenKind::Bar => 5,
-            TokenKind::LogAnd => 3,
-            TokenKind::LogOr => 2,
-            _ if self.has_flags(TokenFlags::ASSIGN) => 1,
-            TokenKind::Comma => 0,
-            _ => -100,
-        }
-    }
-
-    // Precedence hierarchy for unary operators, may be a variant of a multi-purpose operator
-    // unary operators for now have a precedence of 13, may have some edge-cases.
-    // .. e.g: "&":
-    // .. .. Binary: BitAnd, prec: 7
-    // .. .. Unary: Address-of, prec: 13
-    pub fn get_prec_unary(&self) -> i32 {
-        if self.has_flags(TokenFlags::UNARY) {
-            13
-        } else {
-            -100
-        }
-    }
-
-    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
-        match self {
-            TokenKind::AddEq => Ok(TokenKind::Add),
-            TokenKind::SubEq => Ok(TokenKind::Sub),
-            TokenKind::MulEq => Ok(TokenKind::Mul),
-            TokenKind::QuoEq => Ok(TokenKind::Quo),
-            TokenKind::ModEq => Ok(TokenKind::Mod),
-            TokenKind::AndEq => Ok(TokenKind::Ampersand),
-            TokenKind::OrEq => Ok(TokenKind::Bar),
-            TokenKind::XorEq => Ok(TokenKind::Tilde),
-            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
-            TokenKind::ShlEq => Ok(TokenKind::Shl),
-            TokenKind::ShrEq => Ok(TokenKind::Shr),
-            _ => err!("{self:?} cannot be converted to arithmetic"),
-        }
-    }
-
-    pub fn get_associativity(&self, is_unary: bool) -> Associativity {
-        match self {
-            _ if self.has_flags(TokenFlags::ASSIGN) => Associativity::Right,
-            _ if is_unary => Associativity::Right,
-            _ => Associativity::Left,
-        }
-    }
-}
-*/
 
 impl TokenKind {
     /// Returns the flags for this token when it is used in a unary context.
@@ -401,6 +276,8 @@ impl Lexer {
             // Operators
             ("!", TokenKind::Not),
             ("^", TokenKind::Ptr),
+            (".", TokenKind::Dot),
+            ("[]", TokenKind::Array),
             ("=", TokenKind::Eq),
             ("+", TokenKind::Add),
             ("-", TokenKind::Sub),
@@ -447,6 +324,7 @@ impl Lexer {
             ("true", TokenKind::True),
             ("false", TokenKind::False),
             ("type", TokenKind::Type),
+            ("struct", TokenKind::Struct),
         ]);
         Lexer {
             idx: 0,
