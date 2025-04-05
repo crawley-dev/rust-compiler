@@ -37,8 +37,6 @@ impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = self.str().replace("\n", "\\n");
         match self.kind {
-            // TokenKind::Ident | TokenKind::IntLit => write!(f, "{:?}({})", self.kind, self.str()),
-            // _ => write!(f, "{:?}", self.kind),
             _ => write!(f, "{:?}({str})", self.kind),
         }
     }

@@ -175,7 +175,7 @@ macro_rules! debug {
         if crate::utils::Logger::print_logs() {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-            println!("[col: {y_padding}{}, row: {x_padding}{}] {}",
+            println!("[y:{y_padding}{}, x:{x_padding}{}] {}",
             pos.y + 1,
             pos.x + 1,
                 format!($msg)
@@ -187,7 +187,7 @@ macro_rules! debug {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!(
-                "[col: {y_padding}{}, row: {x_padding}{}] {}",
+                "[y:{y_padding}{}, x:{x_padding}{}] {}",
                 pos.y + 1,
                 pos.x + 1,
                 format!($fmt, $($arg)+)
@@ -307,7 +307,7 @@ impl Contents {
 
         let file_name = args.split('.').take(1).collect::<String>();
         // TODO(TOM): re-enable after testing
-        // let extension = args.split('.').skip(1).take(1).collect::<String>();
+        // let extension = args.split('.').skip(1).take(1).ylect::<String>();
         // else if extension != "txt" {
         //     panic!("[COMPILER] Invalid file extension, '.txt' only\n")
         // }
@@ -339,34 +339,24 @@ pub fn pos(x: u32, y: u32) -> Pos {
 
 impl std::fmt::Debug for Pos {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(col: {}, row: {})", self.y + 1, self.x + 1)
+        write!(f, "(y: {}, x: {})", self.y + 1, self.x + 1)
     }
 }
 
 impl Pos {
     pub fn fmt_range(&self, other: Pos) -> String {
         if other.y > self.y && self.x == other.x {
-            return format!(
-                "(col: {}..{}, row: {})",
-                self.y + 1,
-                other.y + 1,
-                self.x + 1,
-            );
+            return format!("(y: {}..{}, x: {})", self.y + 1, other.y + 1, self.x + 1,);
         } else if other.y > self.y {
             return format!(
-                "(col: {}..{}, row: {}..{})",
+                "(y: {}..{}, x: {}..{})",
                 self.y + 1,
                 other.y + 1,
                 self.x + 1,
                 other.x + 1
             );
         } else if other.x > self.x && self.y == other.y {
-            return format!(
-                "(col: {}, row: {}..{})",
-                self.y + 1,
-                self.x + 1,
-                other.x + 1
-            );
+            return format!("(y: {}, x: {}..{})", self.y + 1, self.x + 1, other.x + 1);
         } else {
             return format!("I give up {self:?} {other:?}");
         }
@@ -517,7 +507,7 @@ macro_rules! comp_err {
         crate::utils::CompilerResult::Err {
             data: Some($data),
             error: anyhow::anyhow!(
-                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -532,7 +522,7 @@ macro_rules! comp_err {
         crate::utils::CompilerResult::Err {
             data: Some($data),
             error: anyhow::anyhow!(
-                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -546,7 +536,7 @@ macro_rules! comp_err {
         crate::utils::CompilerResult::Err {
             data: None,
             error: anyhow::anyhow!(
-                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -561,7 +551,7 @@ macro_rules! comp_err {
         crate::utils::CompilerResult::Err {
             data: None,
             error: anyhow::anyhow!(
-                "[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
                 crate::utils::Logger::get_prefix(),
                 pos.y + 1,
                 pos.x + 1,
@@ -576,7 +566,7 @@ macro_rules! err {
     ($msg:expr) => {{
         let pos = crate::utils::Logger::get_pos();
         let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+        Err(anyhow::anyhow!("[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
             crate::utils::Logger::get_prefix(),
             pos.y + 1,
             pos.x + 1,
@@ -586,7 +576,7 @@ macro_rules! err {
     ($fmt:expr, $($arg:tt)+) => {{
         let pos = crate::utils::Logger::get_pos();
         let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        Err(anyhow::anyhow!("[ERR_{} | (col: {y_padding}{}, row: {x_padding}{})] {}",
+        Err(anyhow::anyhow!("[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
             crate::utils::Logger::get_prefix(),
             pos.y + 1,
             pos.x + 1,

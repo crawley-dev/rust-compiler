@@ -68,8 +68,8 @@ use std::{
 
 // region: Type Definitions
 
-pub type Byte = usize;
-const PTR: Byte = 8;
+pub type Bytes = usize;
+const PTR: Bytes = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
@@ -96,34 +96,40 @@ enum ExprForm {
 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct BaseType {
+struct BasePrimitive {
     ident: String,
     mode: TypeMode,
-    width: Byte,
+    width: Bytes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct FullType {
-    width: Byte, // width accounting for the addressing mode
+    width: Bytes, // width accounts for the addressing mode
     type_id: usize,
     addr_mode: AddressingMode,
 }
 
-// TODO(TOM): make this generic over the type, e.g. a partial base, or a partial struct?
+// I need to rethink how types work
+// what is a "basetype?"
+// can I associate a 'basetype' with a primitive, struct or union?
+// I'd say NO! the "type" enum MUST represent full types, those that an expression must abide by.
+// "basetypes" are more akin to the language "primitive types"
+// currently, type alias' must correlate to a primitive type, e.g. I cannot alias an int pointer.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Type<T> {
+enum Type {
     Void, // Don't really know how Void ptrs are gonna work.. another variant? do I even want them?
-    Primitive(T),
+    BasePrimitive {
+        base_id: usize,
+    },
+    FullPrimitive(FullType),
     Struct {
-        ident: Token,
-        members: Vec<T>,
-        width: Byte,
+        struct_type: FullType,
+        member: Vec<FullType>,
     },
-    Union {
-        ident: Token,
-        members: Vec<T>,
-        width: Byte,
-    },
+    // Union {
+    //     members: Vec<T>,
+    //     width: Bytes,
+    // },
 }
 
 // An expression is evaluated based on:
@@ -138,7 +144,7 @@ struct ExprSem {
     form: ExprForm,
     type_mode: TypeMode,
     addr_mode: AddressingMode,
-    width: Byte,
+    width: Bytes,
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +195,7 @@ pub struct Checker {
     #[educe(Debug(ignore))]
     type_vec: Vec<Type<BaseType>>,
     // whilst the map also contains aliases that map to the original type.
-    #[educe(Debug(ignore))]
+    // #[educe(Debug(ignore))]
     pub type_map: HashMap<String, usize>,
     
     #[educe(Debug(ignore))]
@@ -323,6 +329,8 @@ impl Checker {
 
     // region: Top Level
     fn index_top_level(&mut self, stmt: &Node<Stmt>) -> Result<()> {
+        Logger::set_pos(stmt.start);
+
         // index all the functions and type aliases, so we can call a func later in the file & recurse.
         debug!("Indexing top level stmt: {stmt:?}");
 
@@ -361,6 +369,10 @@ impl Checker {
             Stmt::TypeAlias { ident, parse_type } => {
                 self.check_type_alias(ident.str(), parse_type.ident.str())
             }, 
+            Stmt::StructDecl { ident, fields } => {
+                self.check_struct_decl(*ident, fields)
+            }
+                
             _ => err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
@@ -379,7 +391,7 @@ impl Checker {
                     CompilerResult::Ok(data) => CompilerResult::Ok(Some(data)),
                     CompilerResult::Err { data, error } => CompilerResult::Err { data: Some(data), error }}
             },
-            Stmt::TypeAlias { .. } => CompilerResult::Ok(None),
+            Stmt::TypeAlias { .. } | Stmt::StructDecl { .. } => CompilerResult::Ok(None),
             _ => comp_err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
@@ -650,7 +662,7 @@ impl Checker {
         if self.type_map.get(ident_str).is_some() {
             return err!("Duplicate definition of a Type: '{}'", ident_str);
         } else if self.stack_var_map.contains_key(ident_str) {
-            return err!("Illegal Type name, Variables are reserved: '{}'", ident_str);
+            return err!("Illegal Type alias, a variable is assigned this name: '{}'", ident_str);
         }
 
         let original_id = match self.type_map.get(parse_type_str) {
@@ -664,6 +676,55 @@ impl Checker {
         
         Ok(())
     }
+
+    fn check_struct_decl(&mut self, ident: Token, fields: &[Arg]) -> Result<()> {
+
+        debug!("checking struct decl: {ident:#?}");
+
+        // check if its already a type
+        if self.type_map.get(ident.str()).is_some() {
+            return err!("Duplicate definition of a Type: '{}'", ident.str());
+        } 
+
+        let mut width = 0;
+        let mut members = Vec::with_capacity(fields.len());
+        for (i, field) in fields.iter().enumerate() {
+            if self.stack_var_map.contains_key(field.ident.str()) {
+                return err!("Illegal Type alias, a variable is assigned this name: '{}'", field.ident.str());
+            } else if self.type_map.contains_key(field.ident.str()) {
+                return err!("Illegal Type alias, a type is assigned this name: '{}'", field.ident.str());
+            } else if fields.iter().skip(i+1).position(|x| x.ident.str() == field.ident.str()).is_some() {
+                return err!("Duplicate definition of a Struct field: '{}'", field.ident.str());
+            }
+
+            let field_type_ident = field.parse_type.ident.str();
+            debug!("trying to find field type: {field_type_ident}");
+            let field_id = match self.type_map.get(field_type_ident) {
+                Some(id) => *id,
+                None => return err!("Struct field's type not found: '{}'", field_type_ident),
+            };
+            let field_type = self.type_vec.get(field_id).unwrap();
+
+            let field_width = match field_type {
+                Type::Primitive(base) => base.width,
+                Type::Struct { width, .. } => *width,
+                _ => return err!("Invalid type for struct field: '{}'", field_type_ident),
+            };
+            
+            width += field_width;
+            members.push(field_id);
+        }
+
+        debug!("struct decl looks ok, adding type.. {:#?}", ident);
+        // self.add_type(Type::Struct::<BaseType> {
+        //     ident,
+        //     members,
+        //     width,
+        // });
+        Ok(())
+    }
+
+        
     // endregion
     
     // region: Scope
@@ -1138,11 +1199,6 @@ impl Checker {
                         members,
                         width,
                     } => todo!("struct semantics"),
-                    Type::Union {
-                        ident,  
-                        members,
-                        width,
-                    } => todo!("union semantics"),
                 };
 
                 Ok(ExprSem {
@@ -1284,10 +1340,16 @@ impl Checker {
         }
     }
 
-    fn add_type(&mut self, new_base: BaseType) {
+    fn add_type(&mut self, new_type: Type<BaseType>) {
+        let ident = match new_type {
+            Type::Primitive(BaseType { ref ident, ..}) => ident.clone(),
+            Type::Struct { ident, .. } => ident.str().to_owned(),
+            Type::Void => return,
+        };
+
         self.type_map
-            .insert(new_base.ident.clone(), self.type_vec.len());
-        self.type_vec.push(Type::Primitive(new_base));
+            .insert(ident, self.type_vec.len());
+        self.type_vec.push(new_type);
     }
 
     fn new_nonnull(&self, reference: &Variable) -> Result<NonNull<Variable>> {
@@ -1307,6 +1369,7 @@ impl Checker {
         })
     }
     
+    // idea: take a base type, create a full type using the base id, attach an addressing mode.
     fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
         let base = self.type_vec.get(base_id).unwrap();
         match base {
@@ -1316,8 +1379,7 @@ impl Checker {
                 type_id: base_id,
                 addr_mode,
             }),
-            Type::Struct { .. } => todo!("struct full type"),
-            Type::Union { .. } => todo!("union full type"),
+            Type::Struct { ident, members, width } => Type::Struct {},
         }
     }
 
@@ -1343,7 +1405,6 @@ impl Checker {
                 Self::get_base_ident(base)
             }
             Type::Struct { .. } => todo!("struct ident calculation"),
-            Type::Union { .. } => todo!("union ident calculation"),
         }
     }
 
@@ -1355,7 +1416,6 @@ impl Checker {
                 Self::get_base_mode(base)
             }
             Type::Struct { .. } => todo!("struct mode calculation"),
-            Type::Union { .. } => todo!("union mode calculation"),
         }
     }
 
@@ -1370,7 +1430,6 @@ impl Checker {
                 }
             }
             Type::Struct { .. } => todo!("struct width calculation"),
-            Type::Union { .. } => todo!("union width calculation"),
         }
     }
 
@@ -1379,7 +1438,6 @@ impl Checker {
             Type::Void => todo!("void semantics"),
             Type::Primitive(full) => full.addr_mode,
             Type::Struct { .. } => todo!("struct addr_mode calculation"),
-            Type::Union { .. } => todo!("union addr_mode calculation"),
         }
     }
 
@@ -1398,7 +1456,6 @@ impl Checker {
             Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.width,
             Type::Struct { .. } => todo!("struct width calculation"),
-            Type::Union { .. } => todo!("union width calculation"),
         }
     }
 
@@ -1407,7 +1464,6 @@ impl Checker {
             Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.mode,
             Type::Struct { .. } => todo!("struct mode calculation"),
-            Type::Union { .. } => todo!("union mode calculation"),
         }
     }
 
@@ -1416,7 +1472,6 @@ impl Checker {
             Type::Void => todo!("void semantics"),
             Type::Primitive(base) => base.ident.as_str(),
             Type::Struct { .. } => todo!("struct ident calculation"),
-            Type::Union { .. } => todo!("union ident calculation"),
         }
     }
 
