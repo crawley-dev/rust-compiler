@@ -94,6 +94,40 @@ enum ExprForm {
     Literal, // has some freedoms as its a literal!
 }
 
+// This represents a language primitive type, such as 'i32'
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PrimitiveType {
+    ident: String,
+    mode: TypeMode,
+    width: Bytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AddressedType {
+    primitive_id: usize,
+    addr_mode: AddressingMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum UnifiedType {
+    Primitive(PrimitiveType),
+    Addressed(AddressedType),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Type {
+    Void,
+    Primitive(AddressedType),
+    Struct {
+        struct_type: AddressedType,
+        member: Vec<AddressedType>,
+    }
+}
+
+// more rules:
+// cannot alias an addressed type
+
+/* 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct BasePrimitive {
@@ -131,6 +165,7 @@ enum Type {
     //     width: Bytes,
     // },
 }
+*/
 
 // An expression is evaluated based on:
 // TypeMode: what operations can be performed
@@ -151,29 +186,28 @@ struct ExprSem {
 pub struct Variable {
     ident: Token,
     mutable: bool,
-    var_type: Type<FullType>,
+    var_type: Type,
     init_expr: InitExpr,
     scope_id: usize,
 }
 
 // this contains the signature and a possible function,
 // this is so we can index all functions so other funcs can reference them.
-
 #[derive(Educe, Clone)]
 #[educe(Debug)]
 pub struct Function {
     #[educe(Debug(ignore))]
     ident: Token,
     signature: String,
-    args: Vec<Type<FullType>>,
-    return_type: Type<FullType>,
+    args: Vec<AddressedType>,
+    return_type: AddressedType,
     #[educe(Debug(method = "crate::formatting::format_optional"))]
     scope: Option<Node<Scope>>,
 }
 
 #[derive(Debug)]
 struct FuncContext {
-    return_type: Type<FullType>, // optional as it may be void, which isn't a type!
+    return_type: AddressedType, // optional as it may be void, which isn't a type!
     signature: String, // should be a str really.
 }
 
@@ -193,10 +227,10 @@ pub struct Checker {
 
     // the type vec stores the "true" types
     #[educe(Debug(ignore))]
-    type_vec: Vec<Type<BaseType>>,
+    primitive_vec: Vec<UnifiedType>,
     // whilst the map also contains aliases that map to the original type.
-    // #[educe(Debug(ignore))]
-    pub type_map: HashMap<String, usize>,
+    #[educe(Debug(ignore))]
+    pub primitive_map: HashMap<String, usize>,
     
     #[educe(Debug(ignore))]
     stack_var_vec: Vec<Variable>,
