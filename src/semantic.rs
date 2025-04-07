@@ -70,6 +70,7 @@ use std::{
 
 pub type Bytes = usize;
 const PTR: Bytes = 8;
+const VOID_ID: usize = 0; // void is a special case, no size
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
@@ -85,6 +86,7 @@ enum TypeMode {
     Int(bool), // sign
     Struct,
     Union,
+    Void,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,7 +96,7 @@ enum ExprForm {
     Literal, // has some freedoms as its a literal!
 }
 
-// This represents a language primitive type, such as 'i32'
+// This defines a language primitive type, such as 'i32'
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PrimitiveType {
     ident: String,
@@ -102,30 +104,36 @@ struct PrimitiveType {
     width: Bytes,
 }
 
+// This is used by statements and expressions,
+// it is a type that has an addressing mode, e.g. an 'i32' that is a 'pointer'
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct AddressedType {
-    primitive_id: usize,
+    type_id: usize,
     addr_mode: AddressingMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum UnifiedType {
-    Primitive(PrimitiveType),
-    Addressed(AddressedType),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Type {
-    Void,
-    Primitive(AddressedType),
+// These are what is stored globally, in the 'type registry'
+// these are then referenced via id by addressed types.
+#[derive(Debug, Clone)]
+pub enum StoredType {
+    Primitive {
+        ident: String,
+        mode: TypeMode,
+        width: Bytes,
+    },
+    Alias {
+        ident: String,
+        aliased_id: usize, // TODO(TOM): this can be an addressed type? or a stored type id??
+    },
     Struct {
-        struct_type: AddressedType,
-        member: Vec<AddressedType>,
-    }
+        ident: String,
+        width: Bytes,
+        members: Vec<AddressedType>,
+    },
 }
-
-// more rules:
-// cannot alias an addressed type
+// What I need to store?
+//      - Language primitives, e.g. 'i32'
+//      - Type declarations & type alias'
 
 /* 
 // A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
@@ -186,7 +194,7 @@ struct ExprSem {
 pub struct Variable {
     ident: Token,
     mutable: bool,
-    var_type: Type,
+    var_type: AddressedType,
     init_expr: InitExpr,
     scope_id: usize,
 }
@@ -225,13 +233,12 @@ pub struct Checker {
     pub ast: Ast,
     ctx: SemContext,
 
-    // the type vec stores the "true" types
     #[educe(Debug(ignore))]
-    primitive_vec: Vec<UnifiedType>,
-    // whilst the map also contains aliases that map to the original type.
-    #[educe(Debug(ignore))]
-    pub primitive_map: HashMap<String, usize>,
+    pub type_map: HashMap<String, usize>,
     
+    #[educe(Debug(ignore))]
+    pub type_vec: Vec<StoredType>,
+
     #[educe(Debug(ignore))]
     stack_var_vec: Vec<Variable>,
     #[educe(Debug(ignore))]
@@ -239,8 +246,8 @@ pub struct Checker {
     
     // this stores the names of all functions names,
     // this then gives us a list of all overloads for this function.
-    pub fn_map: HashMap<String, Vec<usize>>,
     pub fn_vec: Vec<Function>,
+    pub fn_map: HashMap<String, Vec<usize>>,
 }
 
 // endregion
@@ -248,26 +255,29 @@ pub struct Checker {
 impl Checker {
     pub fn new() -> Checker {
         let type_vec = Vec::from([
-            Self::new_prim("bool", 1, TypeMode::Boolean),
-            Self::new_prim("u8", 1, TypeMode::Int(false)),
-            Self::new_prim("u16", 2, TypeMode::Int(false)),
-            Self::new_prim("u32", 4, TypeMode::Int(false)),
-            Self::new_prim("u64", 8, TypeMode::Int(false)),
-            Self::new_prim("usize", PTR, TypeMode::Int(false)),
-            Self::new_prim("i8", 1, TypeMode::Int(true)),
-            Self::new_prim("i16", 2, TypeMode::Int(true)),
-            Self::new_prim("i32", 4, TypeMode::Int(true)),
-            Self::new_prim("i64", 8, TypeMode::Int(true)),
-            Self::new_prim("isize", PTR, TypeMode::Int(true)),
+            new_primitive("void", 0, TypeMode::Void), // void is a special case, no size
+            new_primitive("bool", 1, TypeMode::Boolean),
+            new_primitive("u8", 1, TypeMode::Int(false)),
+            new_primitive("u16", 2, TypeMode::Int(false)),
+            new_primitive("u32", 4, TypeMode::Int(false)),
+            new_primitive("u64", 8, TypeMode::Int(false)),
+            new_primitive("usize", PTR, TypeMode::Int(false)),
+            new_primitive("i8", 1, TypeMode::Int(true)),
+            new_primitive("i16", 2, TypeMode::Int(true)),
+            new_primitive("i32", 4, TypeMode::Int(true)),
+            new_primitive("i64", 8, TypeMode::Int(true)),
+            new_primitive("isize", PTR, TypeMode::Int(true)),
+
             // Self::new_prim("f32", 4, TypeMode::Int(true)),
             // Self::new_prim("f64", 8, TypeMode::Int(true)),
         ]);
         let mut type_map = HashMap::with_capacity(type_vec.len());
         for (idx, base) in type_vec.iter().enumerate() {
-            match base {
-                Type::Primitive(base) => type_map.insert(base.ident.clone(), idx),
-                _ => todo!("type_map for non-primitive types"),
-            };
+            let ident = match base {
+                StoredType::Primitive { ident, .. } => ident.clone(),
+                _ => unreachable!()
+            };  
+            type_map.insert(ident, idx);
         }
 
          Self {
@@ -277,7 +287,7 @@ impl Checker {
                 scope_depth: 0,
                 inherit_bounds: Vec::new(),
                 func: FuncContext {
-                    return_type: Type::Void,
+                    return_type: AddressedType { type_id: VOID_ID, addr_mode: AddressingMode::Primitive },
                     signature: String::new(),
                 },
             },
@@ -378,10 +388,12 @@ impl Checker {
 
                 let return_type = match return_type {
                     Some(parse_type) => {
-                        let base_id = *self.type_map.get(parse_type.ident.str()).unwrap();
-                        self.new_full(base_id, parse_type.addr_mode)
+                        AddressedType {
+                            type_id: *self.type_map.get(parse_type.ident.str()).unwrap(),
+                            addr_mode: parse_type.addr_mode,
+                        }
                     }
-                    None => Type::Void,
+                    None => AddressedType { type_id: VOID_ID, addr_mode: AddressingMode::Primitive },
                 };
 
                 self.fn_vec.push(Function {
@@ -392,7 +404,9 @@ impl Checker {
                     scope: None,
                 });
 
-                if self.fn_map.contains_key(fn_ident) {
+
+                let is_overload = self.fn_map.contains_key(fn_ident);
+                if is_overload {
                     self.fn_map.get_mut(fn_ident).unwrap().push(self.fn_vec.len() - 1);
                 } else {
                     self.fn_map.insert(fn_ident.to_string(), vec![self.fn_vec.len() - 1]);
@@ -498,7 +512,7 @@ impl Checker {
             return CompilerResult::Err {data: Some(fn_sem), error}
         }
 
-        if self.ctx.func.return_type != Type::Void {
+        if self.ctx.func.return_type.type_id != 0 { // void
             let scope_returns = match checked_scope.node.stmts.last() {
                 Some(stmt) => Self::check_node_returns(&stmt.node),
                 None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
@@ -517,31 +531,22 @@ impl Checker {
     // Create arg semantics
     // - check for duplicates
     // - check for used names (keywords & other variables)
-    fn create_arg_semantics(&self, args: &[Arg], fn_ident: &str) -> Result<Vec<Type<FullType>>> {
+    fn create_arg_semantics(&self, args: &[Arg], fn_ident: &str) -> Result<Vec<AddressedType>> {
         let mut semantics = Vec::new();
+        let mut semantic_map = HashMap::new();
         for arg in args {
             let arg_ident = arg.ident.str();
 
-            if semantics
-                .iter()
-                .map(|x| self.get_full_ident(x))
-                .find(|x| *x == arg_ident)
-                .is_some()
-            {
-                return err!(
-                    "Duplicate argument name: '{arg_ident}' in function {fn_ident}"
-                );
-            } else if self.stack_var_map.contains_key(arg_ident) {
-                return err!(
-                    "Argument name in use: {arg_ident} in function: {fn_ident}"
-                );
-            } else if self.type_map.contains_key(arg_ident) {
-                return err!(
-                    "Illegal argument name: {arg_ident} in function: {fn_ident}, Types are reserve keywords"
-                );
+            if !self.is_ident_unique(arg_ident) || semantic_map.contains_key(arg_ident) {
+                return err!("Argument's name is already in use, '{arg_ident}' in function {fn_ident}");
             }
-            let base_id = *self.type_map.get(arg.parse_type.ident.str()).unwrap();
-            semantics.push(self.new_full(base_id, arg.parse_type.addr_mode));
+
+            let addr_type = AddressedType {
+                type_id: *self.type_map.get(arg.parse_type.ident.str()).unwrap(),
+                addr_mode: arg.parse_type.addr_mode,
+            };
+            semantic_map.insert(arg_ident.to_string(), addr_type.clone());
+            semantics.push(addr_type);
         }
 
         Ok(semantics)
@@ -550,7 +555,7 @@ impl Checker {
     // iters over all overloads of a function, 
     // checks if the function already exists with the same signature 
     // if it finds a single match it returns its idx, else err.
-    fn check_fn_overloads(&self, semantics: &[Type<FullType>], fn_ident: &str) -> Result<usize> {
+    fn check_fn_overloads(&self, semantics: &[AddressedType], fn_ident: &str) -> Result<usize> {
         let overloads = match self.fn_map.get(fn_ident) {
             Some(overloads) => overloads,
             None => return Ok(0), // no existing overloads, this is the first index.
@@ -614,7 +619,7 @@ impl Checker {
         }   
     }
 
-    fn check_fn_scope(&self, scope: Node<Scope>, semantics: &[Type<FullType>], args: &[Arg]) -> CompilerResult<Node<Scope>>{
+    fn check_fn_scope(&self, scope: Node<Scope>, semantics: &[AddressedType], args: &[Arg]) -> CompilerResult<Node<Scope>>{
         let mut scope_check;
         unsafe {
             let mut_self = self as *const Self as *mut Self;
@@ -689,24 +694,24 @@ impl Checker {
     }
     // endregion
     
-    fn check_type_alias(&mut self, ident_str: &str, parse_type_str: &str) -> Result<()> {
-        debug!("checking type alias: {ident_str}");
+    fn check_type_alias(&mut self, alias_str: &str, parse_type_str: &str) -> Result<()> {
+        debug!("checking type alias: {alias_str}");
 
         // check if its already a type
-        if self.type_map.get(ident_str).is_some() {
-            return err!("Duplicate definition of a Type: '{}'", ident_str);
-        } else if self.stack_var_map.contains_key(ident_str) {
-            return err!("Illegal Type alias, a variable is assigned this name: '{}'", ident_str);
+        if self.type_map.get(alias_str).is_some() {
+            return err!("Duplicate definition of a Type: '{}'", alias_str);
+        } else if self.stack_var_map.contains_key(alias_str) {
+            return err!("Illegal Type alias, a variable is assigned this name: '{}'", alias_str);
         }
 
         let original_id = match self.type_map.get(parse_type_str) {
             Some(id) => *id,
             None => return err!("Type not found: '{}'", parse_type_str),
         };
-        let original_type = self.type_vec.get(original_id).unwrap();
+        let aliased_type = StoredType::Alias { ident: alias_str.to_string(), aliased_id: original_id };
 
-        self.type_vec.push(original_type.clone());
-        self.type_map.insert(ident_str.to_string(), original_id); // points to original.
+        self.type_map.insert(alias_str.to_string(), self.type_vec.len()); 
+        self.type_vec.push(aliased_type);
         
         Ok(())
     }
@@ -723,13 +728,18 @@ impl Checker {
         let mut width = 0;
         let mut members = Vec::with_capacity(fields.len());
         for (i, field) in fields.iter().enumerate() {
-            if self.stack_var_map.contains_key(field.ident.str()) {
-                return err!("Illegal Type alias, a variable is assigned this name: '{}'", field.ident.str());
-            } else if self.type_map.contains_key(field.ident.str()) {
-                return err!("Illegal Type alias, a type is assigned this name: '{}'", field.ident.str());
-            } else if fields.iter().skip(i+1).position(|x| x.ident.str() == field.ident.str()).is_some() {
+            if fields.iter().skip(i+1).position(|x| x.ident.str() == field.ident.str()).is_some() {
                 return err!("Duplicate definition of a Struct field: '{}'", field.ident.str());
             }
+            else if field.ident.str() == ident.str() {
+                match field.parse_type.addr_mode {
+                    AddressingMode::Pointer(_) => (), // not recursive.
+                    _ => return err!("Struct field cannot be the same name as the struct: '{}'", field.ident.str()),
+                }
+            }
+            else if self.type_map.contains_key(field.ident.str()) {
+                return err!("Illegal struct field, a type is assigned this name: '{}'", field.ident.str());
+            } 
 
             let field_type_ident = field.parse_type.ident.str();
             debug!("trying to find field type: {field_type_ident}");
@@ -739,22 +749,24 @@ impl Checker {
             };
             let field_type = self.type_vec.get(field_id).unwrap();
 
-            let field_width = match field_type {
-                Type::Primitive(base) => base.width,
-                Type::Struct { width, .. } => *width,
-                _ => return err!("Invalid type for struct field: '{}'", field_type_ident),
-            };
-            
-            width += field_width;
-            members.push(field_id);
+            width += self.get_width(field_type);
+            members.push(AddressedType {
+                type_id: field_id,
+                addr_mode: field.parse_type.addr_mode,
+            });
         }
 
-        debug!("struct decl looks ok, adding type.. {:#?}", ident);
-        // self.add_type(Type::Struct::<BaseType> {
-        //     ident,
-        //     members,
-        //     width,
-        // });
+        
+        let struct_type = StoredType::Struct {
+            ident: ident.str().to_string(),
+            width,
+            members,
+        };
+        
+        debug!("struct decl looks ok, adding type.. {:#?}", struct_type);
+        
+        self.type_map.insert(ident.str().to_string(), self.type_vec.len());
+        self.type_vec.push(struct_type);
         Ok(())
     }
 
@@ -874,11 +886,15 @@ impl Checker {
                 }
 
                 let base_id = *self.type_map.get(arg.parse_type.ident.str()).unwrap();
-                let var_type = self.new_full(base_id, arg.parse_type.addr_mode);
-                if let Type::Void = var_type {
+                if base_id == VOID_ID {
                     return comp_err!("Cannot declare a variable of type 'void'");
-                }
+                };
 
+                let var_type = AddressedType {
+                    type_id: base_id,
+                    addr_mode: arg.parse_type.addr_mode,
+                };
+                
                 let var = Variable {
                     ident: arg.ident,
                     mutable: arg.mutable,
@@ -889,7 +905,7 @@ impl Checker {
 
                 // insert variable into registry
                 self.stack_var_map
-                    .insert(var.ident.str().to_string(), self.stack_var_vec.len());
+                .insert(var.ident.str().to_string(), self.stack_var_vec.len());
                 self.stack_var_vec.push(var.clone());
 
                 // check assignment expression
@@ -1374,13 +1390,71 @@ impl Checker {
         }
     }
 
+    
+
+    fn get_width(&self, var_type: &StoredType) -> usize {
+        match var_type {
+            StoredType::Primitive{width, ..} => *width,
+            StoredType::Struct { width, .. } => *width,
+            StoredType::Alias { ident, aliased_id } => {
+                let base = self.type_vec.get(*aliased_id).unwrap();
+                self.get_width(base)
+            }
+        }
+    }
+
+    fn is_ident_unique(&self, ident: &str) -> bool {
+        !self.stack_var_map.contains_key(ident) && !self.type_map.contains_key(ident) && !self.fn_map.contains_key(ident)
+    }
+
+    fn get_var(&self, str: &str) -> Result<&Variable> {
+        match self.stack_var_map.get(str) {
+            Some(id) => Ok(self.stack_var_vec.get(*id).unwrap()),
+            None => err!("Variable not found: '{str}'"),
+        }
+    }
+
+    fn create_expr_semantics(&self, var_type: AddressedType) -> ExprSem {
+        match self.type_vec[var_type.type_id] {
+            StoredType::Primitive { width, mode, .. } => ExprSem {
+                form: ExprForm::Compound,
+                type_mode: mode,
+                addr_mode: var_type.addr_mode,
+                width,
+            },
+            StoredType::Struct { width, .. } => ExprSem {
+                form: ExprForm::Compound,
+                type_mode: TypeMode::Int(false),
+                addr_mode: var_type.addr_mode,
+                width,
+            },
+            StoredType::Alias { aliased_id, .. } => {
+                let base = self.type_vec.get(aliased_id).unwrap();
+                self.create_expr_semantics(base)
+            }
+        }
+    }
+
+    fn get_type_mode(&self, var_type: &StoredType) -> TypeMode {
+        match var_type {
+            StoredType::Primitive { mode, .. } => *mode,
+            StoredType::Struct { .. } => TypeMode::Struct,
+            StoredType::Alias { aliased_id, .. } => {
+                let base = self.type_vec.get(*aliased_id).unwrap();
+                self.get_type_mode(&base)
+            }
+        }
+    }
+
+
+    /*
     fn add_type(&mut self, new_type: Type<BaseType>) {
         let ident = match new_type {
             Type::Primitive(BaseType { ref ident, ..}) => ident.clone(),
             Type::Struct { ident, .. } => ident.str().to_owned(),
             Type::Void => return,
         };
-
+f
         self.type_map
             .insert(ident, self.type_vec.len());
         self.type_vec.push(new_type);
@@ -1508,6 +1582,16 @@ impl Checker {
             Type::Struct { .. } => todo!("struct ident calculation"),
         }
     }
+     */
 
     // endregion
 }
+
+fn new_primitive(ident: &str, width: usize, mode: TypeMode) -> StoredType {
+    StoredType::Primitive {
+        ident: ident.to_string(),
+        mode,
+        width,
+    }
+}
+ 
