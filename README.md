@@ -1,12 +1,12 @@
 # Toy Compiler
 
-This is a compiler frontend (own codegen impl coming later!), for a language that i've created.
+This is a compiler frontend (codegen to come later!), for a language that i've created.
 
-## Current TODO
+## Notes/Next Steps
 
-- Add better error chaining, currently root error is returned. it would be nice to chain as I propgate upwards.
+- Currently Implementing: Arrays:
 
-## Core Functionality Required
+### Core Functionality Required
 
 - [x] variables
 - [x] operations: (boolean, logical//bitwise, binary)
@@ -14,13 +14,13 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
 - [x] loops: (while/for)
 - [x] types
 - [x] functions: (recursion << should be free?)
-- [ ] user defined struct
+- [x] user defined struct
 - [ ] array
+- [ ] multiple files. (format like odin, all files in a directory include each other)
 - [ ] llvm codegen
-- [ ] modules (format as odin, all files in a directory include each other)
-- [ ] c interop (akin to odin)
+- [ ] c abi interop
 
-### Implementation List
+#### Implementation List
 
 - [x] if
   - [x] rework lexer to handle multi-symbol keywords (i.e "==" or "<=")
@@ -54,14 +54,14 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
   - [x] unary
     - [x] LogicalNot
     - [x] BitwiseNot
-    - [ ] left hand && right hand unary, e.g &(var) or val_ptr^
+    - [x] left hand && right hand unary, e.g &(var) or val_ptr^
 - [x] dynamically place variables on stack if they are(nt) used immediately.
   - don't push pop every intlit/var, use registers!
 - [ ] Testing infrastructure.
-- [ ] data types
+- [x] data types
   - [x] primitives
   - [x] pointers // get mem location of a val (impl '&')
-  - [ ] structs
+  - [x] structs
   - [ ] arrays // just heap pointers?
 - [x] functions
   - return type
@@ -76,19 +76,8 @@ This is a compiler frontend (own codegen impl coming later!), for a language tha
   - [x] unary minus: i.e -10
   - [x] function call: '()'
   - [ ] array subscript: '[]'
-  - [ ] struct member: '.' | '->'
+  - [x] struct member: '.' | '->'
   - cast: (type)
-
-### Notes/Next Steps
-
-- CompilerResult Issue: Result -> CompilerResult returns 'None' for error. Fix!
-
-  - e.g var = (test = 10); cpp evals assignment to result, rust to unit type  
-  - UNIT TYPE: include one!, zig uses '{}', rust uses: '()' pref rust tbh
-
-  - [ ] ',' commas are not being parsed correctly for fn calls.
-  - [ ] '=' assignment operators directly into
-  - [ ] '()' not sure, but current impl MUST have holes in it.
 
 #### Rust's Parse Levels
 
