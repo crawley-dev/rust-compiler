@@ -20,9 +20,19 @@ fn func_example_3(field1: StructTest, field2: Struct2) -> bool {
         field1: true
     };
 
-    return test_var.field1.field2.field3;
+    return test_var.field1 == true;
 }
+
+fn func_example_4() -> Struct2 {
+    return Struct2 {};
+}
+
+fn func_example_4() -> bool {
+    return true;
+}
+
 /*
+
 fn func_example_n() -> bool {
     let fib: i64 = fibonacci(5);
 
@@ -55,4 +65,3 @@ fn fibonacci(n: i32) -> i32 {
         return fibonacci(n-1) + fibonacci(n-2);
     }
 }
-*/

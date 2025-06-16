@@ -1,69 +1,22 @@
 /* >>SEMANTIC<< The rules of the language, checking the meaning of the program.
- ✅ CLONING:
-     - AST isn't a tree, contiguous "NodeStmt" Unions, some contain boxed data but not much
-     - if everything is a ptr "box", manipulating data MUCH easier, borrow checker not angry at me!
-     - Can't manipulate current AST freely, because it has to be rigid in size, its on the vars!
- ✅ Assignment:
-     - ✅ arith-assign on new var or literal
-     - ✅ re-assign on immutable vars
- ✅ Types:
-     ✅ Operators expect specific types.
-         - "bool PLUS u8" doesn't compile
-         - LogicalAnd: bool, UnaryMinus: signed int
-     ✅ Type Conversions
-         - Implicit: integers being converted to a larger integer, e.g u16 = u8
-         - Explicit: Everything else, using syntax: type_x as type_y
-     ❌ Integer Bounds Checks
-         - requires me to interpret every arith expression? let it be ub for now :)
-     ✅ IntegerLitereal Coercion
-         - its not a concrete type and can be coerced into any integer, after bounds checked.
-     ✅ Pointers
-         - always have usize, not a defined type but an attribute, that modifies byte_size?
-         - kindof its own type (set size), but loose (inherits type's attr)
-         - a ptr is the original type with modified byte_width (4) & ptr flag set.
-     ✅ FORM:
-         - Types have a form, which is the group they fall under, e.g struct or array.
-         - each form has unique behaviour, such as a literal being non-concrete or an array being index-able]
-     ✅ Type impl:
-         - either a primitive or >>FUTURE:<< struct or union
-     ✅ Var impl:
-         - store a "type" + modifications, "form".
-         - e.g its i16, but a pointer! or.. an array!
-     ✅ Structure Revision: Either passing Variable or Literal
-         - Both: TypeMode, AddressingMode, e.g Boolean Array
-         - Var: ptr to the var
-         - Literal: Inherited Width
-         - TypeMode:
-             - What operations can be performed
-             - (OPTIONAL): Sign, if numerical
-         - AddressingMode:
-             - how is it represented in memory, if at all
-             - (OPTIONAL): mutability, if represented in memory
-     ✅ Type Narrowing:
-         - check if the assigned expr is wider than the assignee variable
-     ✅ Type Coersion: (check_assign() IS type coersion, if the 2 types don't  deviate too far, e.g narrowing, addr mode its coerced. TYPES DON'T EXIST!)
-         - Literals can be coerced into a type of same mode and addressing mode
-         - Expressions and Variables are unable to be coerced whatsoever, an explicit cast must take place.
-
- ❌ ExprData Rethink (removal):
-     - Consolidate TypeMode & AddresingMode to ExprForm::Expr
-         - because ExprForm::Var holds a Variable,
-         - Variable has a type (which has a typemode) & addressingmode
-     - Con: lots of indirection faff
-     - TypeForm not accounted for properly!! ExprData needs TypeForm, not type mode !!
-
- ✅ Cpp Style Function overriding:
-     - match function uniqueness based on its "signature" (name + argument types).
-     - e.g func123(int,bool) != func123(int). UNIQUE!
+(1) ❌  - Allow for function overloading on return types?
+            - Do I want this, function overloads prob should just have different args but same purpose.
+            - requries a more robust type checker, must know the desired type ahead, so it can choose the correct overload.
+                , This is because currently it only checks args.
+(2) ❌  - Expand the alias system, to allow for addressed types to be aliased
+            - currently only primitive types, e.g. "int" can be aliased, not "int*" 
+            - required 2 types of alias, 
+                - Primitive Alias: "int" -> "my_int"
+                - Addressed Alias: "int*" -> "my_int_ptr"
 */
 
 use crate::{
-    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, Term}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
+    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, StructField, Term}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
 };
 use anyhow::{Context, Error, Result};
 use educe::Educe;
 use std::{
-    cmp::max, collections::HashMap, convert::Infallible, ptr::NonNull
+    cmp::max, collections::HashMap, convert::Infallible, ops::Add, ptr::NonNull
 };
 
 // region: Type Definitions
@@ -75,25 +28,24 @@ const VOID_ID: usize = 0; // void is a special case, no size
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
     Primitive,
-    Pointer(u32), // stores "depth"
-    Array(u32),   // stores "depth"
-                  // None, // For zero width "marker types", e.g. void
+    Pointer { depth: u32 },
+    Array { depth: u32, len: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum TypeMode {
+pub enum TypeMode {
     Boolean,
-    Int(bool), // sign
+    Int { signed: bool },
     Struct,
     Union,
-    Void,
+    Void, // represents the special case of 'void'.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ExprForm {
-    Variable, // a variable, allows for addr of etc
+pub enum ExprForm {
+    Sized, // a variable, allows for addr of etc
     Compound, // a compound expression, e.g. a + b, doesn't have coercion semantics like a literal
-    Literal, // has some freedoms as its a literal!
+    Literal, // has some sizing freedoms as its a literal (0 size rn)!
 }
 
 // This defines a language primitive type, such as 'i32'
@@ -104,12 +56,18 @@ struct PrimitiveType {
     width: Bytes,
 }
 
-// This is used by statements and expressions,
 // it is a type that has an addressing mode, e.g. an 'i32' that is a 'pointer'
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct AddressedType {
+// This is used by statements and expressions,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AddressedType {
     type_id: usize,
     addr_mode: AddressingMode,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructMember {
+    ident: String,
+    addr_type: AddressedType, // the type of the member, with addressing mode
 }
 
 // These are what is stored globally, in the 'type registry'
@@ -121,74 +79,47 @@ pub enum StoredType {
         mode: TypeMode,
         width: Bytes,
     },
+    // TODO(2): currently this is restricted to stored types,
+    // it cannot represent an addressed type, e.g. a pointer to a struct.
+    // this would require a distinction between an "alias" and "addressed alias".
     Alias {
         ident: String,
-        aliased_id: usize, // TODO(TOM): this can be an addressed type? or a stored type id??
+        aliased_id: usize,
     },
     Struct {
         ident: String,
         width: Bytes,
-        members: Vec<AddressedType>,
+        members: Vec<StructMember>,
     },
 }
-// What I need to store?
-//      - Language primitives, e.g. 'i32'
-//      - Type declarations & type alias'
 
-/* 
-// A base type does not have addresssing mode, e.g. '[]'. Mode is INTRINSIC to a BASE, inherited upwards
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct BasePrimitive {
-    ident: String,
-    mode: TypeMode,
-    width: Bytes,
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct FullType {
-    width: Bytes, // width accounts for the addressing mode
-    type_id: usize,
-    addr_mode: AddressingMode,
-}
-
-// I need to rethink how types work
-// what is a "basetype?"
-// can I associate a 'basetype' with a primitive, struct or union?
-// I'd say NO! the "type" enum MUST represent full types, those that an expression must abide by.
-// "basetypes" are more akin to the language "primitive types"
-// currently, type alias' must correlate to a primitive type, e.g. I cannot alias an int pointer.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Type {
-    Void, // Don't really know how Void ptrs are gonna work.. another variant? do I even want them?
-    BasePrimitive {
-        base_id: usize,
+#[derive(Debug, Clone, Copy)]
+pub enum ExprData<'a> {
+    Primitive {
+        width: Bytes,
     },
-    FullPrimitive(FullType),
+    Pointer {
+        root_type: AddressedType,
+    },
     Struct {
-        struct_type: FullType,
-        member: Vec<FullType>,
+        width: Bytes,
+        members: &'a[StructMember], 
     },
-    // Union {
-    //     members: Vec<T>,
-    //     width: Bytes,
-    // },
 }
-*/
 
 // An expression is evaluated based on:
 // TypeMode: what operations can be performed
 // AddressingMode: how is it represented in memory, if at all
 // Width: to know how big the result should be: MAX(op1.width, op2.width)
-
-// how am I going to get types from these?
-// I need to understand and inherit the types of concrete values
-#[derive(Debug, Clone)]
-struct ExprSem {
+#[derive(Debug, Clone, Copy)]
+struct ExprSem<'a> {
     form: ExprForm,
     type_mode: TypeMode,
     addr_mode: AddressingMode,
-    width: Bytes,
+    expr_data: ExprData<'a>,
 }
+ 
 
 #[derive(Debug, Clone)]
 pub struct Variable {
@@ -235,8 +166,6 @@ pub struct Checker {
 
     #[educe(Debug(ignore))]
     pub type_map: HashMap<String, usize>,
-    
-    #[educe(Debug(ignore))]
     pub type_vec: Vec<StoredType>,
 
     #[educe(Debug(ignore))]
@@ -257,16 +186,16 @@ impl Checker {
         let type_vec = Vec::from([
             new_primitive("void", 0, TypeMode::Void), // void is a special case, no size
             new_primitive("bool", 1, TypeMode::Boolean),
-            new_primitive("u8", 1, TypeMode::Int(false)),
-            new_primitive("u16", 2, TypeMode::Int(false)),
-            new_primitive("u32", 4, TypeMode::Int(false)),
-            new_primitive("u64", 8, TypeMode::Int(false)),
-            new_primitive("usize", PTR, TypeMode::Int(false)),
-            new_primitive("i8", 1, TypeMode::Int(true)),
-            new_primitive("i16", 2, TypeMode::Int(true)),
-            new_primitive("i32", 4, TypeMode::Int(true)),
-            new_primitive("i64", 8, TypeMode::Int(true)),
-            new_primitive("isize", PTR, TypeMode::Int(true)),
+            new_primitive("u8", 1, TypeMode::Int { signed: false }),
+            new_primitive("u16", 2, TypeMode::Int { signed: false }),
+            new_primitive("u32", 4, TypeMode::Int { signed: false }),
+            new_primitive("u64", 8, TypeMode::Int { signed: false }),
+            new_primitive("usize", PTR, TypeMode::Int { signed: false }),
+            new_primitive("i8", 1, TypeMode::Int { signed: true }),
+            new_primitive("i16", 2, TypeMode::Int { signed: true }),
+            new_primitive("i32", 4, TypeMode::Int { signed: true }),
+            new_primitive("i64", 8, TypeMode::Int { signed: true }),
+            new_primitive("isize", PTR, TypeMode::Int { signed: true }),
 
             // Self::new_prim("f32", 4, TypeMode::Int(true)),
             // Self::new_prim("f64", 8, TypeMode::Int(true)),
@@ -376,7 +305,7 @@ impl Checker {
         Logger::set_pos(stmt.start);
 
         // index all the functions and type aliases, so we can call a func later in the file & recurse.
-        debug!("Indexing top level stmt: {stmt:?}");
+        debug!("Indexing top level stmt: {stmt:#?}");
 
         match &stmt.node {
             Stmt::FnDecl { ident, args, scope, return_type } => {
@@ -384,8 +313,6 @@ impl Checker {
                 let semantics = self.create_arg_semantics(&args, fn_ident).with_context(|| "failed to index function arguments")?;
                 let signature = self.create_func_signature(ident.str(), &semantics);
                 
-                self.check_fn_overloads(&semantics, fn_ident).with_context(|| "failed to find a valid overload for this function")?;
-
                 let return_type = match return_type {
                     Some(parse_type) => {
                         AddressedType {
@@ -396,6 +323,9 @@ impl Checker {
                     None => AddressedType { type_id: VOID_ID, addr_mode: AddressingMode::Primitive },
                 };
 
+                self.check_overload_collisions(fn_ident, &semantics, return_type)
+                    .with_context(|| format!("The function overload '{signature}' is not valid"))?;
+
                 self.fn_vec.push(Function {
                     ident: ident.clone(),
                     signature,
@@ -403,7 +333,6 @@ impl Checker {
                     return_type,
                     scope: None,
                 });
-
 
                 let is_overload = self.fn_map.contains_key(fn_ident);
                 if is_overload {
@@ -420,7 +349,6 @@ impl Checker {
             Stmt::StructDecl { ident, fields } => {
                 self.check_struct_decl(*ident, fields)
             }
-                
             _ => err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
@@ -451,7 +379,7 @@ impl Checker {
         // check for name collisions
         let fn_ident = ident.str();
 
-        // checks overloads, first non declared function is this one. (indexed in order)
+        // Functions are indexed in order, so the first non initialised overload is the current one.
         let mut function = None;
         let mut function_index = None;
         let overloads = self.fn_map.get(fn_ident).unwrap();
@@ -463,6 +391,7 @@ impl Checker {
 
             debug!("Checking overload: '{}'", overload.signature);
 
+            // this overload isn't initialised, so its the current overload.
             if overload.scope.is_none() {
                 function = Some(overload);
                 function_index = Some(*overload_idx);
@@ -480,7 +409,9 @@ impl Checker {
         self.ctx.func.return_type = function.return_type.clone();
         
         // Create lambda for custom scope check
-        println!("{}", text_to_ascii_art::to_art(function.signature.clone(), "small", 2, 0, 0).unwrap());
+        let func_name = function.signature.split('(').next().unwrap().to_string();
+        let func_args = function.signature.split(')').skip(1).next().unwrap_or("");;
+        println!("{}\n{func_args}\n", text_to_ascii_art::to_art(func_name, "small", 2, 0, 0).unwrap());
         
         // Does not error here, so I can construct 'fn_sem', to then error with that information.
         let (checked_scope, func_body_error) = match self.check_fn_scope(scope, &function.args, &args) {
@@ -512,7 +443,7 @@ impl Checker {
             return CompilerResult::Err {data: Some(fn_sem), error}
         }
 
-        if self.ctx.func.return_type.type_id != 0 { // void
+        if self.ctx.func.return_type.type_id != VOID_ID {
             let scope_returns = match checked_scope.node.stmts.last() {
                 Some(stmt) => Self::check_node_returns(&stmt.node),
                 None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
@@ -555,16 +486,24 @@ impl Checker {
     // iters over all overloads of a function, 
     // checks if the function already exists with the same signature 
     // if it finds a single match it returns its idx, else err.
-    fn check_fn_overloads(&self, semantics: &[AddressedType], fn_ident: &str) -> Result<usize> {
+    fn check_overload_collisions(&self, fn_ident: &str, semantics: &[AddressedType], return_type: AddressedType) -> Result<usize> {
         let overloads = match self.fn_map.get(fn_ident) {
             Some(overloads) => overloads,
-            None => return Ok(0), // no existing overloads, this is the first index.
+            None => {
+                debug!("no instances of this function found, returning 0");
+                return Ok(0)}, // this is a new function, its all good!
         };
+        
+        let original_decl = self.fn_vec.get(overloads[0]).unwrap();
 
         let mut matching = None;
-
         for overload in overloads {
             let overload = self.fn_vec.get(*overload).unwrap();
+
+            if (return_type != original_decl.return_type) {
+                return err!("All overloads of Function '{fn_ident}' must have the same return type");
+            }
+
             if overload.args.len() != semantics.len() {
                 continue;
             }
@@ -583,7 +522,7 @@ impl Checker {
 
         match matching {
             Some(overload) => Ok(overload),
-            None => Ok(0) // no existing overloads, this is the first appearance of this function
+            None => Ok(0) // no matching overloads, this is unique!
         }
     }
 
@@ -733,7 +672,7 @@ impl Checker {
             }
             else if field.ident.str() == ident.str() {
                 match field.parse_type.addr_mode {
-                    AddressingMode::Pointer(_) => (), // not recursive.
+                    AddressingMode::Pointer { .. } => (), // not recursive.
                     _ => return err!("Struct field cannot be the same name as the struct: '{}'", field.ident.str()),
                 }
             }
@@ -750,9 +689,12 @@ impl Checker {
             let field_type = self.type_vec.get(field_id).unwrap();
 
             width += self.get_width(field_type);
-            members.push(AddressedType {
-                type_id: field_id,
-                addr_mode: field.parse_type.addr_mode,
+            members.push(StructMember {
+                ident: field.ident.str().to_string(),
+                addr_type: AddressedType {
+                    type_id: field_id,
+                    addr_mode: field.parse_type.addr_mode,
+                }
             });
         }
 
@@ -872,7 +814,7 @@ impl Checker {
 
     fn check_stmt(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
         Logger::set_pos(stmt.start);
-        print!("\n");
+        print!("\n\n");
         debug!("checking {stmt:#?}");
         
         match stmt.node {
@@ -910,7 +852,7 @@ impl Checker {
 
                 // check assignment expression
                 if let InitExpr::Some(ref expr) = var.init_expr {
-                    let expected = self.get_type_sem(&var.var_type);
+                    let expected = self.create_expr_semantics(var.var_type)?;
                     let init_expr = self.check_expr(expr)?;
 
                     debug!("init expr for '{}'\n{init_expr:#?}", var.ident.str());
@@ -929,7 +871,7 @@ impl Checker {
             } => {
                 let var = self.get_var(ident.str())?;
 
-                let expected = self.get_type_sem(&var.var_type);
+                let expected = self.create_expr_semantics(var.var_type)?;
                 let assign_rhs = self.check_expr(expr)?;
                 self.check_type_equivalence(&expected, &assign_rhs)?;
 
@@ -1042,14 +984,14 @@ impl Checker {
                 // Void return check
                 let expr = match expr {
                     Some(expr) => expr,
-                    None if self.ctx.func.return_type == Type::Void => return CompilerResult::Ok(stmt),
+                    None if self.ctx.func.return_type.type_id == VOID_ID => return CompilerResult::Ok(stmt),
                     None => {
                         return comp_err!((stmt), "Mismatched '{}' return, expected '{:#?}', found =>\n'void'", self.ctx.func.signature, self.ctx.func.return_type);
                     }
                 };
 
                 let proposed_return_sem = self.check_expr(expr)?;
-                let expected_return_sem = self.get_type_sem(&self.ctx.func.return_type);
+                let expected_return_sem = self.create_expr_semantics(self.ctx.func.return_type)?;
 
                 self.check_type_equivalence(&expected_return_sem, &proposed_return_sem)?;
                 
@@ -1073,161 +1015,206 @@ impl Checker {
         }
     }
 
+    // region: check expr
     fn check_expr(&self, expr: &Node<Expr>) -> Result<ExprSem> {
         match &expr.node {
             Expr::Term(term) => self.check_term(term, expr.start, expr.end),
             Expr::Binary { op, lhs, rhs } => {
-                let lhs_checked = self.check_expr(lhs)?;
-                let rhs_checked = self.check_expr(rhs)?;
-                
-                let resultant_form = self.check_type_equivalence(&lhs_checked, &rhs_checked)?;
-
-                match resultant_form.addr_mode {
-                    AddressingMode::Array(_) => {
-                        err!(
-                            "[ARRAY] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
-                        )
-                    }
-                    AddressingMode::Pointer(_) => {
-                        err!(
-                            "[POINTER] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
-                        )
-                    }
-                    // TODO:(TOM) this need to be changed, 
-                    AddressingMode::Primitive => {
-                        // 'CMP'   => T, T       => bool
-                        // 'LOG'   => bool, bool => bool
-                        // 'Arith' => int, int   => int
-                        match op {
-                            _ if op.has_flags_binary(TokenFlags::CMP) => {
-                                Ok(ExprSem {
-                                    form: resultant_form.form,
-                                    type_mode: TypeMode::Boolean,
-                                    addr_mode: AddressingMode::Primitive,
-                                    width: 1,
-                                })
-                            }
-
-                            _ if op.has_flags_binary(TokenFlags::LOG) => {
-                                match resultant_form.type_mode { 
-                                    TypeMode::Boolean => { 
-                                        Ok(ExprSem {
-                                            form: resultant_form.form,
-                                            type_mode: TypeMode::Boolean,
-                                            addr_mode: AddressingMode::Primitive,
-                                            width: 1,
-                                        })
-                                    }
-                                    _ => err!("[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
-                                }
-                            }
-
-                            _ if op.has_flags_binary(TokenFlags::ARITH) => {
-                                match resultant_form.type_mode {
-                                    TypeMode::Int(_) => Ok(ExprSem {
-                                        form: resultant_form.form,
-                                        type_mode: resultant_form.type_mode,
-                                        addr_mode: AddressingMode::Primitive,
-                                        width: resultant_form.width,
-                                    }),
-                                    _ => err!("[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
-                                }
-                            }
-                            
-                            _ if op.has_flags_binary(TokenFlags::BIT) => {
-                                match resultant_form.type_mode {
-                                    TypeMode::Int(_) => Ok(ExprSem {
-                                        form: resultant_form.form,
-                                        type_mode: resultant_form.type_mode,
-                                        addr_mode: AddressingMode::Primitive,
-                                        width: resultant_form.width,
-                                    }),
-                                    _ => err!("[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
-                                }
-                            }
-
-                            _ => err!("[PRIMITIVE] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
-                        }
+                match op {
+                    TokenKind::Dot => self.check_expr_dot(*op, lhs, rhs),
+                    _ => {
+                        self.check_expr_unified_binary(*op, lhs, rhs)
                     }
                 }
             }
-            // unary operators tend to be very unqiue, so they are individually matched.
+            // unary operators tend to be very unique, so they are individually matched.
             Expr::Unary { op, expr } => {
-                let checked = self.check_expr(&*expr)?;
-                
-                // 'Unary sub' signed int or lit => signed int literal
-                // 'Cmp Not'   bool              => bool
-                // 'Bit Not'   primitive         => primitive
-                // 'Addr of'   var               => ptr
-                // 'Ptr Deref' ptr               => var
-                match checked.addr_mode {
-                    AddressingMode::Array(_) => {
-                        err!("[ARRAY] Invalid Unary Expression: {op:?}\n{checked:#?}")
+                self.check_expr_unary(*op, expr)
+            }
+        }
+    }
+
+    fn check_expr_dot(&self, op: TokenKind, lhs: &Box<Node<Expr>>, rhs: &Box<Node<Expr>>) -> Result<ExprSem> {
+        let lhs_ident = Contents::get_src_oneline(lhs.start, lhs.end);
+        let lhs_checked = self.check_expr(lhs)?;
+
+        if lhs_checked.type_mode != TypeMode::Struct {
+            return err!(
+                "[STRUCT] '{lhs_ident}' is not a struct, it does not have member fields to access.\n{lhs_checked:#?}..\n{rhs:#?}\n"
+            );
+        }
+
+        // Either another expr, or an ident, that MUST be a member of the structure.
+        let accessed_member_sem = match &rhs.node {
+            Expr::Term(Term::Ident) => {
+                let struct_members = match lhs_checked.expr_data {
+                    ExprData::Struct { members, .. } => members,
+                    _ => return err!("Expected struct data in ExprSem for dot access, found\n{lhs_checked:#?}"),
+                };
+
+                let rhs_ident = Contents::get_src_oneline(rhs.start, rhs.end);
+                match struct_members.iter().find(|m| m.ident == rhs_ident) {
+                    Some(member) =>  {
+                        self.create_expr_semantics(member.addr_type)?
+                    },
+                    _ => return err!("'{lhs_ident}' does not have a member named '{rhs_ident}'"),
+                }
+            }
+            _ => self.check_expr(rhs)?,
+        };
+
+        Ok(accessed_member_sem)
+    }
+
+    fn check_expr_unified_binary(&self, op: TokenKind, lhs: &Box<Node<Expr>>, rhs: &Box<Node<Expr>>) -> Result<ExprSem> {
+        let lhs = self.check_expr(lhs)?;
+        let rhs = self.check_expr(rhs)?;
+        let agreed_type = self.check_type_equivalence(&lhs, &rhs)?;
+        match agreed_type.addr_mode {
+            AddressingMode::Array { .. } => {
+                err!(
+                    "[ARRAY] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                )
+            }
+            AddressingMode::Pointer{ .. } => {
+                err!(
+                    "[POINTER] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                )
+            }
+            AddressingMode::Primitive => {
+                // 'CMP'   => T, T       => bool
+                // 'LOG'   => bool, bool => bool
+                // 'Arith' => int, int   => int
+                match op {
+                    _ if op.has_flags_binary(TokenFlags::CMP) => {
+                        Ok(ExprSem {
+                            form: ExprForm::Sized,
+                            type_mode: TypeMode::Boolean,
+                            addr_mode: AddressingMode::Primitive,
+                            expr_data: ExprData::Primitive { width: 1 }
+                        })
                     }
-                    AddressingMode::Pointer(depth) => {
-                        match op {
-                            // deref address into a variable.
-                            TokenKind::Ptr if depth == 1 => {
+
+                    _ if op.has_flags_binary(TokenFlags::LOG) => {
+                        match agreed_type.type_mode { 
+                            TypeMode::Boolean => { 
                                 Ok(ExprSem {
-                                    form: ExprForm::Variable,
-                                    type_mode: checked.type_mode,
+                                    form: agreed_type.form,
+                                    type_mode: TypeMode::Boolean,
                                     addr_mode: AddressingMode::Primitive,
-                                    // calculate width of type it was pointing to, e.g. bool == 1.
-                                    // because currently checked.width == 8 (ptr)
-                                    // not ideal, should have this information saved?
-                                    width: match checked.type_mode {
-                                        TypeMode::Boolean => 1,
-                                        TypeMode::Int(_) => 8, // will be shrunk to match caller.
-                                        _ => todo!("struct/union width calculation for type"),
-                                    },
+                                    expr_data: ExprData::Primitive { width: 1 },
                                 })
                             }
-                            TokenKind::Ptr => {
-                                Ok(ExprSem {
-                                    form: ExprForm::Variable,
-                                    type_mode: checked.type_mode,
-                                    addr_mode: AddressingMode::Pointer(depth - 1),
-                                    width: checked.width,
-                                })
-                            }
-                            _ => err!(
-                                "[POINTER] Invalid Unary Expression: {op:?}..\n{checked:#?}"
-                            ),
+                            _ => err!("[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
                     }
-                    AddressingMode::Primitive => {
-                        match op {
-                            TokenKind::Sub => match checked.type_mode {
-                                TypeMode::Int(true) => Ok(checked),
-                                TypeMode::Int(false) if checked.form == ExprForm::Literal => Ok(ExprSem {
-                                    form: checked.form,
-                                    type_mode: TypeMode::Int(true),
-                                    addr_mode: AddressingMode::Primitive,
-                                    width: checked.width,
-                                }),
-                                _ => err!("[PRIMITIVE] 'UnarySub' expects a signed integer, found {checked:#?}")
-                            }
-                           
-                            TokenKind::Not => match checked.type_mode {
-                                TypeMode::Boolean | TypeMode::Int(_) => Ok(checked),
-                                _ => err!("[PRIMITIVE] 'Not' expects a boolean or integer, found {checked:#?}")
-                            }
 
-                            TokenKind::Ampersand if checked.form != ExprForm::Variable => err!("[PRIMITIVE] 'AddressOf' expects a variable, found {checked:#?}"),
-                            TokenKind::Ampersand => Ok(ExprSem {
-                                form: ExprForm::Compound,
-                                type_mode: checked.type_mode,
-                                addr_mode: AddressingMode::Pointer(1),
-                                width: PTR,
+                    _ if op.has_flags_binary(TokenFlags::ARITH) => {
+                        match agreed_type.type_mode {
+                            TypeMode::Int { .. } => Ok(ExprSem {
+                                form: ExprForm::Sized,
+                                type_mode: agreed_type.type_mode,
+                                addr_mode: AddressingMode::Primitive,
+                                expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
                             }),
-
-                            _ => err!("[PRIMITIVE] Invalid Unary Expression: {op:?}..\n{checked:#?}"),
+                            _ => err!("[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
                     }
+                    
+                    _ if op.has_flags_binary(TokenFlags::BIT) => {
+                        match agreed_type.type_mode {
+                            TypeMode::Int { .. } => Ok(ExprSem {
+                                addr_mode: AddressingMode::Primitive,
+                                form: ExprForm::Sized,
+                                type_mode: agreed_type.type_mode,
+                                expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
+                            }),
+                            _ => err!("[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                        }
+                    }
+
+                    _ => err!("[PRIMITIVE] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
                 }
             }
         }
     }
+
+    fn check_expr_unary(&self, op: TokenKind, expr: &Node<Expr>) -> Result<ExprSem> {
+        let checked = self.check_expr(&*expr)?;
+        // 'Unary sub' signed int or lit => signed int literal
+        // 'Cmp Not'   bool              => bool
+        // 'Bit Not'   primitive         => primitive
+        // 'Addr of'   var               => ptr
+        // 'Ptr Deref' ptr               => var
+        match checked.addr_mode {
+            AddressingMode::Array{ .. } => {
+                err!("[ARRAY] Invalid Unary Expression: {op:?}\n{checked:#?}")
+            }
+            AddressingMode::Pointer{ depth } => {
+                match op {
+                    // deref address into a variable.
+                    TokenKind::Ptr if depth == 1 => {
+                        match checked.expr_data {
+                            ExprData::Pointer { root_type } => {
+                                let stored_type = self.type_vec.get(root_type.type_id).unwrap();
+                                let mut expr_semantics = self.create_expr_semantics(root_type)?;
+
+                                expr_semantics.form = ExprForm::Sized;
+                                Ok(expr_semantics)
+                            }
+                            _ => err!("[POINTER] 'Ptr Deref' expects a pointer, found {checked:#?}"),
+                        }
+                    }
+                    TokenKind::Ptr => {
+                        Ok(ExprSem{
+                            form: ExprForm::Sized,
+                            addr_mode: AddressingMode::Pointer { depth: depth - 1 },
+                            .. checked
+                        })
+                    }
+                    _ => err!(
+                        "[POINTER] Invalid Unary Expression: {op:?}..\n{checked:#?}"
+                    ),
+                }
+            }
+            AddressingMode::Primitive => {
+                match op {
+                    TokenKind::Sub => match checked.type_mode {
+                        TypeMode::Int{signed: true} => Ok(checked),
+                        TypeMode::Int{signed:false} if checked.form == ExprForm::Literal => {
+                            Ok(ExprSem {
+                                type_mode: TypeMode::Int{ signed: true },
+                                addr_mode: AddressingMode::Primitive,
+                                .. checked
+                            })
+                        }
+                        _ => err!("[PRIMITIVE] 'UnarySub' expects a signed integer, found {checked:#?}")
+                    }
+                    
+                    TokenKind::Not => match checked.type_mode {
+                        TypeMode::Boolean | TypeMode::Int{ .. } => Ok(checked),
+                        _ => err!("[PRIMITIVE] 'Not' expects a boolean or integer, found {checked:#?}")
+                    }
+
+                    TokenKind::Ampersand if checked.form != ExprForm::Sized => err!("[PRIMITIVE] 'AddressOf' expects a variable, found {checked:#?}"),
+                    TokenKind::Ampersand => Ok(ExprSem {
+                            form: ExprForm::Compound,
+                            type_mode: checked.type_mode,
+                            addr_mode: AddressingMode::Pointer { depth: 1 },
+                            expr_data: ExprData::Pointer {
+                                // THIS NEEDS TO BE THE TYPE AFTER DEREF
+                                root_type: AddressedType {
+                                    type_id: 1,
+                                    addr_mode: todo!()
+                                },
+                            },
+                        }),
+                    _ => err!("[PRIMITIVE] Invalid Unary Expression: {op:?}..\n{checked:#?}"),
+                }
+            }
+        }
+    }
+    // endregion: check expr
 
     fn check_term(&self, term: &Term, start: Pos, end: Pos) -> Result<ExprSem> {
         Logger::set_pos(start);
@@ -1237,36 +1224,29 @@ impl Checker {
                 form: ExprForm::Literal,
                 type_mode: TypeMode::Boolean,
                 addr_mode: AddressingMode::Primitive,
-                width: 1,
+                expr_data: ExprData::Primitive { width: 1 },
             }),
             Term::Ident => {
                 let var = self.get_var(&Contents::get_src_oneline(start, end))?;
-                let addr_mode = match &var.var_type {
-                    Type::Void => return err!("Cannot use the void type in expression"),
-                    Type::Primitive(full_type) => full_type.addr_mode,
-                    Type::Struct {
-                        ident,
-                        members,
-                        width,
-                    } => todo!("struct semantics"),
-                };
-
-                Ok(ExprSem {
-                    form: ExprForm::Variable,
-                    addr_mode,
-                    type_mode: self.get_full_mode(&var.var_type),
-                    width: self.get_full_width(&var.var_type),
-                })
+                self.create_expr_semantics(var.var_type)
             }
             Term::IntLit => {
                 Ok(ExprSem {
                     form: ExprForm::Literal,
-                    type_mode: TypeMode::Int(false),
+                    type_mode: TypeMode::Int{ signed: false },
                     addr_mode: AddressingMode::Primitive,
-                    width: 0,
+                    expr_data: ExprData::Primitive { width: 0 },
                 })
             }
-            Term::StructLit { ident, fields } => todo!(""),
+            Term::StructLit { ident, fields } => {
+                let expr_data = self.check_struct_literal(ident, fields)?;
+                Ok(ExprSem {
+                    form: ExprForm::Literal,
+                    addr_mode: AddressingMode::Primitive,
+                    type_mode: TypeMode::Struct,
+                    expr_data,
+                })
+            },
             Term::FnCall { ident, args } => {
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {
@@ -1289,7 +1269,7 @@ impl Checker {
 
                     let mut matches_overload = true;
                     for (arg, arg_sem) in func.args.iter().zip(sem_args.iter()) {
-                        let expected = self.get_type_sem(arg);
+                        let expected = self.create_expr_semantics(*arg)?;
                         if self.check_type_equivalence(&expected, arg_sem).is_err() {
                             matches_overload = false;
                             break;
@@ -1306,18 +1286,19 @@ impl Checker {
                 }
 
                 let func_semantics = self.fn_vec.get(matched_overload as usize).unwrap();
+                let stored_type = self.type_vec.get(func_semantics.return_type.type_id).unwrap();
 
                 Ok(ExprSem {
                     form: ExprForm::Compound,
-                    type_mode: self.get_full_mode(&func_semantics.return_type),
-                    addr_mode: self.get_full_addrmode(&func_semantics.return_type),
-                    width: self.get_full_width(&func_semantics.return_type),
+                    addr_mode: func_semantics.return_type.addr_mode,
+                    type_mode: self.get_type_mode(stored_type),
+                    expr_data: ExprData::Primitive { width: self.get_width(stored_type) },
                 })
             }
         }
     }
 
-    fn check_type_equivalence(&self, a: &ExprSem, b: &ExprSem) -> Result<ExprSem> {
+    fn check_type_equivalence<'a>(&'a self, a: &'a ExprSem, b: &'a ExprSem) -> Result<ExprSem<'a>> {
         if a.addr_mode != b.addr_mode {
             return err!(
                 "Expr of different AddrMode! {a:?} vs {b:?}, {a:#?}\n.. {b:#?}",
@@ -1329,20 +1310,44 @@ impl Checker {
         // the expression involves a literal e.g. 5 == var_name_here;
         // literals have no defined width yet, so we assume the width of the other thing.
         let literal_expr = a.form == ExprForm::Literal || b.form == ExprForm::Literal;
-
-        // cannot assign something bigger than the 'container'
-        if !literal_expr && a.width < b.width {
-            return err!(
-                "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
-                a.width,
-                b.width
-            );
+        match (&a.expr_data, &b.expr_data) {
+            _ if literal_expr => (),
+            // cannot assign something bigger than the 'container'
+            (ExprData::Primitive { width: a_width }, ExprData::Primitive { width: b_width }) if a_width < b_width => {
+                return err!(
+                    "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
+                    a_width,
+                    b_width
+                );
+            },
+            _ => (),
         }
 
         match (a.type_mode, b.type_mode) {
-            (TypeMode::Boolean, TypeMode::Boolean) => (),
-            (TypeMode::Int(_), TypeMode::Int(_)) if literal_expr => (),
-            (TypeMode::Int(a_sign), TypeMode::Int(b_sign)) if a_sign == b_sign => (),
+            (TypeMode::Int{ .. }, TypeMode::Int{..}) if literal_expr => (),
+            (TypeMode::Int{ signed: a_sign}, TypeMode::Int{ signed: b_sign }) if a_sign == b_sign => (),
+            (TypeMode::Struct, TypeMode::Struct) => {
+                // check that members are equal. 
+                debug!("Checking Struct equivalence: {a:#?} vs {b:#?}");
+                match (&a.expr_data, &b.expr_data) {
+                    (ExprData::Struct { members: a_members, width: a_width }, ExprData::Struct { members: b_members, width: b_width }) if a_members.len() == b_members.len() && a_width == b_width => {
+                        for (a_member, b_member) in a_members.iter().zip(b_members.iter()) {
+                            let a_member_sem = self.create_expr_semantics(a_member.addr_type)?;
+                            let b_member_sem = self.create_expr_semantics(b_member.addr_type)?;
+
+                            if self.check_type_equivalence(&a_member_sem, &b_member_sem).is_err() {
+                                return err!(
+                                    "Struct members mismatch: {a_member:#?} != {b_member:#?}\n{a:#?}\n.. {b:#?}",
+                                    a = a,
+                                    b = b
+                                );
+                            }
+                        }
+                    },
+                    _ => return err!("Struct data mismatch: {a:#?} != {b:#?}"),
+                }
+            },
+            _ if a.type_mode == b.type_mode => (),
             _ => {
                 return err!(
                     "TypeMode mismatch: {:?} != {:?} ..\n{a:#?}\n.. {b:#?}",
@@ -1359,19 +1364,60 @@ impl Checker {
             ExprForm::Compound
         };
 
+
         let expr_sem = ExprSem {
             form,
-            addr_mode: a.addr_mode,
-            type_mode: a.type_mode,
-            width: max(a.width, b.width),
+            .. *a
         };
         debug!("New: {expr_sem:#?}");
         Ok(expr_sem)
     }
 
     // region: Small_Components
+    fn check_struct_literal(
+        &self,
+        ident: &Token,
+        fields: &[StructField],
+    ) -> Result<ExprData> {
+        let struct_id = match self.type_map.get(ident.str()) {
+            Some(id) => *id,
+            None => return err!("Struct type not found: '{}'", ident.str()),
+        };
+        let stored_type = self.type_vec.get(struct_id).unwrap();
+        match stored_type {
+            StoredType::Struct { members, width, ident } => {
+                if members.len() != fields.len() {
+                    return err!(
+                        "Struct literal field count mismatch, expected {} fields, found {}",
+                        members.len(),
+                        fields.len()
+                    );
+                }
 
-    fn create_func_signature(&self, ident: &str, args_semantics: &[Type<FullType>]) -> String {
+                // Check that all the field names are correct.
+                for (i, (addr_type,struct_field)) in members.iter().zip(fields.iter()).enumerate() {
+                    if struct_field.ident.str() != addr_type.ident {
+                        return err!(
+                            "Struct literal field name mismatch at index {i}, expected '{}', found '{}'",
+                            struct_field.ident.str(),
+                            ident,
+                        );
+                    }
+                    
+                    // check that the expression given to each field is of the correct type.
+                    let field_type = self.type_vec.get(addr_type.addr_type.type_id).unwrap();
+                    let field_sem = self.create_expr_semantics(addr_type.addr_type)?;
+                    let field_expr = self.check_expr(&struct_field.expr)?;
+                    self.check_type_equivalence(&field_sem, &field_expr)?;
+                }
+               
+                Ok(ExprData::Struct { members: members.as_slice(), width: *width })
+            }
+            _ => err!("Expected a struct type, found '{stored_type:?}'"),
+        }
+    }
+
+    fn create_func_signature(&self, ident: &str, args_semantics: &[AddressedType]) -> String {
         match ident {
             "main" => "main".to_owned(), // NOTE(TOM): main is a special case, no overloading
             name @ _ => {
@@ -1379,7 +1425,27 @@ impl Checker {
                 str += name;
                 str += "(";
                 for (i, arg) in args_semantics.iter().enumerate() {
-                    str += self.get_full_ident(arg);
+                    let stored_type = self.type_vec.get(arg.type_id).unwrap();
+                    let var_ident = match stored_type {
+                        StoredType::Primitive { ident, .. } => ident.as_str(),
+                        StoredType::Struct { ident, .. } => ident.as_str(),
+                        StoredType::Alias { ident, .. } => ident.as_str(),
+                    };
+                    match arg.addr_mode {
+                        AddressingMode::Primitive => {
+                        }
+                        AddressingMode::Pointer { depth } => {
+                            for _ in 0..depth {
+                                str += "^";
+                            }
+                        }
+                        AddressingMode::Array { depth, len } => {
+                            for _ in 0..depth {
+                                str += "[]";
+                            }
+                        }
+                    }
+                    str += var_ident;
                     str += ",";
                 }
                 if !args_semantics.is_empty() {
@@ -1390,105 +1456,50 @@ impl Checker {
         }
     }
 
-    
-
-    fn get_width(&self, var_type: &StoredType) -> usize {
-        match var_type {
-            StoredType::Primitive{width, ..} => *width,
-            StoredType::Struct { width, .. } => *width,
-            StoredType::Alias { ident, aliased_id } => {
+    fn create_expr_semantics(&self, var_type: AddressedType) -> Result<ExprSem> {
+        match self.type_vec.get(var_type.type_id) {
+            Some(StoredType::Primitive { ident, mode, width: stored_width }) => {
+                let width = match var_type.addr_mode {
+                    AddressingMode::Pointer { .. } => PTR,
+                    _ => *stored_width,
+                };
+                Ok(ExprSem {
+                    form: ExprForm::Compound,
+                    type_mode: *mode,
+                    addr_mode: var_type.addr_mode,
+                    expr_data: ExprData::Primitive { width },
+                })
+            },
+            Some(StoredType::Struct { ident, width: stored_width, members }) => {
+                let width = match var_type.addr_mode {
+                    AddressingMode::Pointer { .. } => PTR,
+                    _ => *stored_width,
+                };
+                Ok(ExprSem {
+                    form: ExprForm::Compound,
+                    type_mode: TypeMode::Struct,
+                    addr_mode: var_type.addr_mode,
+                    expr_data: ExprData::Struct {
+                        members: members.as_slice(),
+                        width,
+                    },
+                })
+            }
+            Some(StoredType::Alias { aliased_id, .. }) => {
                 let base = self.type_vec.get(*aliased_id).unwrap();
-                self.get_width(base)
+                self.create_expr_semantics(AddressedType {
+                    type_id: *aliased_id,
+                    addr_mode: var_type.addr_mode,
+                })
+            }
+            None => {
+                err!("Type not found for AddressedType: {var_type:?}")
             }
         }
     }
 
     fn is_ident_unique(&self, ident: &str) -> bool {
         !self.stack_var_map.contains_key(ident) && !self.type_map.contains_key(ident) && !self.fn_map.contains_key(ident)
-    }
-
-    fn get_var(&self, str: &str) -> Result<&Variable> {
-        match self.stack_var_map.get(str) {
-            Some(id) => Ok(self.stack_var_vec.get(*id).unwrap()),
-            None => err!("Variable not found: '{str}'"),
-        }
-    }
-
-    fn create_expr_semantics(&self, var_type: AddressedType) -> ExprSem {
-        match self.type_vec[var_type.type_id] {
-            StoredType::Primitive { width, mode, .. } => ExprSem {
-                form: ExprForm::Compound,
-                type_mode: mode,
-                addr_mode: var_type.addr_mode,
-                width,
-            },
-            StoredType::Struct { width, .. } => ExprSem {
-                form: ExprForm::Compound,
-                type_mode: TypeMode::Int(false),
-                addr_mode: var_type.addr_mode,
-                width,
-            },
-            StoredType::Alias { aliased_id, .. } => {
-                let base = self.type_vec.get(aliased_id).unwrap();
-                self.create_expr_semantics(base)
-            }
-        }
-    }
-
-    fn get_type_mode(&self, var_type: &StoredType) -> TypeMode {
-        match var_type {
-            StoredType::Primitive { mode, .. } => *mode,
-            StoredType::Struct { .. } => TypeMode::Struct,
-            StoredType::Alias { aliased_id, .. } => {
-                let base = self.type_vec.get(*aliased_id).unwrap();
-                self.get_type_mode(&base)
-            }
-        }
-    }
-
-
-    /*
-    fn add_type(&mut self, new_type: Type<BaseType>) {
-        let ident = match new_type {
-            Type::Primitive(BaseType { ref ident, ..}) => ident.clone(),
-            Type::Struct { ident, .. } => ident.str().to_owned(),
-            Type::Void => return,
-        };
-f
-        self.type_map
-            .insert(ident, self.type_vec.len());
-        self.type_vec.push(new_type);
-    }
-
-    fn new_nonnull(&self, reference: &Variable) -> Result<NonNull<Variable>> {
-        match NonNull::new(reference as *const Variable as *mut Variable) {
-            Some(ptr) => Ok(ptr),
-            None => err!(
-                "Found nullptr when creating 'ExprData'\n{reference:#?}"
-            ),
-        }
-    }
-
-    fn new_prim(ident: &str, width: usize, mode: TypeMode) -> Type<BaseType> {
-        Type::Primitive(BaseType {
-            ident: ident.to_string(),
-            mode,
-            width,
-        })
-    }
-    
-    // idea: take a base type, create a full type using the base id, attach an addressing mode.
-    fn new_full(&self, base_id: usize, addr_mode: AddressingMode) -> Type<FullType> {
-        let base = self.type_vec.get(base_id).unwrap();
-        match base {
-            Type::Void => Type::Void,
-            Type::Primitive(base) => Type::Primitive(FullType {
-                width: base.width,
-                type_id: base_id,
-                addr_mode,
-            }),
-            Type::Struct { ident, members, width } => Type::Struct {},
-        }
     }
 
     fn get_var(&self, str: &str) -> Result<&Variable> {
@@ -1505,85 +1516,35 @@ f
         }
     }
 
-    fn get_full_ident(&self, inp_type: &Type<FullType>) -> &str {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(full) => {
-                let base = self.type_vec.get(full.type_id).unwrap();
-                Self::get_base_ident(base)
+    fn get_type_mode(&self, var_type: &StoredType) -> TypeMode {
+        match var_type {
+            StoredType::Primitive { mode, .. } => *mode,
+            StoredType::Struct { .. } => TypeMode::Struct,
+            StoredType::Alias { aliased_id, .. } => {
+                let base = self.type_vec.get(*aliased_id).unwrap();
+                self.get_type_mode(&base)
             }
-            Type::Struct { .. } => todo!("struct ident calculation"),
         }
     }
 
-    fn get_full_mode(&self, inp_type: &Type<FullType>) -> TypeMode {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(full) => {
-                let base = self.type_vec.get(full.type_id).unwrap();
-                Self::get_base_mode(base)
+    fn get_width(&self, var_type: &StoredType) -> usize {
+        match var_type {
+            StoredType::Primitive{width, ..} => *width,
+            StoredType::Struct { width, .. } => *width,
+            StoredType::Alias { ident, aliased_id } => {
+                let base = self.type_vec.get(*aliased_id).unwrap();
+                self.get_width(base)
             }
-            Type::Struct { .. } => todo!("struct mode calculation"),
         }
     }
 
-    fn get_full_width(&self, inp_type: &Type<FullType>) -> usize {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(full) => {
-                match full.addr_mode {
-                    AddressingMode::Primitive => full.width,
-                    AddressingMode::Pointer(_) => PTR,
-                    AddressingMode::Array(_) => todo!("array width calculation"),
-                }
-            }
-            Type::Struct { .. } => todo!("struct width calculation"),
+    fn get_expr_width(&self, expr_sem: &ExprSem) -> usize {
+        match expr_sem.expr_data {
+            ExprData::Primitive { width } => width,
+            ExprData::Struct { width, .. } => width,
+            ExprData::Pointer { root_type } => PTR,
         }
     }
-
-    fn get_full_addrmode(&self, inp_type: &Type<FullType>) -> AddressingMode {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(full) => full.addr_mode,
-            Type::Struct { .. } => todo!("struct addr_mode calculation"),
-        }
-    }
-
-    fn get_type_sem(&self, var_type: &Type<FullType>) -> ExprSem {
-        ExprSem {
-            form: ExprForm::Compound,
-            type_mode: self.get_full_mode(var_type),
-            addr_mode: self.get_full_addrmode(var_type),
-            width: self.get_full_width(var_type),
-        }
-    }
-
-     // base type width depends solely on form
-     fn get_base_width(inp_type: &Type<BaseType>) -> usize {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(base) => base.width,
-            Type::Struct { .. } => todo!("struct width calculation"),
-        }
-    }
-
-    fn get_base_mode(inp_type: &Type<BaseType>) -> TypeMode {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(base) => base.mode,
-            Type::Struct { .. } => todo!("struct mode calculation"),
-        }
-    }
-
-    fn get_base_ident(inp_type: &Type<BaseType>) -> &str {
-        match inp_type {
-            Type::Void => todo!("void semantics"),
-            Type::Primitive(base) => base.ident.as_str(),
-            Type::Struct { .. } => todo!("struct ident calculation"),
-        }
-    }
-     */
-
     // endregion
 }
 
@@ -1594,4 +1555,3 @@ fn new_primitive(ident: &str, width: usize, mode: TypeMode) -> StoredType {
         width,
     }
 }
- 

@@ -27,7 +27,7 @@ where
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, true, true, false],
+    print_logs: [false, false, true, false],
     print_output: [false, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
@@ -56,6 +56,12 @@ pub struct Logger {
 impl Logger {
     pub fn set_short_fmt(state: bool) {
         unsafe {
+            SHORT_NODE_PRINT = false;
+            return;
+
+            if SHORT_NODE_PRINT == state {
+                return;
+            }
             println!("changing short node print to {state}");
             SHORT_NODE_PRINT = state;
         }
@@ -63,7 +69,7 @@ impl Logger {
 
     pub fn add_pos(delta: Pos) {
         if Logger::print_logs() {
-            println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
+            // println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
         }
 
         unsafe {
@@ -74,7 +80,7 @@ impl Logger {
 
     pub fn sub_pos(delta: Pos) {
         if Logger::print_logs() {
-            println!("{:?} - {delta:?}", unsafe { LOGGER.file_pos });
+            // println!("{:?} - {delta:?}", unsafe { LOGGER.file_pos });
         }
 
         unsafe {
@@ -85,7 +91,7 @@ impl Logger {
 
     pub fn set_pos(new_pos: Pos) {
         if Logger::print_logs() {
-            println!("{:?} -> {new_pos:?}", unsafe { LOGGER.file_pos });
+            // println!("{:?} -> {new_pos:?}", unsafe { LOGGER.file_pos });
         }
 
         unsafe {
@@ -164,6 +170,32 @@ impl Logger {
                             .unwrap()
                     )
                 }
+            }
+        }
+    }
+
+    pub fn toggle_logs(state: bool) {
+        unsafe {
+            if (LOGGER.print_logs[LOGGER.current_prefix as usize] == state) {
+                println!(
+                    "[COMPILER] Logs already {} for {}",
+                    if state { "enabled" } else { "disabled" },
+                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
+                );
+                return;
+            }
+
+            LOGGER.print_logs[LOGGER.current_prefix as usize] = state;
+            if state {
+                println!(
+                    "[COMPILER] Logs enabled for {}",
+                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
+                );
+            } else {
+                println!(
+                    "[COMPILER] Logs disabled for {}",
+                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
+                );
             }
         }
     }
@@ -306,11 +338,11 @@ impl Contents {
         assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
 
         let file_name = args.split('.').take(1).collect::<String>();
-        // TODO(TOM): re-enable after testing
-        // let extension = args.split('.').skip(1).take(1).ylect::<String>();
-        // else if extension != "txt" {
-        //     panic!("[COMPILER] Invalid file extension, '.txt' only\n")
-        // }
+        let extension = args.split('.').last().unwrap_or("");
+        if extension != "txt" {
+            panic!("[COMPILER] Invalid file extension, '.txt' only\n");
+        }
+
         file_name
     }
 
@@ -371,7 +403,7 @@ impl Pos {
     IDEA:
         - the error state optionally carries the data up until the error occurred,
         - Very useful for recursive parsing (My entire compiler), as otherwise i would know the func, no more.
-        - Specifically, xxx_top_level() and xxx_scope() functions, gives me all stmts up until the failure, not what container.
+        - Specifically, xxx_top_level() and xxx_scope() functions, gives me all stmts up until the failure, not what container they are in!
 
     NOTES:
         - The Residual is the data
@@ -467,37 +499,6 @@ impl<T> FromResidual<Result<(), anyhow::Error>> for CompilerResult<T> {
         }
     }
 }
-
-// We can't implement anyhow::Context for CompilerResult because it's a sealed trait.
-// Instead, we can implement our own context method if needed.
-// impl<T> CompilerResult<T> {
-//     pub fn context<M>(self, msg: M) -> Self
-//     where
-//         M: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
-//     {
-//         match self {
-//             CompilerResult::Ok(_) => self,
-//             CompilerResult::Err { data, error } => CompilerResult::Err {
-//                 data,
-//                 error: error.context(msg),
-//             },
-//         }
-//     }
-
-//     pub fn with_context<M, F>(self, f: F) -> Self
-//     where
-//         M: std::fmt::Display + std::marker::Sync + std::marker::Send + 'static,
-//         F: FnOnce() -> T,
-//     {
-//         match self {
-//             CompilerResult::Ok(_) => self,
-//             CompilerResult::Err { data, error } => CompilerResult::Err {
-//                 data: Some(f()),
-//                 error: error.context(f()),
-//             },
-//         }
-//     }
-// }
 
 #[macro_export]
 macro_rules! comp_err {

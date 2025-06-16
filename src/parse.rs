@@ -608,12 +608,13 @@ impl Parser {
                 op.has_flags_unary(TokenFlags::LHS),
             );
 
-            let is_valid_unary = un_prec >= 0 && !op.has_flags_unary(TokenFlags::LHS);
             // if unary is the only valid operator, and its lhs. its not valid here, so lets return a nice error msg.
-            if bin_prec < 0 && is_valid_unary {
-                return err!("{op:?} is a lhs unary operator, cannot be used here.");
-            } else if is_valid_unary {
-                // LHS unary operators are caught in parse_term(), can only allow rhs operators, e.g. ptr deref.
+            if bin_prec < 0 && op.has_flags_unary(TokenFlags::LHS) {
+                return err!("{op:?} is a unary operator for the left, it cannot be used to the right of an expression.\n{lhs:#?}");
+            }
+
+            // Found a RHS unary operator, e.g. deref pointer.
+            if un_prec >= 0 && !op.has_flags_unary(TokenFlags::LHS) {
                 let op_token = self.consume();
                 lhs = Node {
                     start: lhs.start,
@@ -634,14 +635,17 @@ impl Parser {
             }
 
             let next_prec = match op.get_associativity(false) {
+                // the op to the right is the first item, so will have the lowest precedence, so lower the prec.
                 Associativity::Right => bin_prec,
-                Associativity::Left => bin_prec + 1,
+                Associativity::Left => bin_prec + 1, // make this bigger, not right smaller. so its a left leaning tree.
             };
 
             let op = self.consume().kind;
+
             let rhs = self
                 .parse_expr(next_prec)
                 .with_context(|| "failed to parse rhs of the expression")?;
+
             lhs = Node {
                 start: lhs.start,
                 end: rhs.end,
@@ -688,7 +692,10 @@ impl Parser {
             TokenKind::Ident => {
                 match self.peek(0) {
                     // Function Calls
-                    Some(next) if next.kind == TokenKind::OpenParen => {
+                    Some(Token {
+                        kind: TokenKind::OpenParen,
+                        ..
+                    }) => {
                         self.expect(TokenKind::OpenParen)?;
 
                         let mut args = Vec::new();
@@ -710,7 +717,10 @@ impl Parser {
                         })
                     }
                     // Struct Literals
-                    Some(next) if next.kind == TokenKind::OpenBrace => {
+                    Some(Token {
+                        kind: TokenKind::OpenBrace,
+                        ..
+                    }) => {
                         self.expect(TokenKind::OpenBrace)?;
 
                         let mut fields = Vec::new();
@@ -737,30 +747,6 @@ impl Parser {
                             node: Expr::Term(Term::StructLit { ident: tok, fields }),
                         })
                     }
-                    // // Struct field access
-                    // Some(next) if next.kind == TokenKind::Dot => {
-                    //     self.expect(TokenKind::Dot)?;
-                    //     let field = self.expect(TokenKind::Ident)?;
-                    //     // Ok(Node {
-                    //     //     start: tok.start,
-                    //     //     end: expr.end,
-                    //     //     node: Expr::Binary {
-                    //     //         op: TokenKind::Dot,
-                    //     //         lhs: Box::new(Node {
-                    //     //             start: tok.start,
-                    //     //             end: tok.end_pos(),
-                    //     //             node: Expr::Term(Term::Ident),
-                    //     //         }),
-                    //     //         rhs: Box::new(expr),
-                    //     //     },
-                    //     // })
-                    //     Ok(Node{
-                    //         start: tok.start,
-                    //         end: field.end_pos(),
-                    //         node: Expr::Term(Term::)
-                    //     })
-                    // }
-                    // Just an Ident, nothing special afterwards to indicate otherwise.
                     Some(_) => Ok(Node {
                         start: tok.start,
                         end: tok.end_pos(),
@@ -795,13 +781,16 @@ impl Parser {
                 while self.expect(TokenKind::Ptr).is_ok() {
                     depth += 1;
                 }
-                AddressingMode::Pointer(depth)
+                AddressingMode::Pointer { depth }
             }
             Some(tok) if tok.kind == TokenKind::Array => {
                 while self.expect(TokenKind::Array).is_ok() {
                     depth += 1;
                 }
-                AddressingMode::Array(depth)
+                AddressingMode::Array {
+                    depth,
+                    len: todo!(),
+                }
             }
             Some(_) => AddressingMode::Primitive,
             None => return err!("No token to parse"),
