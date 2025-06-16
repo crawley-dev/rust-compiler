@@ -20,10 +20,9 @@ use std::{
 };
 
 // region: Type Definitions
-
 pub type Bytes = usize;
 const PTR: Bytes = 8;
-const VOID_ID: usize = 0; // void is a special case, no size
+const VOID_ID: usize = 0; // void is a special case, its not properly incorporated.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
@@ -1022,15 +1021,11 @@ impl Checker {
             Expr::Binary { op, lhs, rhs } => {
                 match op {
                     TokenKind::Dot => self.check_expr_dot(*op, lhs, rhs),
-                    _ => {
-                        self.check_expr_unified_binary(*op, lhs, rhs)
-                    }
+                    _ => self.check_expr_unified_binary(*op, lhs, rhs)
                 }
             }
             // unary operators tend to be very unique, so they are individually matched.
-            Expr::Unary { op, expr } => {
-                self.check_expr_unary(*op, expr)
-            }
+            Expr::Unary { op, expr } => self.check_expr_unary(*op, expr)
         }
     }
 
@@ -1286,14 +1281,8 @@ impl Checker {
                 }
 
                 let func_semantics = self.fn_vec.get(matched_overload as usize).unwrap();
-                let stored_type = self.type_vec.get(func_semantics.return_type.type_id).unwrap();
-
-                Ok(ExprSem {
-                    form: ExprForm::Compound,
-                    addr_mode: func_semantics.return_type.addr_mode,
-                    type_mode: self.get_type_mode(stored_type),
-                    expr_data: ExprData::Primitive { width: self.get_width(stored_type) },
-                })
+             
+                self.create_expr_semantics(func_semantics.return_type)
             }
         }
     }
