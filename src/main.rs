@@ -59,7 +59,7 @@ fn main() {
 
     let lexer = lex(Contents::get_contents_ref());
     let ast = parse(lexer.tokens);
-    // let checker = semantic_check(ast);
+    let checker = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 

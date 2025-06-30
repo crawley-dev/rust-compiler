@@ -30,7 +30,7 @@ where
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, true, true, false],
+    print_logs: [false, false, true, false],
     print_output: [false, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
@@ -210,7 +210,7 @@ macro_rules! debug {
         if crate::utils::Logger::print_logs() {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-            println!("[y:{y_padding}{}, x:{x_padding}{}] {}",
+            println!("\n[y:{y_padding}{}, x:{x_padding}{}] {}",
             pos.y + 1,
             pos.x + 1,
                 format!($msg)
@@ -222,7 +222,7 @@ macro_rules! debug {
             let pos = crate::utils::Logger::get_pos();
             let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
             println!(
-                "[y:{y_padding}{}, x:{x_padding}{}] {}",
+                "\n[y:{y_padding}{}, x:{x_padding}{}] {}",
                 pos.y + 1,
                 pos.x + 1,
                 format!($fmt, $($arg)+)

@@ -11,11 +11,7 @@
 */
 
 use crate::{
-    comp_err, debug, err, upgrade_err, upgrade_result, 
-    formatting::{self, PosAwareDebug}, 
-    lexer::{Token, TokenFlags, TokenKind}, 
-    parser::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, StructField, Term, parse_type::ParseType}, 
-    utils::{self, CompilerResult, Contents, Logger, Pos}
+    comp_err, debug, err, formatting::{self, PosAwareDebug}, lexer::{Token, TokenFlags, TokenKind}, parser::{parse_type::ParseType, Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, StructField, Term, DEFAULT_DEPTH}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
 };
 use anyhow::{Context, Error, Result};
 use educe::Educe;
@@ -31,8 +27,8 @@ const VOID_ID: usize = 0; // void is a special case, its not properly incorporat
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
     Primitive,
-    Pointer { depth: u32 },
-    Array { depth: u32, len: usize },
+    Pointer { depth: usize }, // TODO(TOM): do I need to store pointer depth -- is it actually useful?
+    Array { depth: usize, len: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -458,7 +454,6 @@ impl Checker {
         let mut_function = self.fn_vec.get_mut(function_index).unwrap();
         mut_function.scope = Some(checked_scope);
 
-        println!();
         debug!("Function '{}' checked successfully", mut_function.signature);
         CompilerResult::Ok(fn_sem)
     }
@@ -835,7 +830,7 @@ impl Checker {
                 if base_id == VOID_ID {
                     return comp_err!("Cannot declare a variable of type 'void'");
                 };
-
+                
                 let var_type = AddressedType {
                     type_id: base_id,
                     addr_mode: arg.parse_type.addr_mode,
@@ -851,7 +846,7 @@ impl Checker {
 
                 // insert variable into registry
                 self.stack_var_map
-                .insert(var.ident.str().to_string(), self.stack_var_vec.len());
+                    .insert(var.ident.str().to_string(), self.stack_var_vec.len());
                 self.stack_var_vec.push(var.clone());
 
                 // check assignment expression
@@ -859,8 +854,7 @@ impl Checker {
                     let expected = self.create_expr_semantics(var.var_type)?;
                     let init_expr = self.check_expr(expr)?;
 
-                    debug!("init expr for '{}'\n{init_expr:#?}", var.ident.str());
-
+                    debug!("init expr for '{}'\nexpected: {expected:#?}\ngiven expr: {init_expr:#?}", var.ident.str());
 
                     if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
                         return comp_err!((Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var.clone())}), "Invalid init expr for variable {}\n{error}", var.ident);
@@ -1247,7 +1241,36 @@ impl Checker {
                     expr_data,
                 })
             },
-            Term::ArrayLit { elements, len } => todo!("impl array lit check term"),
+            Term::ArrayLit { elements } => {
+                if elements.len() == 0 {
+                    return err!("Empty array literals are not allowed");
+                }
+
+                let mut sem_elements = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    if !sem_elements.is_empty() {
+                        self.check_type_equivalence(sem_elements.first().unwrap(), sem_elements.last().unwrap())
+                        .with_context(|| "Elements in an array literal must of the same type.");
+                    }
+
+                    sem_elements.push(self.check_expr(elem)?);
+                }
+
+                let width = sem_elements.iter().map(|x| self.get_expr_width(x)).sum();
+                let mut depth = self.get_expr_depth(sem_elements.first().unwrap());
+                if depth != DEFAULT_DEPTH {
+                    depth += 1; // if its a nested array, increase those numbers! 
+                }
+
+                debug!("array lit depth: {depth}, width: {width}");
+
+                Ok(ExprSem {
+                    form: ExprForm::Literal,
+                    addr_mode: AddressingMode::Array { len: sem_elements.len(), depth },
+                    type_mode: sem_elements.first().unwrap().type_mode,
+                    expr_data: ExprData::Primitive { width },
+                })
+            },
             Term::FnCall { ident, args } => {
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {
@@ -1296,7 +1319,7 @@ impl Checker {
     fn check_type_equivalence<'a>(&'a self, a: &'a ExprSem, b: &'a ExprSem) -> Result<ExprSem<'a>> {
         if a.addr_mode != b.addr_mode {
             return err!(
-                "Expr of different AddrMode! {a:?} vs {b:?}, {a:#?}\n.. {b:#?}",
+                "Expr of different Addressing Mode! {a:?} vs {b:?}, \n{a:#?}\nvs\n{b:#?}",
                 a = a.addr_mode,
                 b = b.addr_mode
             );
@@ -1359,12 +1382,11 @@ impl Checker {
             ExprForm::Compound
         };
 
-
         let expr_sem = ExprSem {
             form,
             .. *a
         };
-        debug!("New: {expr_sem:#?}");
+        // debug!("New: {expr_sem:#?}");
         Ok(expr_sem)
     }
 
@@ -1455,8 +1477,9 @@ impl Checker {
         match self.type_vec.get(var_type.type_id) {
             Some(StoredType::Primitive { ident, mode, width: stored_width }) => {
                 let width = match var_type.addr_mode {
+                    AddressingMode::Primitive => *stored_width,
                     AddressingMode::Pointer { .. } => PTR,
-                    _ => *stored_width,
+                    AddressingMode::Array { len, .. } => *stored_width * len,
                 };
                 Ok(ExprSem {
                     form: ExprForm::Compound,
@@ -1467,8 +1490,9 @@ impl Checker {
             },
             Some(StoredType::Struct { ident, width: stored_width, members }) => {
                 let width = match var_type.addr_mode {
+                    AddressingMode::Primitive => *stored_width,
                     AddressingMode::Pointer { .. } => PTR,
-                    _ => *stored_width,
+                    AddressingMode::Array { len, .. } => *stored_width * len,
                 };
                 Ok(ExprSem {
                     form: ExprForm::Compound,
@@ -1538,6 +1562,14 @@ impl Checker {
             ExprData::Primitive { width } => width,
             ExprData::Struct { width, .. } => width,
             ExprData::Pointer { root_type } => PTR,
+        }
+    }
+
+    fn get_expr_depth(&self, expr_sem: &ExprSem) -> usize {
+        match expr_sem.addr_mode {
+            AddressingMode::Primitive => DEFAULT_DEPTH,
+            AddressingMode::Pointer { depth } => depth,
+            AddressingMode::Array { depth, .. } => depth,
         }
     }
     // endregion

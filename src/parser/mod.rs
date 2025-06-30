@@ -13,6 +13,8 @@ use core::fmt;
 use educe::Educe;
 use std::{collections::VecDeque, convert::Infallible, fmt::Formatter};
 
+pub const DEFAULT_DEPTH: usize = 1;
+
 // region: Type Definitions
 #[derive(Debug, Clone)]
 pub enum InitExpr {
@@ -46,7 +48,6 @@ pub enum Term {
     },
     ArrayLit {
         elements: Vec<Node<Expr>>,
-        len: usize,
     },
     FnCall {
         ident: Token,
@@ -192,7 +193,7 @@ impl Parser {
         // parse function return type
         let return_type = match self.expect(TokenKind::Arrow) {
             Ok(_) => Some(
-                self.parse_type_param()
+                self.parse_type()
                     .with_context(|| "faield to parse function return type")?,
             ),
             Err(_) => None,
@@ -233,7 +234,7 @@ impl Parser {
             let ident = self.expect(TokenKind::Ident)?;
             self.expect(TokenKind::Colon)?;
             let parse_type = self
-                .parse_type_param()
+                .parse_type()
                 .with_context(|| "failed to parse type for function argument")?;
 
             args.push(Arg {
@@ -254,7 +255,7 @@ impl Parser {
         self.expect(TokenKind::Eq)?;
 
         let parse_type = self
-            .parse_type_param()
+            .parse_type()
             .with_context(|| "failed to parse type for type alias")?;
 
         // expect a semicolon to end the type alias statement.
@@ -285,7 +286,7 @@ impl Parser {
             let ident = self.expect(TokenKind::Ident)?;
             self.expect(TokenKind::Colon)?;
             let parse_type = self
-                .parse_type_param()
+                .parse_type()
                 .with_context(|| "failed to parse type for struct field")?;
 
             fields.push(Arg {
@@ -361,7 +362,6 @@ impl Parser {
     fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
         let kind = match self.peek(0) {
             Some(tok) => {
-                println!("\n");
                 debug!("parsing statement: {tok:?}");
                 tok.kind
             } // cannot consume here,
@@ -494,7 +494,7 @@ impl Parser {
         let ident = self.expect(TokenKind::Ident)?;
 
         self.expect(TokenKind::Colon)?;
-        let parse_type = self.parse_type_param()?;
+        let parse_type = self.parse_type()?;
 
         let init_expr = match self.expect(TokenKind::Eq) {
             Ok(_) => InitExpr::Some(self.parse_expr(0)?),
@@ -585,7 +585,6 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
-        println!();
         debug!("parsing expression with min_prec: {min_prec}");
         let mut lhs = self
             .parse_term()
@@ -707,10 +706,7 @@ impl Parser {
                 Ok(Node {
                     start: tok.start,
                     end: self.expect(TokenKind::CloseBracket)?.end_pos(),
-                    node: Expr::Term(Term::ArrayLit {
-                        len: elements.len(),
-                        elements,
-                    }),
+                    node: Expr::Term(Term::ArrayLit { elements }),
                 })
             }
             TokenKind::Ident => {
@@ -798,8 +794,8 @@ impl Parser {
         }
     }
 
-    fn parse_type_param(&mut self) -> Result<ParseType> {
-        self.internal_parse_type_param(0)
+    fn parse_type(&mut self) -> Result<ParseType> {
+        self.internal_parse_type(DEFAULT_DEPTH)
             .with_context(|| "failed to parse type parameter")
     }
 
@@ -807,13 +803,13 @@ impl Parser {
     // - this can be for a function argument, return type or a variable declaration.
     // - the type will be one of: primitive, pointer, array.
     // - the type can be nested, e.g. `ptr ptr array[5] ident`
-    fn internal_parse_type_param(&mut self, depth: u32) -> Result<ParseType> {
+    fn internal_parse_type(&mut self, depth: usize) -> Result<ParseType> {
         let mut inner_type = None;
         let addr_mode = match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Ptr => {
                 self.consume(); // consume the ptr token
                 inner_type = Some(InnerType::Nested {
-                    inner: Box::new(self.internal_parse_type_param(depth + 1)?),
+                    inner: Box::new(self.internal_parse_type(depth + 1)?),
                 });
 
                 AddressingMode::Pointer { depth }
@@ -821,7 +817,7 @@ impl Parser {
             Some(tok) if tok.kind == TokenKind::OpenBracket => {
                 self.consume(); // consume the array open token
                 inner_type = Some(InnerType::Nested {
-                    inner: Box::new(self.internal_parse_type_param(depth + 1)?),
+                    inner: Box::new(self.internal_parse_type(depth + 1)?),
                 });
 
                 self.expect(TokenKind::SemiColon)

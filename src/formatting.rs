@@ -280,11 +280,10 @@ impl PosAwareDebug for Term {
                 .field("ident", ident)
                 .field("fields", fields)
                 .finish(),
-            Term::ArrayLit { elements, len } => f
+            Term::ArrayLit { elements } => f
                 .debug_struct(&variant_name)
                 .field("pos", &format_args!("{pos}"))
                 .field("elements", elements)
-                .field("len", len)
                 .finish(),
             Term::FnCall { ident, args } => f
                 .debug_struct(&variant_name)
