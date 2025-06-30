@@ -11,7 +11,11 @@
 */
 
 use crate::{
-    comp_err, debug, err, formatting::{self, PosAwareDebug}, lex::{Token, TokenFlags, TokenKind}, parse::{Arg, Ast, Expr, InitExpr, Node, ParseType, Scope, Stmt, StructField, Term}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
+    comp_err, debug, err, upgrade_err, upgrade_result, 
+    formatting::{self, PosAwareDebug}, 
+    lexer::{Token, TokenFlags, TokenKind}, 
+    parser::{Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, StructField, Term, parse_type::ParseType}, 
+    utils::{self, CompilerResult, Contents, Logger, Pos}
 };
 use anyhow::{Context, Error, Result};
 use educe::Educe;
@@ -22,7 +26,7 @@ use std::{
 // region: Type Definitions
 pub type Bytes = usize;
 const PTR: Bytes = 8;
-const VOID_ID: usize = 0; // void is a special case, its not properly incorporated.
+const VOID_ID: usize = 0; // void is a special case, its not properly incorporated, like rust's '()'
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AddressingMode {
@@ -37,7 +41,7 @@ pub enum TypeMode {
     Int { signed: bool },
     Struct,
     Union,
-    Void, // represents the special case of 'void'.
+    Void,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -315,7 +319,7 @@ impl Checker {
                 let return_type = match return_type {
                     Some(parse_type) => {
                         AddressedType {
-                            type_id: *self.type_map.get(parse_type.ident.str()).unwrap(),
+                            type_id: *self.type_map.get(parse_type.get_ident().str()).unwrap(),
                             addr_mode: parse_type.addr_mode,
                         }
                     }
@@ -343,10 +347,10 @@ impl Checker {
                 Ok(())
             }  
             Stmt::TypeAlias { ident, parse_type } => {
-                self.check_type_alias(ident.str(), parse_type.ident.str())
+                self.index_type_alias(ident.str(), parse_type.get_ident().str())
             }, 
             Stmt::StructDecl { ident, fields } => {
-                self.check_struct_decl(*ident, fields)
+                self.index_struct_decl(*ident, fields)
             }
             _ => err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
@@ -366,6 +370,7 @@ impl Checker {
                     CompilerResult::Ok(data) => CompilerResult::Ok(Some(data)),
                     CompilerResult::Err { data, error } => CompilerResult::Err { data: Some(data), error }}
             },
+            // These have already been indexed, so we just return None.
             Stmt::TypeAlias { .. } | Stmt::StructDecl { .. } => CompilerResult::Ok(None),
             _ => comp_err!(
                 "A Program only consists of Top-Level Statements, this is a {stmt:?}"
@@ -472,7 +477,7 @@ impl Checker {
             }
 
             let addr_type = AddressedType {
-                type_id: *self.type_map.get(arg.parse_type.ident.str()).unwrap(),
+                type_id: *self.type_map.get(arg.parse_type.get_ident().str()).unwrap(),
                 addr_mode: arg.parse_type.addr_mode,
             };
             semantic_map.insert(arg_ident.to_string(), addr_type.clone());
@@ -571,7 +576,7 @@ impl Checker {
                     for (arg_type, parse) in semantics.iter().zip(args.iter()) {
                         let arg_stmt = Node {
                             start: parse.ident.start,
-                            end: parse.parse_type.ident.end_pos(),
+                            end: parse.parse_type.get_ident().end_pos(),
                             node: Stmt::VarDecl {
                                 init_expr: InitExpr::None,
                                 arg: Arg {
@@ -632,7 +637,7 @@ impl Checker {
     }
     // endregion
     
-    fn check_type_alias(&mut self, alias_str: &str, parse_type_str: &str) -> Result<()> {
+    fn index_type_alias(&mut self, alias_str: &str, parse_type_str: &str) -> Result<()> {
         debug!("checking type alias: {alias_str}");
 
         // check if its already a type
@@ -654,7 +659,7 @@ impl Checker {
         Ok(())
     }
 
-    fn check_struct_decl(&mut self, ident: Token, fields: &[Arg]) -> Result<()> {
+    fn index_struct_decl(&mut self, ident: Token, fields: &[Arg]) -> Result<()> {
 
         debug!("checking struct decl: {ident:#?}");
 
@@ -679,7 +684,7 @@ impl Checker {
                 return err!("Illegal struct field, a type is assigned this name: '{}'", field.ident.str());
             } 
 
-            let field_type_ident = field.parse_type.ident.str();
+            let field_type_ident = field.parse_type.get_ident().str();
             debug!("trying to find field type: {field_type_ident}");
             let field_id = match self.type_map.get(field_type_ident) {
                 Some(id) => *id,
@@ -826,7 +831,7 @@ impl Checker {
                     return comp_err!("Illegal Variable name, Types are reserved: '{str}'");
                 }
 
-                let base_id = *self.type_map.get(arg.parse_type.ident.str()).unwrap();
+                let base_id = *self.type_map.get(arg.parse_type.get_ident().str()).unwrap();
                 if base_id == VOID_ID {
                     return comp_err!("Cannot declare a variable of type 'void'");
                 };

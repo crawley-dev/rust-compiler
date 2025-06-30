@@ -1,7 +1,10 @@
+pub mod parse_type;
+use parse_type::*;
+
 use crate::{
+    checker::{AddressingMode, Variable},
     comp_err, debug, err,
-    lex::{Associativity, Token, TokenFlags, TokenKind},
-    semantic::{AddressingMode, Variable},
+    lexer::{Associativity, Token, TokenFlags, TokenKind},
     upgrade_err, upgrade_result,
     utils::{self, pos, CompilerResult, Contents, Logger, Pos},
 };
@@ -18,13 +21,7 @@ pub enum InitExpr {
     Deferred, // trust me bro, it exists.
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ParseType {
-    pub ident: Token,
-    pub addr_mode: AddressingMode,
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Arg {
     pub ident: Token,
     pub mutable: bool,
@@ -256,11 +253,12 @@ impl Parser {
             .parse_type_param()
             .with_context(|| "failed to parse type for type alias")?;
 
+        // expect a semicolon to end the type alias statement.
         self.expect(TokenKind::SemiColon)?;
 
         CompilerResult::Ok(Node {
             start: type_keyword.start,
-            end: parse_type.ident.end_pos(),
+            end: parse_type.get_ident().end_pos(),
             node: Stmt::TypeAlias {
                 ident: new_type,
                 parse_type,
@@ -501,7 +499,7 @@ impl Parser {
 
         let end = match init_expr {
             InitExpr::Some(ref expr) => expr.end,
-            _ => parse_type.ident.end_pos(),
+            _ => parse_type.get_ident().end_pos(),
         };
 
         Ok(Node {
@@ -775,29 +773,71 @@ impl Parser {
     }
 
     fn parse_type_param(&mut self) -> Result<ParseType> {
-        let mut depth: u32 = 0;
+        self.internal_parse_type_param(0)
+            .with_context(|| "failed to parse type parameter")
+    }
+
+    // this function will attempt to parse a type parameter.
+    // - this can be for a function argument, return type or a variable declaration.
+    // - the type will be one of: primitive, pointer, array.
+    // - the type can be nested, e.g. `ptr ptr array[5] ident`
+    fn internal_parse_type_param(&mut self, depth: u32) -> Result<ParseType> {
+        let mut inner_type = None;
         let addr_mode = match self.peek(0) {
             Some(tok) if tok.kind == TokenKind::Ptr => {
-                while self.expect(TokenKind::Ptr).is_ok() {
-                    depth += 1;
-                }
+                self.consume(); // consume the ptr token
+                inner_type = Some(InnerType::Nested {
+                    inner: Box::new(self.internal_parse_type_param(depth + 1)?),
+                });
+
                 AddressingMode::Pointer { depth }
             }
-            Some(tok) if tok.kind == TokenKind::Array => {
-                while self.expect(TokenKind::Array).is_ok() {
-                    depth += 1;
-                }
-                AddressingMode::Array {
-                    depth,
-                    len: todo!(),
-                }
+            Some(tok) if tok.kind == TokenKind::ArrayOpen => {
+                self.consume(); // consume the array open token
+                inner_type = Some(InnerType::Nested {
+                    inner: Box::new(self.internal_parse_type_param(depth + 1)?),
+                });
+
+                self.expect(TokenKind::SemiColon)
+                    .with_context(|| "Expected ';' after array type")?;
+
+                let len = match self.peek(0) {
+                    Some(tok) if tok.kind == TokenKind::IntLit => {
+                        let len_tok = self.consume(); // consume the int literal token
+                        len_tok.str().parse::<usize>().with_context(|| {
+                            "Invalid array length, expected a valid integer literal"
+                        })?
+                    }
+                    _ => {
+                        return err!(
+                            "Expected an integer literal for array length, found {:?}",
+                            self.peek(0)
+                        )
+                    }
+                };
+
+                self.expect(TokenKind::ArrayClose)
+                    .with_context(|| "Expected ']' to close array type")?;
+
+                AddressingMode::Array { depth, len }
             }
-            Some(_) => AddressingMode::Primitive,
+            Some(tok) if tok.kind == TokenKind::Ident => {
+                inner_type = Some(InnerType::Primitive {
+                    ident: self.consume(),
+                });
+
+                AddressingMode::Primitive
+            }
+
             None => return err!("No token to parse"),
+            _ => return err!("Invalid type parameter, expected 'ptr', 'array', or 'ident'"),
         };
 
-        let ident = self.expect(TokenKind::Ident)?;
-        Ok(ParseType { ident, addr_mode })
+        Ok(ParseType {
+            inner_type: inner_type
+                .with_context(|| "failed to parse inner type, its none for some reason??")?,
+            addr_mode,
+        })
     }
 
     // region: little ones

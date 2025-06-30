@@ -6,7 +6,10 @@ use std::{
     ops::{ControlFlow, FromResidual, Try},
 };
 
-use crate::{formatting::SHORT_NODE_PRINT, Node, Scope, Stmt};
+use crate::{
+    formatting::SHORT_NODE_PRINT,
+    parser::{Node, Scope, Stmt},
+};
 
 pub fn count_digits<T>(mut n: T) -> T
 where

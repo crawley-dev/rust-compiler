@@ -23,14 +23,14 @@ use std::{
 mod utils;
 use utils::{count_digits, pos, Contents, LogPrefix, Logger, Pos};
 
-mod lex;
-use lex::*;
+mod lexer;
+use lexer::*;
 
-mod parse;
-use parse::*;
+mod parser;
+use parser::*;
 
-mod semantic;
-use semantic::*;
+mod checker;
+use checker::*;
 
 // mod code_gen;
 // use code_gen::Generator;
@@ -59,7 +59,7 @@ fn main() {
 
     let lexer = lex(Contents::get_contents_ref());
     let ast = parse(lexer.tokens);
-    let checker = semantic_check(ast);
+    // let checker = semantic_check(ast);
     // code_gen(gen_data, file_name);
 }
 

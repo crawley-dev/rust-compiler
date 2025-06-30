@@ -31,22 +31,23 @@ pub enum TokenKind {
     CloseMultiComment, // "*/"
 
     // Operators
-    Array,     // "[]"
-    Dot,       // "." Member Access
-    Ptr,       // "^"
-    Eq,        // "="
-    Add,       // "+"
-    Sub,       // "-"
-    Mul,       // "*"
-    Quo,       // "/"
-    Mod,       // "%"
-    Ampersand, // "&" BitAnd, Address-of
-    Bar,       // "|" BitOr
-    Tilde,     // "~" BitXor
-    AndNot,    // "&~"
-    Shl,       // "<<"
-    Shr,       // ">>"
-    Arrow,     //  "->"
+    ArrayOpen,  // "["
+    ArrayClose, // "]"
+    Dot,        // "." Struct Member Access
+    Ptr,        // "^"
+    Eq,         // "="
+    Add,        // "+"
+    Sub,        // "-"
+    Mul,        // "*"
+    Quo,        // "/"
+    Mod,        // "%"
+    Ampersand,  // "&" BitAnd, Address-of
+    Bar,        // "|" BitOr
+    Tilde,      // "~" BitXor
+    AndNot,     // "&~"
+    Shl,        // "<<"
+    Shr,        // ">>"
+    Arrow,      //  "->"
 
     // Combo Assign
     AddEq,    // "+="
@@ -180,7 +181,7 @@ impl TokenKind {
                 Flag::ASSIGN | Flag::BIT
             }
 
-            // Member Access
+            // Access
             Kind::Dot => Flag::MEM,
 
             // In this design, we treat commas (or similar separators) as nonoperators.
@@ -291,7 +292,8 @@ impl Lexer {
             ("!", TokenKind::Not),
             ("^", TokenKind::Ptr),
             (".", TokenKind::Dot),
-            ("[]", TokenKind::Array),
+            ("[", TokenKind::ArrayOpen),
+            ("]", TokenKind::ArrayClose),
             ("=", TokenKind::Eq),
             ("+", TokenKind::Add),
             ("-", TokenKind::Sub),
