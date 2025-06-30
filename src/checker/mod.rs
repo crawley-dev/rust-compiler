@@ -1247,6 +1247,7 @@ impl Checker {
                     expr_data,
                 })
             },
+            Term::ArrayLit { elements, len } => todo!("impl array lit check term"),
             Term::FnCall { ident, args } => {
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {

@@ -229,7 +229,9 @@ impl PosAwareDebug for Expr {
                         write!(f, "{variant_name}({src})")
                     }
                 }
-                Term::FnCall { .. } | Term::StructLit { .. } => write!(f, "{term:#?}"),
+                Term::FnCall { .. } | Term::StructLit { .. } | Term::ArrayLit { .. } => {
+                    write!(f, "{term:#?}")
+                }
             },
             Expr::Unary { op, expr } => f
                 .debug_struct(&variant_name)
@@ -277,6 +279,12 @@ impl PosAwareDebug for Term {
                 .field("pos", &format_args!("{pos}"))
                 .field("ident", ident)
                 .field("fields", fields)
+                .finish(),
+            Term::ArrayLit { elements, len } => f
+                .debug_struct(&variant_name)
+                .field("pos", &format_args!("{pos}"))
+                .field("elements", elements)
+                .field("len", len)
                 .finish(),
             Term::FnCall { ident, args } => f
                 .debug_struct(&variant_name)

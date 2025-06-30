@@ -27,27 +27,27 @@ pub enum TokenKind {
     LineComment,       // "//"
     OpenBrace,         // "{"
     CloseBrace,        // "}"
+    OpenBracket,       // "["
+    CloseBracket,      // "]"
     OpenMultiComment,  // "/*"
     CloseMultiComment, // "*/"
 
     // Operators
-    ArrayOpen,  // "["
-    ArrayClose, // "]"
-    Dot,        // "." Struct Member Access
-    Ptr,        // "^"
-    Eq,         // "="
-    Add,        // "+"
-    Sub,        // "-"
-    Mul,        // "*"
-    Quo,        // "/"
-    Mod,        // "%"
-    Ampersand,  // "&" BitAnd, Address-of
-    Bar,        // "|" BitOr
-    Tilde,      // "~" BitXor
-    AndNot,     // "&~"
-    Shl,        // "<<"
-    Shr,        // ">>"
-    Arrow,      //  "->"
+    Dot,       // "." Struct Member Access
+    Ptr,       // "^"
+    Eq,        // "="
+    Add,       // "+"
+    Sub,       // "-"
+    Mul,       // "*"
+    Quo,       // "/"
+    Mod,       // "%"
+    Ampersand, // "&" BitAnd, Address-of
+    Bar,       // "|" BitOr
+    Tilde,     // "~" BitXor
+    AndNot,    // "&~"
+    Shl,       // "<<"
+    Shr,       // ">>"
+    Arrow,     //  "->"
 
     // Combo Assign
     AddEq,    // "+="
@@ -135,6 +135,7 @@ bitflags! {
         const BIT = 1 << 4; // this flag indicates whether its a bitwise operator
         const MEM = 1 << 5; // this flag indicates whether its a memory operator (e.g. dereference)
         const LHS = 1 << 6; // this flag indicates whether the operator is on the left or right of an expression.
+        const BASE = 1 << 7; // this flag indicates that it has flags, but doesn't actually mean anything on its own.s
     }
 }
 
@@ -185,7 +186,7 @@ impl TokenKind {
             Kind::Dot => Flag::MEM,
 
             // In this design, we treat commas (or similar separators) as nonoperators.
-            Kind::Comma => Flag::empty(),
+            Kind::Comma => Flag::BASE,
             _ => Flag::empty(),
         }
     }
@@ -205,7 +206,7 @@ impl TokenKind {
             TokenKind::Bar => 5,
             TokenKind::LogAnd => 3,
             TokenKind::LogOr => 2,
-            TokenKind::Comma => 0,
+            TokenKind::Comma => -100,
             _ => -100,
         }
     }
@@ -285,6 +286,8 @@ impl Lexer {
             (")", TokenKind::CloseParen),
             ("{", TokenKind::OpenBrace),
             ("}", TokenKind::CloseBrace),
+            ("[", TokenKind::OpenBracket),
+            ("]", TokenKind::CloseBracket),
             ("//", TokenKind::LineComment),
             ("/*", TokenKind::OpenMultiComment),
             ("*/", TokenKind::CloseMultiComment),
@@ -292,8 +295,6 @@ impl Lexer {
             ("!", TokenKind::Not),
             ("^", TokenKind::Ptr),
             (".", TokenKind::Dot),
-            ("[", TokenKind::ArrayOpen),
-            ("]", TokenKind::ArrayClose),
             ("=", TokenKind::Eq),
             ("+", TokenKind::Add),
             ("-", TokenKind::Sub),

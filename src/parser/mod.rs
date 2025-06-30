@@ -44,6 +44,10 @@ pub enum Term {
         ident: Token,
         fields: Vec<StructField>,
     },
+    ArrayLit {
+        elements: Vec<Node<Expr>>,
+        len: usize,
+    },
     FnCall {
         ident: Token,
         args: Vec<Node<Expr>>,
@@ -580,10 +584,6 @@ impl Parser {
         })
     }
 
-    // PROBLEM:
-    // loop will look for an operator
-    // if the operator is unary, cool! return a unary expr.
-    // .. I only want the lhs to be a unary?
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
         println!();
         debug!("parsing expression with min_prec: {min_prec}");
@@ -596,6 +596,8 @@ impl Parser {
                 Some(tok) => &tok.kind,
                 None => return err!("No token to parse for the expression rhs =>\n{lhs:#?}"),
             };
+
+            debug!("peeked at op: {op:?}");
 
             let un_prec = op.get_prec_unary();
             let bin_prec = op.get_prec_binary();
@@ -664,6 +666,7 @@ impl Parser {
         };
 
         match tok.kind {
+            // Unary Expressions
             op @ _ if op.has_flags_unary(TokenFlags::LHS) => {
                 debug!("found unary expression: '{op:?}'");
                 let expr = self
@@ -678,6 +681,7 @@ impl Parser {
                     },
                 })
             }
+            // Parenthesized Expressions
             TokenKind::OpenParen => {
                 // greedily consume everything in parenthesis.
                 let expr = self
@@ -686,6 +690,28 @@ impl Parser {
                 debug!("parsed parens {expr:#?}");
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
+            }
+            // Array Literals
+            TokenKind::OpenBracket => {
+                let mut elements = Vec::new();
+                while self.token_equals(TokenKind::CloseBracket, 0).is_err() {
+                    if !elements.is_empty() {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                    elements.push(
+                        self.parse_expr(0)
+                            .with_context(|| "failed to parse array literal element")?,
+                    );
+                }
+
+                Ok(Node {
+                    start: tok.start,
+                    end: self.expect(TokenKind::CloseBracket)?.end_pos(),
+                    node: Expr::Term(Term::ArrayLit {
+                        len: elements.len(),
+                        elements,
+                    }),
+                })
             }
             TokenKind::Ident => {
                 match self.peek(0) {
@@ -792,7 +818,7 @@ impl Parser {
 
                 AddressingMode::Pointer { depth }
             }
-            Some(tok) if tok.kind == TokenKind::ArrayOpen => {
+            Some(tok) if tok.kind == TokenKind::OpenBracket => {
                 self.consume(); // consume the array open token
                 inner_type = Some(InnerType::Nested {
                     inner: Box::new(self.internal_parse_type_param(depth + 1)?),
@@ -816,7 +842,7 @@ impl Parser {
                     }
                 };
 
-                self.expect(TokenKind::ArrayClose)
+                self.expect(TokenKind::CloseBracket)
                     .with_context(|| "Expected ']' to close array type")?;
 
                 AddressingMode::Array { depth, len }

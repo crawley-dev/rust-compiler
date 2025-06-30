@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["example1"],
+            "args": ["arr_example0.txt"],
             "cwd": "${workspaceFolder}"
         },
         {

@@ -30,7 +30,7 @@ where
 
 static mut LOGGER: Logger = Logger {
     log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, false, true, false],
+    print_logs: [false, true, true, false],
     print_output: [false, true, true, false],
     current_prefix: LogPrefix::Lex,
     file_pos: Pos { x: 0, y: 0 },
