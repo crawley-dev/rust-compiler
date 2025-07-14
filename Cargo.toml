@@ -1,9 +1,10 @@
 [package]
-name = "rust-compiler"
+name = "toy_compiler"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dev-dependencies]
+toy_compiler = { path = "." }
 
 [dependencies]
 anyhow = "1.0.95"
@@ -11,6 +12,7 @@ bitflags = "2.5.0"
 cargo-watch = "8.5.2"
 indexed_valued_enums = "1.0.0"
 indexmap = "2.2.6"
+pretty_assertions = "1.4.1"
 rand = "0.8.5"
 text-to-ascii-art = "0.1.10"
 

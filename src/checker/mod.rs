@@ -143,13 +143,13 @@ pub struct Function {
     scope: Option<Node<Scope>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FuncContext {
     return_type: AddressedType, // optional as it may be void, which isn't a type!
     signature: String, // should be a str really.
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SemContext {
     loop_count: isize, // picked isize so I get useful error messages in debug build, instead of an oob error
     scope_depth: usize, // how many scopes we are deep! 0 --> 2^64 (a few)
@@ -157,7 +157,7 @@ struct SemContext {
     func: FuncContext,
 }
 
-#[derive(Educe)]
+#[derive(Educe, Clone)]
 #[educe(Debug)]
 pub struct Checker {
     pub ast: Ast,

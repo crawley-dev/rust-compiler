@@ -1,6 +1,7 @@
 use crate::{
+    lexer::{Lexer, Token, TokenKind},
+    parser::{Ast, Expr, Node, Scope, Stmt, Term},
     utils::{pos, Contents, Pos},
-    Ast, Expr, Lexer, Node, Scope, Stmt, Term, Token, TokenKind,
 };
 use std::{
     cmp::max,
@@ -16,6 +17,7 @@ impl Debug for Token {
         if f.alternate() {
             writeln!(f, "Token {{")?;
             writeln!(f, "    str: {:?}", self.str())?;
+            writeln!(f, "    kind: {:?}", self.kind)?;
             writeln!(
                 f,
                 "    pos: {}",

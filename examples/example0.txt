@@ -1,7 +1,1 @@
-fn example0() {
-    let var: i32 = 5;
-    let ans: ^i32 = &var;
-}
-
-/*
-exit(69) */ // //;
+let x = 5;

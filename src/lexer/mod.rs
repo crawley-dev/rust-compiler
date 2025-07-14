@@ -110,6 +110,10 @@ pub struct Token {
     pub len: u32,
 }
 
+pub fn token(kind: TokenKind, start: Pos, len: u32) -> Token {
+    Token { kind, start, len }
+}
+
 pub struct Lexer {
     idx: usize,
     input: Vec<u8>,

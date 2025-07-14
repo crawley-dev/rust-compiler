@@ -5,6 +5,7 @@ use std::{
     io::{BufRead, BufReader},
     num::NonZero,
     ops::{ControlFlow, FromResidual, Try},
+    path::{Path, PathBuf},
     ptr::{null, NonNull},
 };
 
@@ -222,20 +223,18 @@ macro_rules! debug {
 // region: Global File Contents
 #[derive(Debug, Clone)]
 pub struct Contents {
-    pub file_name: String,
+    pub name: String,
     pub contents: Vec<String>,
 }
 
 static mut SOURCE: Contents = Contents {
-    file_name: String::new(),
+    name: String::new(),
     contents: Vec::new(),
 };
 static mut CONTENTS_STATIC_REF: Option<Box<[&'static str]>> = None;
 
 impl Contents {
-    pub fn init(file_name: String) {
-        let contents = Self::get_file_contents(&file_name);
-
+    pub fn init(name: String, contents: Vec<String>) {
         let max_height = contents.len();
         let max_width = contents.iter().map(|x| x.len()).max().unwrap_or(0);
         unsafe {
@@ -245,10 +244,7 @@ impl Contents {
                 count_digits(max_height as u32),
             );
 
-            SOURCE = Contents {
-                file_name,
-                contents,
-            };
+            SOURCE = Contents { name, contents };
 
             CONTENTS_STATIC_REF = Some(
                 SOURCE
@@ -264,9 +260,7 @@ impl Contents {
         unsafe {
             match CONTENTS_STATIC_REF.as_ref() {
                 Some(ref lines) => lines,
-                None => panic!(
-                    "[COMPILER] Contents not initialized, call Contents::init(file_name) first"
-                ),
+                None => panic!("[COMPILER] Contents not initialized, call Contents::init() first"),
             }
         }
     }
@@ -274,7 +268,10 @@ impl Contents {
     pub fn get_src_oneline(start: Pos, end: Pos) -> &'static str {
         match Self::get_contents().get(start.y as usize) {
             Some(line) if (end.x as usize) <= line.len() => &line[start.x as usize..end.x as usize],
-            _ => panic!("Invalid start position {start:?}, {end:?}"),
+            _ => {
+                // println!("[COMPILER] Invalid start position {start:?}, {end:?}");
+                " couldn't get src oneline. "
+            }
         }
     }
 
@@ -324,19 +321,10 @@ impl Contents {
         )
     }
 
-    fn get_file_contents(file_name: &str) -> Vec<String> {
-        let file = fs::File::open(format!("./examples/{file_name}.txt"))
-            .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
-        BufReader::new(file)
-            .lines()
-            .map(|line| line.unwrap() + "\n")
-            .collect()
-    }
-
     pub fn get<'a>() -> &'a Contents {
         unsafe {
             if CONTENTS_STATIC_REF.is_none() {
-                panic!("[COMPILER] Contents not initialized, call Contents::init(file_name) first");
+                panic!("[COMPILER] Contents not initialized, call Contents::init() first");
             }
             &SOURCE
         }
@@ -620,71 +608,6 @@ macro_rules! upgrade_result {
         }
     }};
 }
-
-pub fn handle_compile_error<T: std::fmt::Debug>(
-    error_data: T,
-    error: anyhow::Error,
-    error_start: Pos,
-    error_end: Pos,
-) -> ! {
-    let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
-        Ok(art) => art,
-        Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
-    };
-
-    println!("start: {error_start:#?}, end: {error_end:#?}");
-
-    let src_content = Contents::get_lines(error_start.y, error_end.y);
-    let erroring_code = src_content
-        .iter()
-        .flat_map(|x| x.chars())
-        .collect::<String>();
-
-    // TODO(TOM): this doesn't cover some edge cases.
-    let (highlight_padding, error_highlight);
-    let first_char = src_content
-        .iter()
-        .flat_map(|x| x.chars())
-        .position(|x| x.is_alphanumeric())
-        .unwrap_or(0);
-    highlight_padding = " ".repeat(first_char);
-    error_highlight = "^".repeat(error_end.x as usize - first_char);
-
-    let len = error.chain().len();
-    let mut error_chain = String::from("[\n");
-    for (i, err) in error.chain().enumerate().rev() {
-        let err_msg = err.to_string();
-        for line in err_msg.lines() {
-            error_chain.push_str(&"    ");
-            error_chain.push_str(line);
-            error_chain.push('\n');
-        }
-        if let Some('\n') = error_chain.chars().last() {
-            error_chain.pop();
-        }
-        error_chain.push_str(",\n");
-    }
-    error_chain.pop();
-    error_chain.push_str("\n]");
-
-    println!(
-        "\n{panic_banner}\n\
-        \nBacktrace:\
-        \n{backtrace}\n
-        \nError Data:\
-        \n{error_data:#?}\n\
-        \nError Occurred near:\
-        \n{err_line_num}: {erroring_code}\
-        \n{line_digits}  {highlight_padding}{error_highlight}\n\
-        \nError Chain:\
-        \n{error_chain}\n",
-        err_line_num = error_start.y + 1,
-        line_digits = " ".repeat(count_digits(error_start.y) as usize),
-        backtrace = error.backtrace(),
-    );
-
-    std::process::exit(0)
-}
 // endregion
 // region: Misc
 
@@ -707,13 +630,25 @@ pub fn get_cmd_arg(arg_position: usize) -> String {
     if arg_position == 1 {
         panic!("[COMPILER] arg position must be at least 1");
     }
-    let args: String = std::env::args().skip(arg_position - 1).take(1).collect();
+    let args = std::env::args()
+        .skip(arg_position - 1)
+        .take(1)
+        .collect::<String>();
     assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
 
-    let file_name = args.split('.').take(1).collect::<String>();
+    args
+    // let file_name = args.split('.').take(1).collect::<String>();
     // let extension = args.split('.').last().unwrap_or("");
+}
 
-    file_name
+// TODO(TOM): use std::fs::read_to_string instead
+pub fn get_file_contents(path: &PathBuf) -> Vec<String> {
+    let file =
+        fs::File::open(&path).unwrap_or_else(|_| panic!("[COMPILER] Error opening '{path:?}'\n"));
+    BufReader::new(file)
+        .lines()
+        .map(|line| line.unwrap() + "\n")
+        .collect()
 }
 
 // endregion

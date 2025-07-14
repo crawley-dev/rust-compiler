@@ -4,14 +4,17 @@ use crate::{
     checker::Checker,
     lexer::{Lexer, Token},
     parser::{Ast, Parser},
-    utils::{handle_compile_error, pos, CompilerResult, Contents, LogPrefix, Logger},
+    utils::{count_digits, pos, CompilerResult, Contents, LogPrefix, Logger, Pos},
 };
 
-pub struct ParsableContents(VecDeque<Token>);
+#[derive(Debug, Clone)]
+pub struct ParsableContents(pub VecDeque<Token>);
 
-pub struct CheckableContents(Ast);
+#[derive(Debug, Clone)]
+pub struct CheckableContents(pub Ast);
 
-pub struct GeneratableContents(Checker);
+#[derive(Debug, Clone)]
+pub struct GeneratableContents(pub Checker);
 
 pub trait Lexable {
     fn lex<'a>(&'a self) -> ParsableContents;
@@ -126,3 +129,68 @@ fn code_gen(data: Checker, file_name: String) {
     };
 }
 */
+
+pub fn handle_compile_error<T: std::fmt::Debug>(
+    error_data: T,
+    error: anyhow::Error,
+    error_start: Pos,
+    error_end: Pos,
+) -> ! {
+    let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
+        Ok(art) => art,
+        Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
+    };
+
+    println!("start: {error_start:#?}, end: {error_end:#?}");
+
+    let src_content = Contents::get_lines(error_start.y, error_end.y);
+    let erroring_code = src_content
+        .iter()
+        .flat_map(|x| x.chars())
+        .collect::<String>();
+
+    // TODO(TOM): this doesn't cover some edge cases.
+    let (highlight_padding, error_highlight);
+    let first_char = src_content
+        .iter()
+        .flat_map(|x| x.chars())
+        .position(|x| x.is_alphanumeric())
+        .unwrap_or(0);
+    highlight_padding = " ".repeat(first_char);
+    error_highlight = "^".repeat(error_end.x as usize - first_char);
+
+    let len = error.chain().len();
+    let mut error_chain = String::from("[\n");
+    for (i, err) in error.chain().enumerate().rev() {
+        let err_msg = err.to_string();
+        for line in err_msg.lines() {
+            error_chain.push_str(&"    ");
+            error_chain.push_str(line);
+            error_chain.push('\n');
+        }
+        if let Some('\n') = error_chain.chars().last() {
+            error_chain.pop();
+        }
+        error_chain.push_str(",\n");
+    }
+    error_chain.pop();
+    error_chain.push_str("\n]");
+
+    println!(
+        "\n{panic_banner}\n\
+        \nBacktrace:\
+        \n{backtrace}\n
+        \nError Data:\
+        \n{error_data:#?}\n\
+        \nError Occurred near:\
+        \n{err_line_num}: {erroring_code}\
+        \n{line_digits}  {highlight_padding}{error_highlight}\n\
+        \nError Chain:\
+        \n{error_chain}\n",
+        err_line_num = error_start.y + 1,
+        line_digits = " ".repeat(count_digits(error_start.y) as usize),
+        backtrace = error.backtrace(),
+    );
+
+    std::process::exit(0)
+}

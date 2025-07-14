@@ -1,34 +1,9 @@
-#![allow(unused, static_mut_refs)]
-#![feature(try_trait_v2)]
-#![warn(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    clippy::complexity,
-    clippy::perf,
-    clippy::style
-)]
-use crate::{checker::*, compile_chain::*, formatting::*, lexer::*, parser::*, utils::*};
-use anyhow::{Error, Result};
-use core::error;
-use std::{
-    cmp::max,
-    collections::VecDeque,
-    fs,
-    io::{BufRead, BufReader},
-    panic::PanicHookInfo,
-    process::exit,
+use std::path::PathBuf;
+
+use toy_compiler::{
+    compile_chain::Lexable,
+    utils::{self, Contents},
 };
-
-mod checker;
-mod formatting;
-mod lexer;
-mod parser;
-mod utils;
-
-// mod code_gen;
-mod compile_chain;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -41,8 +16,13 @@ fn main() {
     );
 
     // Get file contents, put it into the global buffer
+    let file_name = utils::get_cmd_arg(2);
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("examples");
+    path.push(&file_name);
+    let contents = utils::get_file_contents(&path);
+    Contents::init(file_name, contents);
 
-    Contents::init(utils::get_cmd_arg(2));
     println!(
         "[COMPILER] File contents initialized:\n{:#?}",
         Contents::get_contents()
