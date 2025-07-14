@@ -149,7 +149,7 @@ impl Parser {
         Self { tokens, idx: 0 }
     }
 
-    pub fn parse_tokens(mut self) -> (Ast, Option<Error>) {
+    pub fn parse_tokens(mut self) -> CompilerResult<Ast, Error> {
         let mut ast: Ast = Ast { stmts: Vec::new() };
 
         while self.peek(0).is_some() {
@@ -160,12 +160,20 @@ impl Parser {
                     error,
                 } => {
                     ast.stmts.push(data);
-                    return (ast, Some(error));
+                    return CompilerResult::Err {
+                        data: Some(ast),
+                        error,
+                    };
                 }
-                CompilerResult::Err { data: None, error } => return (ast, Some(error)),
+                CompilerResult::Err { data: None, error } => {
+                    return CompilerResult::Err {
+                        data: Some(ast),
+                        error,
+                    }
+                }
             };
         }
-        (ast, None)
+        CompilerResult::Ok(ast)
     }
 
     // region: Top Level

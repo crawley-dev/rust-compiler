@@ -1,10 +1,6 @@
-/* >>TOKENIZER<< Splits up the source code into semantic tokens.
-    TODO(TOM): Handle Nested multi-line comments
-*/
-
 use crate::{
     debug, err,
-    utils::{self, pos, Contents, Logger, Pos},
+    utils::{self, pos, CompilerResult, Contents, LogPrefix, Logger, Pos},
 };
 use anyhow::{Error, Result};
 use bitflags::bitflags;
@@ -276,7 +272,7 @@ impl Token {
 }
 
 impl Lexer {
-    pub fn new(input: &[&str]) -> Lexer {
+    pub fn new(input: &str) -> Lexer {
         let reg: HashMap<&'static str, TokenKind> = HashMap::from([
             // Generic Symbols
             (",", TokenKind::Comma),
@@ -345,11 +341,7 @@ impl Lexer {
         ]);
         Lexer {
             idx: 0,
-            input: input
-                .iter()
-                .flat_map(|x| x.chars())
-                .map(|x| x as u8)
-                .collect(),
+            input: input.as_bytes().to_vec(),
             reg,
             is_linecomment: false,
             is_multicomment: false,
@@ -358,7 +350,7 @@ impl Lexer {
         }
     }
 
-    pub fn tokenize(mut self) -> (Lexer, Option<Error>) {
+    pub fn tokenise(mut self) -> CompilerResult<VecDeque<Token>, Error> {
         while self.idx < self.input.len() {
             match self.next_token() {
                 Ok(Some(tok)) => match tok.kind {
@@ -372,10 +364,15 @@ impl Lexer {
                     }
                 },
                 Ok(None) => continue,
-                Err(e) => return (self, Some(e)),
+                Err(e) => {
+                    return CompilerResult::Err {
+                        data: Some(self.tokens),
+                        error: e,
+                    }
+                }
             };
         }
-        (self, None)
+        CompilerResult::Ok(self.tokens)
     }
 
     fn next_token(&mut self) -> Result<Option<Token>> {

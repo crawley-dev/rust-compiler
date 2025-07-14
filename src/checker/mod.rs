@@ -229,7 +229,7 @@ impl Checker {
         }
     }
 
-    pub fn check_ast(mut self, ast: Ast) -> (Checker, Option<Error>) {
+    pub fn check_ast(mut self, ast: Ast) -> CompilerResult<Checker, Error> {
         let mut sem_ast = Ast {
             stmts: Vec::with_capacity(ast.stmts.len()),
         };
@@ -238,7 +238,10 @@ impl Checker {
         // Index all top level data. function decl ordering doesn't matter!
         for stmt in &ast.stmts {
              if let Result::Err(error)  = self.index_top_level(stmt) {
-                return (self, Some(error))
+                return CompilerResult::Err {
+                    data: Some(self),
+                    error,
+                }
             };
         }
 
@@ -253,7 +256,10 @@ impl Checker {
                     }
 
                     self.ast = sem_ast;
-                    return (self, Some(error))
+                    return CompilerResult::Err {
+                        data: Some(self),
+                        error,
+                    }
                 },
             }
         }
@@ -296,7 +302,7 @@ impl Checker {
         //     _ => Ok(checker),
         // }
         */
-        (self, None)
+        CompilerResult::Ok(self)
     }
 
     // region: Top Level
