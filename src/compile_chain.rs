@@ -4,7 +4,7 @@ use crate::{
     checker::Checker,
     lexer::{Lexer, Token},
     parser::{Ast, Parser},
-    utils::{handle_compile_error, pos, CompilerResult, LogPrefix, Logger},
+    utils::{handle_compile_error, pos, CompilerResult, Contents, LogPrefix, Logger},
 };
 
 pub struct ParsableContents(VecDeque<Token>);
@@ -14,18 +14,19 @@ pub struct CheckableContents(Ast);
 pub struct GeneratableContents(Checker);
 
 pub trait Lexable {
-    fn tokenise(self) -> ParsableContents;
+    fn lex<'a>(&'a self) -> ParsableContents;
 }
 
-impl Lexable for &str {
-    fn tokenise(self) -> ParsableContents {
+impl<'a> Lexable for &'a Contents {
+    fn lex(&self) -> ParsableContents {
         Logger::set_prefix(LogPrefix::Lex);
 
         if Logger::print_logs() {
             println!("\nContents:\n{self:#?}\n");
         }
 
-        let result = Lexer::new(&self).tokenise();
+        let file_contents = self.contents.join("");
+        let result = Lexer::new(&file_contents).tokenise();
 
         match result {
             CompilerResult::Ok(tokens) => {

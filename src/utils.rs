@@ -3,28 +3,15 @@ use std::{
     convert::Infallible,
     fs,
     io::{BufRead, BufReader},
+    num::NonZero,
     ops::{ControlFlow, FromResidual, Try},
+    ptr::{null, NonNull},
 };
 
 use crate::{
     formatting::SHORT_NODE_PRINT,
     parser::{Node, Scope, Stmt},
 };
-
-pub fn count_digits<T>(mut n: T) -> T
-where
-    T: Copy + std::cmp::Eq + From<u32> + std::cmp::Ord + std::ops::DivAssign + std::ops::AddAssign,
-{
-    if n == T::from(0) {
-        return T::from(1);
-    }
-    let mut count = T::from(0);
-    while n > T::from(0) {
-        count += T::from(1);
-        n /= T::from(10);
-    }
-    count
-}
 
 // region: Logger
 
@@ -233,21 +220,20 @@ macro_rules! debug {
 // endregion
 
 // region: Global File Contents
+#[derive(Debug, Clone)]
+pub struct Contents {
+    pub file_name: String,
+    pub contents: Vec<String>,
+}
 
 static mut SOURCE: Contents = Contents {
     file_name: String::new(),
     contents: Vec::new(),
 };
-static mut CONTENTS_STATIC_REF: Option<Vec<&'static str>> = None;
-
-pub struct Contents {
-    file_name: String,
-    contents: Vec<String>,
-}
+static mut CONTENTS_STATIC_REF: Option<Box<[&'static str]>> = None;
 
 impl Contents {
-    pub fn init() {
-        let file_name = Self::get_file_name();
+    pub fn init(file_name: String) {
         let contents = Self::get_file_contents(&file_name);
 
         let max_height = contents.len();
@@ -263,28 +249,30 @@ impl Contents {
                 file_name,
                 contents,
             };
+
+            CONTENTS_STATIC_REF = Some(
+                SOURCE
+                    .contents
+                    .iter()
+                    .map(|s| &**s as &'static str)
+                    .collect::<Box<_>>(),
+            );
         }
     }
 
-    pub fn get_contents_ref() -> &'static [&'static str] {
+    pub fn get_contents() -> &'static [&'static str] {
         unsafe {
-            match &CONTENTS_STATIC_REF {
-                Some(refs) => refs.as_slice(),
-                None => {
-                    let refs = SOURCE
-                        .contents
-                        .iter()
-                        .map(|s| &**s as &'static str)
-                        .collect::<Vec<_>>();
-                    CONTENTS_STATIC_REF = Some(refs);
-                    CONTENTS_STATIC_REF.as_ref().unwrap()
-                }
+            match CONTENTS_STATIC_REF.as_ref() {
+                Some(ref lines) => lines,
+                None => panic!(
+                    "[COMPILER] Contents not initialized, call Contents::init(file_name) first"
+                ),
             }
         }
     }
 
     pub fn get_src_oneline(start: Pos, end: Pos) -> &'static str {
-        match Self::get_contents_ref().get(start.y as usize) {
+        match Self::get_contents().get(start.y as usize) {
             Some(line) if (end.x as usize) <= line.len() => &line[start.x as usize..end.x as usize],
             _ => panic!("Invalid start position {start:?}, {end:?}"),
         }
@@ -298,19 +286,19 @@ impl Contents {
         let mut vec = vec![];
         for i in start.y..=end.y {
             if i == start.y {
-                match Self::get_contents_ref().get(i as usize) {
+                match Self::get_contents().get(i as usize) {
                     Some(line) => vec.push(&line[start.x as usize..]),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
                 continue;
             } else if i == end.y {
-                match Self::get_contents_ref().get(i as usize) {
+                match Self::get_contents().get(i as usize) {
                     Some(line) => vec.push(&line[..end.x as usize]),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
                 break;
             } else {
-                match Self::get_contents_ref().get(i as usize) {
+                match Self::get_contents().get(i as usize) {
                     Some(line) => vec.push(line),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
@@ -319,7 +307,7 @@ impl Contents {
         vec
     }
 
-    pub fn get_src_lines(start_y: u32, end_y: u32) -> Vec<&'static str> {
+    pub fn get_lines(start_y: u32, end_y: u32) -> Vec<&'static str> {
         let last_line_len;
         unsafe {
             last_line_len = match SOURCE.contents.get(end_y as usize) {
@@ -336,19 +324,6 @@ impl Contents {
         )
     }
 
-    fn get_file_name() -> String {
-        let args: String = std::env::args().skip(1).take(1).collect();
-        assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
-
-        let file_name = args.split('.').take(1).collect::<String>();
-        let extension = args.split('.').last().unwrap_or("");
-        if extension != "txt" {
-            panic!("[COMPILER] Invalid file extension, '.txt' only\n");
-        }
-
-        file_name
-    }
-
     fn get_file_contents(file_name: &str) -> Vec<String> {
         let file = fs::File::open(format!("./examples/{file_name}.txt"))
             .unwrap_or_else(|_| panic!("[COMPILER] Error opening file '{file_name}'\n"));
@@ -356,6 +331,15 @@ impl Contents {
             .lines()
             .map(|line| line.unwrap() + "\n")
             .collect()
+    }
+
+    pub fn get<'a>() -> &'a Contents {
+        unsafe {
+            if CONTENTS_STATIC_REF.is_none() {
+                panic!("[COMPILER] Contents not initialized, call Contents::init(file_name) first");
+            }
+            &SOURCE
+        }
     }
 }
 
@@ -650,7 +634,7 @@ pub fn handle_compile_error<T: std::fmt::Debug>(
 
     println!("start: {error_start:#?}, end: {error_end:#?}");
 
-    let src_content = Contents::get_src_lines(error_start.y, error_end.y);
+    let src_content = Contents::get_lines(error_start.y, error_end.y);
     let erroring_code = src_content
         .iter()
         .flat_map(|x| x.chars())
@@ -701,4 +685,38 @@ pub fn handle_compile_error<T: std::fmt::Debug>(
 
     std::process::exit(0)
 }
+// endregion
+// region: Misc
+
+pub fn count_digits<T>(mut n: T) -> T
+where
+    T: Copy + std::cmp::Eq + From<u32> + std::cmp::Ord + std::ops::DivAssign + std::ops::AddAssign,
+{
+    if n == T::from(0) {
+        return T::from(1);
+    }
+    let mut count = T::from(0);
+    while n > T::from(0) {
+        count += T::from(1);
+        n /= T::from(10);
+    }
+    count
+}
+
+pub fn get_cmd_arg(arg_position: usize) -> String {
+    if arg_position == 0 {
+        panic!("[COMPILER] arg position must be at least 1");
+    }
+    let args: String = std::env::args().skip(arg_position - 1).take(1).collect();
+    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
+
+    let file_name = args.split('.').take(1).collect::<String>();
+    let extension = args.split('.').last().unwrap_or("");
+    if extension != "txt" {
+        panic!("[COMPILER] Invalid file extension, '.txt' only\n");
+    }
+
+    file_name
+}
+
 // endregion

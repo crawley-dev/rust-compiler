@@ -40,19 +40,14 @@ fn main() {
         text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0).unwrap()
     );
 
-    // Get file contents, init to global buffer
-    Contents::init();
+    // Get file contents, put it into the global buffer
+    Contents::init(utils::get_cmd_arg(1));
     println!(
         "[COMPILER] File contents initialized:\n{:#?}",
-        Contents::get_contents_ref()
+        Contents::get_contents()
     );
 
-    Contents::get_contents_ref()
-        .join("")
-        .as_str()
-        .tokenise()
-        .parse()
-        .check();
+    Contents::get().lex().parse().check();
 }
 
 // UBUNTU bash script:
