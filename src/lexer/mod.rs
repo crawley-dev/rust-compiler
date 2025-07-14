@@ -1,14 +1,10 @@
 use crate::{
     debug, err,
-    utils::{self, pos, CompilerResult, Contents, LogPrefix, Logger, Pos},
+    utils::{pos, CompilerResult, Contents, Logger, Pos},
 };
 use anyhow::{Error, Result};
 use bitflags::bitflags;
-use core::fmt;
-use std::{
-    cmp::max,
-    collections::{HashMap, VecDeque},
-};
+use std::collections::{HashMap, VecDeque};
 
 // region: Type Definitions
 
@@ -521,7 +517,7 @@ impl Lexer {
     }
 
     fn get_start(len: u32) -> Pos {
-        let mut p = Logger::get_pos();
+        let p = Logger::get_pos();
         pos(p.x - len, p.y)
     }
 }

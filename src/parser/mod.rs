@@ -6,12 +6,10 @@ use crate::{
     comp_err, debug, err,
     lexer::{Associativity, Token, TokenFlags, TokenKind},
     upgrade_err, upgrade_result,
-    utils::{self, pos, CompilerResult, Contents, Logger, Pos},
+    utils::{pos, CompilerResult, Logger, Pos},
 };
 use anyhow::{Context, Error, Result};
-use core::fmt;
-use educe::Educe;
-use std::{collections::VecDeque, convert::Infallible, fmt::Formatter};
+use std::{collections::VecDeque, convert::Infallible};
 
 pub const DEFAULT_DEPTH: usize = 1;
 

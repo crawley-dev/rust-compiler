@@ -11,13 +11,14 @@
 */
 
 use crate::{
-    comp_err, debug, err, formatting::{self, PosAwareDebug}, lexer::{Token, TokenFlags, TokenKind}, parser::{parse_type::ParseType, Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, StructField, Term, DEFAULT_DEPTH}, upgrade_err, upgrade_result, utils::{self, CompilerResult, Contents, Logger, Pos}
+    comp_err, debug, err, upgrade_err, upgrade_result, 
+    lexer::{Token, TokenFlags, TokenKind}, 
+    parser::{parse_type::ParseType, Arg, Ast, Expr, InitExpr, Node, Scope, Stmt, StructField, Term, DEFAULT_DEPTH}, 
+    utils::{CompilerResult, Contents, Logger, Pos}
 };
 use anyhow::{Context, Error, Result};
 use educe::Educe;
-use std::{
-    cmp::max, collections::HashMap, convert::Infallible, ops::Add, ptr::NonNull
-};
+use std::collections::HashMap;
 
 // region: Type Definitions
 pub type Bytes = usize;
@@ -45,14 +46,6 @@ pub enum ExprForm {
     Sized, // a variable, allows for addr of etc
     Compound, // a compound expression, e.g. a + b, doesn't have coercion semantics like a literal
     Literal, // has some sizing freedoms as its a literal (0 size rn)!
-}
-
-// This defines a language primitive type, such as 'i32'
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PrimitiveType {
-    ident: String,
-    mode: TypeMode,
-    width: Bytes,
 }
 
 // it is a type that has an addressing mode, e.g. an 'i32' that is a 'pointer'
@@ -416,7 +409,7 @@ impl Checker {
         
         // Create lambda for custom scope check
         let func_name = function.signature.split('(').next().unwrap().to_string();
-        let func_args = function.signature.split(')').skip(1).next().unwrap_or("");;
+        let func_args = function.signature.split(')').skip(1).next().unwrap_or("");
         println!("{}\n{func_args}\n", text_to_ascii_art::to_art(func_name, "small", 2, 0, 0).unwrap());
         
         // Does not error here, so I can construct 'fn_sem', to then error with that information.
@@ -450,7 +443,7 @@ impl Checker {
         }
 
         if self.ctx.func.return_type.type_id != VOID_ID {
-            let scope_returns = match checked_scope.node.stmts.last() {
+            match checked_scope.node.stmts.last() {
                 Some(stmt) => Self::check_node_returns(&stmt.node),
                 None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
             };
@@ -505,7 +498,7 @@ impl Checker {
         for overload in overloads {
             let overload = self.fn_vec.get(*overload).unwrap();
 
-            if (return_type != original_decl.return_type) {
+            if return_type != original_decl.return_type {
                 return err!("All overloads of Function '{fn_ident}' must have the same return type");
             }
 
@@ -516,7 +509,7 @@ impl Checker {
             for (idx, (overload, new)) in overload.args.iter().zip(semantics.iter()).enumerate() {
                 if overload == new {
                     match matching {
-                        Some(overload) => return err!(
+                        Some(_) => return err!(
                             "Function '{fn_ident}' already exists with the same signature"
                         ),
                         None => matching = Some(idx),                        
@@ -548,7 +541,6 @@ impl Checker {
                     return false;
                 }
 
-                let mut branches_return = true; 
                 for branch in branches {
                     if !Self::check_node_returns(&branch.node) {
                         return false;
@@ -564,7 +556,7 @@ impl Checker {
     }
 
     fn check_fn_scope(&self, scope: Node<Scope>, semantics: &[AddressedType], args: &[Arg]) -> CompilerResult<Node<Scope>>{
-        let mut scope_check;
+        let scope_check;
         unsafe {
             let mut_self = self as *const Self as *mut Self;
             scope_check = (*mut_self).check_scope(
@@ -796,7 +788,7 @@ impl Checker {
         loop {
             match self.stack_var_vec.last() {
                 Some(var) if var.scope_id <= self.ctx.scope_depth => break,
-                Some(var) => {
+                Some(_) => {
                     // debug!(self, "Scope ended, removing '{}'", var.ident.as_str());
                     let var = self.stack_var_vec.pop().unwrap();
                     self.stack_var_map.remove(var.ident.str());
@@ -1256,7 +1248,7 @@ impl Checker {
                 for elem in elements {
                     if !sem_elements.is_empty() {
                         self.check_type_equivalence(sem_elements.first().unwrap(), sem_elements.last().unwrap())
-                        .with_context(|| "Elements in an array literal must of the same type.");
+                        .with_context(|| "Elements in an array literal must of the same type.")?;
                     }
 
                     sem_elements.push(self.check_expr(elem)?);
@@ -1447,7 +1439,7 @@ impl Checker {
                 let mut str = String::new();
                 str += name;
                 str += "(";
-                for (i, arg) in args_semantics.iter().enumerate() {
+                for arg in args_semantics.iter() {
                     let stored_type = self.type_vec.get(arg.type_id).unwrap();
                     let var_ident = match stored_type {
                         StoredType::Primitive { ident, .. } => ident.as_str(),
@@ -1511,7 +1503,6 @@ impl Checker {
                 })
             }
             Some(StoredType::Alias { aliased_id, .. }) => {
-                let base = self.type_vec.get(*aliased_id).unwrap();
                 self.create_expr_semantics(AddressedType {
                     type_id: *aliased_id,
                     addr_mode: var_type.addr_mode,
@@ -1567,7 +1558,7 @@ impl Checker {
         match expr_sem.expr_data {
             ExprData::Primitive { width } => width,
             ExprData::Struct { width, .. } => width,
-            ExprData::Pointer { root_type } => PTR,
+            ExprData::Pointer { .. } => PTR,
         }
     }
 

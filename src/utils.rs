@@ -1,18 +1,12 @@
 use std::{
-    cmp::max,
     convert::Infallible,
     fs,
     io::{BufRead, BufReader},
-    num::NonZero,
     ops::{ControlFlow, FromResidual, Try},
-    path::{Path, PathBuf},
-    ptr::{null, NonNull},
+    path::PathBuf,
 };
 
-use crate::{
-    formatting::SHORT_NODE_PRINT,
-    parser::{Node, Scope, Stmt},
-};
+use crate::formatting::SHORT_NODE_PRINT;
 
 // region: Logger
 
@@ -45,16 +39,16 @@ pub struct Logger {
 }
 
 impl Logger {
-    pub fn set_short_fmt(state: bool) {
+    pub fn set_short_fmt(_: bool) {
         unsafe {
             SHORT_NODE_PRINT = false;
             return;
 
-            if SHORT_NODE_PRINT == state {
-                return;
-            }
-            println!("changing short node print to {state}");
-            SHORT_NODE_PRINT = state;
+            // if SHORT_NODE_PRINT == state {
+            //     return;
+            // }
+            // println!("changing short node print to {state}");
+            // SHORT_NODE_PRINT = state;
         }
     }
 
@@ -167,7 +161,7 @@ impl Logger {
 
     pub fn toggle_logs(state: bool) {
         unsafe {
-            if (LOGGER.print_logs[LOGGER.current_prefix as usize] == state) {
+            if LOGGER.print_logs[LOGGER.current_prefix as usize] == state {
                 println!(
                     "[COMPILER] Logs already {} for {}",
                     if state { "enabled" } else { "disabled" },

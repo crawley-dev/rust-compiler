@@ -1,4 +1,4 @@
-#![allow(unused, static_mut_refs)]
+#![allow(static_mut_refs)]
 #![feature(try_trait_v2)]
 #![warn(
     clippy::all,
