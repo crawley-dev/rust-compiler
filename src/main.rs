@@ -41,7 +41,8 @@ fn main() {
     );
 
     // Get file contents, put it into the global buffer
-    Contents::init(utils::get_cmd_arg(1));
+
+    Contents::init(utils::get_cmd_arg(2));
     println!(
         "[COMPILER] File contents initialized:\n{:#?}",
         Contents::get_contents()

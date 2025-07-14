@@ -704,17 +704,14 @@ where
 }
 
 pub fn get_cmd_arg(arg_position: usize) -> String {
-    if arg_position == 0 {
+    if arg_position == 1 {
         panic!("[COMPILER] arg position must be at least 1");
     }
     let args: String = std::env::args().skip(arg_position - 1).take(1).collect();
     assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
 
     let file_name = args.split('.').take(1).collect::<String>();
-    let extension = args.split('.').last().unwrap_or("");
-    if extension != "txt" {
-        panic!("[COMPILER] Invalid file extension, '.txt' only\n");
-    }
+    // let extension = args.split('.').last().unwrap_or("");
 
     file_name
 }
