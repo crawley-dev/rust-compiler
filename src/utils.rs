@@ -1,3 +1,4 @@
+use crate::{compile_chain::CompileChain, formatting::SHORT_NODE_PRINT};
 use std::{
     convert::Infallible,
     fs,
@@ -6,298 +7,186 @@ use std::{
     path::PathBuf,
 };
 
-use crate::formatting::SHORT_NODE_PRINT;
-
-// region: Logger
-
-static mut LOGGER: Logger = Logger::new();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogPrefix {
-    Lex,
-    Parse,
-    Semantic,
-    CodeGen,
-}
-
+#[derive(Debug, Clone)]
 pub struct Logger {
-    log_prefixes: [&'static str; 4],
-    print_logs: [bool; 4],
-    print_output: [bool; 4],
-    current_prefix: LogPrefix,
     file_pos: Pos,
-    padding: String,
     max_digits: Pos,
+    prefix: String,
+    padding: String,
+    pub print_logs: bool,
+    pub print_output: bool,
+    pub print_short_nodes: bool,
 }
 
 impl Logger {
-    pub const fn new() -> Logger {
+    pub fn new(
+        contents: &Contents,
+        print_logs: bool,
+        print_output: bool,
+        print_short_nodes: bool,
+    ) -> Logger {
         Logger {
-            log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-            print_logs: [false, false, true, false],
-            print_output: [false, true, true, false],
-            current_prefix: LogPrefix::Lex,
+            prefix: "LEX".to_string(),
             file_pos: Pos { x: 0, y: 0 },
-            padding: String::new(),
-            max_digits: Pos { x: 0, y: 0 },
+            max_digits: contents.get_max_digits(),
+            padding: " ".repeat(10), // if you have more than 10 digits, you're on your own
+            print_logs,
+            print_output,
+            print_short_nodes,
         }
     }
 
-    pub fn set_short_fmt(_: bool) {
+    pub fn get_padding(&self, p: Pos) -> (&str, &str) {
+        let x_padding = self.max_digits.x - count_digits(p.x + 1);
+        let y_padding = self.max_digits.y - count_digits(p.y + 1);
+
+        (
+            self.padding.get(..x_padding as usize).unwrap(),
+            self.padding.get(..y_padding as usize).unwrap(),
+        )
+    }
+
+    pub fn get_pos(&self) -> Pos {
+        self.file_pos
+    }
+
+    pub fn set_short_fmt(&mut self, state: bool) {
         unsafe {
-            SHORT_NODE_PRINT = false;
-            return;
-
-            // if SHORT_NODE_PRINT == state {
-            //     return;
-            // }
-            // println!("changing short node print to {state}");
-            // SHORT_NODE_PRINT = state;
+            if self.print_short_nodes == state {
+                return;
+            }
+            println!("changing short node print to {state}");
+            self.print_short_nodes = state;
         }
     }
 
-    pub fn add_pos(delta: Pos) {
-        if Logger::print_logs() {
+    pub fn add_pos(&mut self, delta: Pos) {
+        if self.print_logs {
             // println!("{:?} + {delta:?}", unsafe { LOGGER.file_pos });
         }
 
-        unsafe {
-            LOGGER.file_pos.x += delta.x;
-            LOGGER.file_pos.y += delta.y;
-        }
+        self.file_pos.x += delta.x;
+        self.file_pos.y += delta.y;
     }
 
-    pub fn sub_pos(delta: Pos) {
-        if Logger::print_logs() {
+    pub fn sub_pos(&mut self, delta: Pos) {
+        if self.print_logs {
             // println!("{:?} - {delta:?}", unsafe { LOGGER.file_pos });
         }
 
-        unsafe {
-            LOGGER.file_pos.x -= delta.x;
-            LOGGER.file_pos.y -= delta.y;
-        }
+        self.file_pos.x -= delta.x;
+        self.file_pos.y -= delta.y;
     }
 
-    pub fn set_pos(new_pos: Pos) {
-        if Logger::print_logs() {
+    pub fn set_pos(&mut self, new_pos: Pos) {
+        if self.print_logs {
             // println!("{:?} -> {new_pos:?}", unsafe { LOGGER.file_pos });
         }
 
-        unsafe {
-            LOGGER.file_pos = new_pos;
-        }
+        self.file_pos = new_pos;
     }
 
-    pub fn get_prefix() -> &'static str {
-        unsafe { LOGGER.log_prefixes[LOGGER.current_prefix as usize] }
-    }
-
-    pub fn print_logs() -> bool {
-        unsafe { LOGGER.print_logs[LOGGER.current_prefix as usize] }
-    }
-
-    pub fn print_output() -> bool {
-        unsafe {
-            let cond = LOGGER.print_output[LOGGER.current_prefix as usize];
-            if cond {
-                println!(
-                    "\n\n{}\n",
-                    text_to_ascii_art::to_art(">Output<".to_string(), "standard", 8, 0, 0).unwrap()
-                );
-            }
-            cond
-        }
-    }
-
-    pub fn get_pos() -> Pos {
-        unsafe { LOGGER.file_pos }
-    }
-
-    pub fn get_padding(p: Pos) -> (&'static str, &'static str) {
-        unsafe {
-            let x_padding = LOGGER.max_digits.x - count_digits(p.x + 1);
-            let y_padding = LOGGER.max_digits.y - count_digits(p.y + 1);
-            (
-                LOGGER.padding.get(..x_padding as usize).unwrap(),
-                LOGGER.padding.get(..y_padding as usize).unwrap(),
-            )
-        }
-    }
-
-    pub fn set_prefix(new_prefix: LogPrefix) {
-        unsafe {
-            LOGGER.current_prefix = new_prefix;
-        }
-        Self::set_pos(pos(0, 0));
-        if Self::print_logs() {
-            match new_prefix {
-                LogPrefix::Lex => {
-                    println!(
-                        "\n{}\n\n\n",
-                        text_to_ascii_art::to_art(">Lexical<".to_string(), "standard", 8, 0, 0)
-                            .unwrap()
-                    )
-                }
-                LogPrefix::Parse => {
-                    println!(
-                        "\n{}\n\n\n",
-                        text_to_ascii_art::to_art(">Parse<".to_string(), "standard", 8, 0, 0)
-                            .unwrap()
-                    )
-                }
-                LogPrefix::Semantic => {
-                    println!(
-                        "\n{}\n\n\n",
-                        text_to_ascii_art::to_art(">Semantic<".to_string(), "standard", 8, 0, 0)
-                            .unwrap()
-                    )
-                }
-                LogPrefix::CodeGen => {
-                    println!(
-                        "\n{}\n\n\n",
-                        text_to_ascii_art::to_art(">CodeGen<".to_string(), "standard", 8, 0, 0)
-                            .unwrap()
-                    )
-                }
-            }
-        }
-    }
-
-    pub fn toggle_logs(state: bool) {
-        unsafe {
-            if LOGGER.print_logs[LOGGER.current_prefix as usize] == state {
-                println!(
-                    "[COMPILER] Logs already {} for {}",
-                    if state { "enabled" } else { "disabled" },
-                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
-                );
-                return;
-            }
-
-            LOGGER.print_logs[LOGGER.current_prefix as usize] = state;
-            if state {
-                println!(
-                    "[COMPILER] Logs enabled for {}",
-                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
-                );
-            } else {
-                println!(
-                    "[COMPILER] Logs disabled for {}",
-                    LOGGER.log_prefixes[LOGGER.current_prefix as usize]
-                );
-            }
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! debug {
-    ($msg:expr) => {
-        if crate::utils::Logger::print_logs() {
-            let pos = crate::utils::Logger::get_pos();
-            let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-            println!("\n[y:{y_padding}{}, x:{x_padding}{}] {}",
-            pos.y + 1,
-            pos.x + 1,
-                format!($msg)
-            )
-        }
-    };
-    ($fmt:expr, $($arg:tt)+) => {
-        if crate::utils::Logger::print_logs() {
-            let pos = crate::utils::Logger::get_pos();
-            let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
+    pub fn set_prefix(&mut self, new_prefix: &str) {
+        self.prefix = new_prefix.to_string();
+        self.set_pos(pos(0, 0));
+        if self.print_logs {
             println!(
-                "\n[y:{y_padding}{}, x:{x_padding}{}] {}",
-                pos.y + 1,
-                pos.x + 1,
-                format!($fmt, $($arg)+)
-            )
+                "\n{}\n\n\n",
+                text_to_ascii_art::to_art(format!(">{new_prefix}<"), "standard", 8, 0, 0)
+                    .expect("[LOGGER] Failed to generate ASCII art")
+            );
         }
-    };
+    }
+
+    pub fn toggle_logs(&mut self, state: bool) {
+        if self.print_logs {
+            println!(
+                "[COMPILER] Logs already {} for {}",
+                if state { "enabled" } else { "disabled" },
+                self.prefix
+            );
+            return;
+        }
+
+        self.print_logs = state;
+        if state {
+            println!("[COMPILER] Logs enabled for {}", self.prefix);
+        } else {
+            println!("[COMPILER] Logs disabled for {}", self.prefix);
+        }
+    }
+
+    pub fn log_msg_pos(&self) -> String {
+        let pos = self.file_pos;
+        let (x_padding, y_padding) = self.get_padding(pos);
+        format!("[y:{y_padding}{}, x:{x_padding}{}]", pos.y + 1, pos.x + 1)
+    }
+
+    pub fn err_msg(&self, msg: String) -> String {
+        let pos = self.file_pos;
+        let (x_padding, y_padding) = self.get_padding(pos);
+        format!("[ERR_{} | {} {msg}", self.prefix, self.log_msg_pos())
+    }
+
+    pub fn dbg_msg(&self, msg: String) -> String {
+        let pos = self.file_pos;
+        let (x_padding, y_padding) = self.get_padding(pos);
+        format!("\n{} {msg}", self.log_msg_pos())
+    }
 }
 // endregion
-
-// region: Global File Contents
+// region: File Contents
 #[derive(Debug, Clone)]
 pub struct Contents {
-    pub name: String,
-    pub contents: Vec<String>,
+    pub src: Vec<String>,
 }
 
-static mut SOURCE: Contents = Contents {
-    name: String::new(),
-    contents: Vec::new(),
-};
-static mut CONTENTS_STATIC_REF: Option<Box<[&'static str]>> = None;
+impl<'a> Contents {
+    pub fn new(src: Vec<String>) -> Self {
+        Contents { src }
+    }
 
-impl Contents {
-    pub fn init(name: String, contents: Vec<String>) {
-        let max_height = contents.len();
-        let max_width = contents.iter().map(|x| x.len()).max().unwrap_or(0);
-        unsafe {
-            Logger::set_pos(pos(0, 0));
-            LOGGER.padding = " ".repeat(10); // if you have more than 10 digits, you're on your own
-            LOGGER.max_digits = pos(
-                count_digits(max_width as u32),
-                count_digits(max_height as u32),
-            );
-
-            SOURCE = Contents { name, contents };
-
-            CONTENTS_STATIC_REF = Some(
-                SOURCE
-                    .contents
-                    .iter()
-                    .map(|s| &**s as &'static str)
-                    .collect::<Box<_>>(),
-            );
+    pub fn get_max_digits(&self) -> Pos {
+        Pos {
+            x: count_digits(self.src.iter().map(|x| x.len()).max().unwrap_or(0) as u32),
+            y: count_digits(self.src.len() as u32),
         }
     }
 
-    pub fn get_contents() -> &'static [&'static str] {
-        unsafe {
-            match CONTENTS_STATIC_REF.as_ref() {
-                Some(ref lines) => lines,
-                None => panic!("[COMPILER] Contents not initialized, call Contents::init() first"),
-            }
-        }
-    }
-
-    pub fn get_src_oneline(start: Pos, end: Pos) -> &'static str {
-        match Self::get_contents().get(start.y as usize) {
+    pub fn get_src_oneline(&'a self, start: Pos, end: Pos) -> &'a str {
+        match self.src.get(start.y as usize) {
             Some(line) if (end.x as usize) <= line.len() => &line[start.x as usize..end.x as usize],
             _ => {
                 // println!(
                 //     "[COMPILER] Invalid start position {start:?}, {end:?}.. {}",
-                //     Self::get_contents().len()
+                //     self.contents.len()
                 // );
                 " couldn't get src oneline. "
             }
         }
     }
 
-    pub fn get_src(start: Pos, end: Pos) -> Vec<&'static str> {
+    pub fn get_src(&'a self, start: Pos, end: Pos) -> Vec<&'a str> {
         if start.y == end.y {
-            return vec![Self::get_src_oneline(start, end)];
+            return vec![self.get_src_oneline(start, end)];
         }
 
         let mut vec = vec![];
         for i in start.y..=end.y {
             if i == start.y {
-                match Self::get_contents().get(i as usize) {
+                match self.src.get(i as usize) {
                     Some(line) => vec.push(&line[start.x as usize..]),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
                 continue;
             } else if i == end.y {
-                match Self::get_contents().get(i as usize) {
+                match self.src.get(i as usize) {
                     Some(line) => vec.push(&line[..end.x as usize]),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
                 break;
             } else {
-                match Self::get_contents().get(i as usize) {
+                match self.src.get(i as usize) {
                     Some(line) => vec.push(line),
                     None => panic!("Invalid start position {start:?}, {end:?}"),
                 }
@@ -306,15 +195,12 @@ impl Contents {
         vec
     }
 
-    pub fn get_lines(start_y: u32, end_y: u32) -> Vec<&'static str> {
-        let last_line_len;
-        unsafe {
-            last_line_len = match SOURCE.contents.get(end_y as usize) {
-                Some(line) => line.len().max(1) as u32 - 1,
-                None => 0,
-            }
-        }
-        Self::get_src(
+    pub fn get_lines(&'a self, start_y: u32, end_y: u32) -> Vec<&'a str> {
+        let last_line_len = match self.src.get(end_y as usize) {
+            Some(line) => line.len().max(1) as u32 - 1,
+            None => 0,
+        };
+        self.get_src(
             Pos { x: 0, y: start_y },
             Pos {
                 x: last_line_len,
@@ -322,19 +208,9 @@ impl Contents {
             },
         )
     }
-
-    pub fn get<'a>() -> &'a Contents {
-        unsafe {
-            if CONTENTS_STATIC_REF.is_none() {
-                panic!("[COMPILER] Contents not initialized, call Contents::init() first");
-            }
-            &SOURCE
-        }
-    }
 }
 
 // endregion
-
 // region: Position
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
@@ -372,7 +248,6 @@ impl Pos {
     }
 }
 // endregion
-
 // region: Errors
 
 /*DOCS
@@ -476,91 +351,97 @@ impl<T> FromResidual<Result<(), anyhow::Error>> for CompilerResult<T> {
         }
     }
 }
+// endregion
+// region: Misc
+pub fn count_digits<T>(mut n: T) -> T
+where
+    T: Copy + std::cmp::Eq + From<u32> + std::cmp::Ord + std::ops::DivAssign + std::ops::AddAssign,
+{
+    if n == T::from(0) {
+        return T::from(1);
+    }
+    let mut count = T::from(0);
+    while n > T::from(0) {
+        count += T::from(1);
+        n /= T::from(10);
+    }
+    count
+}
 
+pub fn get_cmd_arg(arg_position: usize) -> String {
+    if arg_position == 1 {
+        panic!("[COMPILER] arg position must be at least 1");
+    }
+    let args = std::env::args()
+        .skip(arg_position - 1)
+        .take(1)
+        .collect::<String>();
+    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
+
+    args
+    // let file_name = args.split('.').take(1).collect::<String>();
+    // let extension = args.split('.').last().unwrap_or("");
+}
+
+// TODO(TOM): use std::fs::read_to_string instead
+pub fn get_file_contents(path: &PathBuf) -> Vec<String> {
+    let file =
+        fs::File::open(&path).unwrap_or_else(|_| panic!("[COMPILER] Error opening '{path:?}'\n"));
+    BufReader::new(file)
+        .lines()
+        .map(|line| line.unwrap() + "\n")
+        .collect()
+}
+
+// endregion
+// region: macros
 #[macro_export]
-macro_rules! comp_err {
-    (($data:expr), $fmt:expr, $($arg:tt)+) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        crate::utils::CompilerResult::Err {
-            data: Some($data),
-            error: anyhow::anyhow!(
-                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-                crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
-                format!($fmt, $($arg)+),
-            ),
-        }
-    }};
-    // Wrapping $data:expr in parens to differentiate it from fmt string
-    (($data:expr), $msg:expr) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        crate::utils::CompilerResult::Err {
-            data: Some($data),
-            error: anyhow::anyhow!(
-                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-                crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
-                format!($msg),
-            ),
-        }
-    }};
-    ($fmt:expr, $($arg:tt)+) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        crate::utils::CompilerResult::Err {
-            data: None,
-            error: anyhow::anyhow!(
-                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-                crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
-                format!($fmt, $($arg)+),
-            ),
-        }
-    }};
-
-    ($msg:expr) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        crate::utils::CompilerResult::Err {
-            data: None,
-            error: anyhow::anyhow!(
-                "[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-                crate::utils::Logger::get_prefix(),
-                pos.y + 1,
-                pos.x + 1,
-                format!($msg),
-            ),
-        }
-    }};
+macro_rules! debug {
+    ($this:ident, $fmt:expr, $($arg:tt)+) => {
+        $this.logger.dbg_msg(format!($fmt, $($arg)+))
+    };
+    ($this:ident, $msg:expr) => {
+        $this.logger.dbg_msg(format!($msg))
+    };
 }
 
 #[macro_export]
 macro_rules! err {
-    ($msg:expr) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        Err(anyhow::anyhow!("[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-            crate::utils::Logger::get_prefix(),
-            pos.y + 1,
-            pos.x + 1,
-            format!($msg)
-        ))
-    }};
-    ($fmt:expr, $($arg:tt)+) => {{
-        let pos = crate::utils::Logger::get_pos();
-        let (x_padding, y_padding) = crate::utils::Logger::get_padding(pos);
-        Err(anyhow::anyhow!("[ERR_{} | (y:{y_padding}{}, x:{x_padding}{})] {}",
-            crate::utils::Logger::get_prefix(),
-            pos.y + 1,
-            pos.x + 1,
-            format!($fmt, $($arg)+)
-        ))
-    }};
+    ($this:ident, $fmt:expr, $($arg:tt)+) => {
+        Err(anyhow::anyhow!($this.logger.err_msg(format!($fmt, $($arg)+))))
+    };
+
+    ($this:ident, $msg:expr) => {
+        Err(anyhow::anyhow!($this.logger.err_msg(format!($msg))))
+    };
+}
+
+#[macro_export]
+macro_rules! comp_err {
+    ($this:ident, ($data:expr), $fmt:expr, $($arg:tt)+) => {
+        crate::utils::CompilerResult::Err {
+            data: Some($data),
+            error: anyhow::anyhow!($this.logger.err_msg(format!($fmt, $($arg)+))),
+        }
+    };
+    ($this:ident, ($data:expr), $msg:expr) => {
+        crate::utils::CompilerResult::Err {
+            data: Some($data),
+            error: anyhow::anyhow!($this.logger.err_msg(format!($msg))),
+        }
+    };
+    ($this:ident, $fmt:expr, $($arg:tt)+) => {
+        crate::utils::CompilerResult::Err {
+            data: None,
+            error: anyhow::anyhow!($this.logger.err_msg(format!($fmt, $($arg)+))),
+        }
+    };
+    ($this:ident, $msg:expr) => {
+        crate::utils::CompilerResult::Err {
+            data: None,
+            error: anyhow::anyhow!($this.logger.err_msg(format!($msg))),
+        }
+    };
 }
 
 // This macro will either give you the 'ok' val, or return an error to the function
@@ -610,47 +491,4 @@ macro_rules! upgrade_result {
         }
     }};
 }
-// endregion
-// region: Misc
-
-pub fn count_digits<T>(mut n: T) -> T
-where
-    T: Copy + std::cmp::Eq + From<u32> + std::cmp::Ord + std::ops::DivAssign + std::ops::AddAssign,
-{
-    if n == T::from(0) {
-        return T::from(1);
-    }
-    let mut count = T::from(0);
-    while n > T::from(0) {
-        count += T::from(1);
-        n /= T::from(10);
-    }
-    count
-}
-
-pub fn get_cmd_arg(arg_position: usize) -> String {
-    if arg_position == 1 {
-        panic!("[COMPILER] arg position must be at least 1");
-    }
-    let args = std::env::args()
-        .skip(arg_position - 1)
-        .take(1)
-        .collect::<String>();
-    assert!(!args.is_empty(), "[COMPILER] No file path given!\n");
-
-    args
-    // let file_name = args.split('.').take(1).collect::<String>();
-    // let extension = args.split('.').last().unwrap_or("");
-}
-
-// TODO(TOM): use std::fs::read_to_string instead
-pub fn get_file_contents(path: &PathBuf) -> Vec<String> {
-    let file =
-        fs::File::open(&path).unwrap_or_else(|_| panic!("[COMPILER] Error opening '{path:?}'\n"));
-    BufReader::new(file)
-        .lines()
-        .map(|line| line.unwrap() + "\n")
-        .collect()
-}
-
 // endregion

@@ -6,7 +6,7 @@ use crate::{
     comp_err, debug, err,
     lexer::{Associativity, Token, TokenFlags, TokenKind},
     upgrade_err, upgrade_result,
-    utils::{pos, CompilerResult, Logger, Pos},
+    utils::{pos, CompilerResult, Contents, Logger, Pos},
 };
 use anyhow::{Context, Error, Result};
 use std::{collections::VecDeque, convert::Infallible};
@@ -135,16 +135,27 @@ pub struct Ast {
     pub stmts: Vec<Node<Stmt>>,
 }
 
-pub struct Parser {
+pub struct Parser<'a> {
     pub tokens: VecDeque<Token>,
     pub idx: usize,
+    logger: &'a mut Logger,
+    contents: &'a Contents,
 }
 
 // endregion
 
-impl Parser {
-    pub fn new(tokens: VecDeque<Token>) -> Self {
-        Self { tokens, idx: 0 }
+impl<'a> Parser<'a> {
+    pub fn new(
+        tokens: VecDeque<Token>,
+        contents: &'a Contents,
+        logger: &'a mut Logger,
+    ) -> Parser<'a> {
+        Parser {
+            tokens,
+            idx: 0,
+            contents,
+            logger,
+        }
     }
 
     pub fn parse_tokens(mut self) -> CompilerResult<Ast, Error> {
@@ -180,8 +191,8 @@ impl Parser {
             Some(tok) if tok.kind == TokenKind::Fn => self.parse_fn_decl(),
             Some(tok) if tok.kind == TokenKind::Type => self.parse_type_alias(),
             Some(tok) if tok.kind == TokenKind::Struct => self.parse_struct_decl(),
-            Some(tok) => comp_err!("Invalid Top Level Token => '{tok:?}'"),
-            None => comp_err!("No token to parse"),
+            Some(tok) => comp_err!(self, "Invalid Top Level Token => '{tok:?}'"),
+            None => comp_err!(self, "No token to parse"),
         }
     }
 
@@ -368,10 +379,10 @@ impl Parser {
     fn parse_stmt(&mut self) -> CompilerResult<Node<Stmt>> {
         let kind = match self.peek(0) {
             Some(tok) => {
-                debug!("parsing statement: {tok:?}");
+                debug!(self, "parsing statement: {tok:?}");
                 tok.kind
             } // cannot consume here,
-            None => return comp_err!("No statement to parse"),
+            None => return comp_err!(self, "No statement to parse"),
         };
 
         let stmt = match kind {
@@ -432,7 +443,10 @@ impl Parser {
                         let ident = self.peek(0).copied().unwrap();
 
                         let assign = self.peek_mut(1).unwrap();
-                        assign.kind = assign.kind.assign_to_arithmetic()?;
+                        assign.kind = assign
+                            .kind
+                            .assign_to_arithmetic()
+                            .with_context(|| "failed to convert compound assignment operator")?;
                         assign.start = pos(assign.start.x - 1, assign.start.y);
                         assign.len = 1;
 
@@ -475,9 +489,12 @@ impl Parser {
                 })?
             }
             TokenKind::Fn => {
-                return comp_err!("Functions cannot be nested, they're top level statements")
+                return comp_err!(
+                    self,
+                    "Functions cannot be nested, they're top level statements"
+                )
             }
-            _ => return comp_err!("Invalid Statement =>\n{:#?}", self.tokens.front()),
+            _ => return comp_err!(self, "Invalid Statement =>\n{:#?}", self.tokens.front()),
         };
 
         // statments that require a ';' to end.
@@ -488,7 +505,7 @@ impl Parser {
             | Stmt::Return(_)
             | Stmt::NakedExpr(_) => match self.expect(TokenKind::SemiColon) {
                 Ok(_) => CompilerResult::Ok(stmt),
-                Err(e) => comp_err!((stmt), "Expected ';' to end statement\n{e}"),
+                Err(e) => comp_err!(self, (stmt), "Expected ';' to end statement\n{e}"),
             },
             _ => CompilerResult::Ok(stmt),
         }
@@ -591,7 +608,7 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, min_prec: i32) -> Result<Node<Expr>> {
-        debug!("parsing expression with min_prec: {min_prec}");
+        debug!(self, "parsing expression with min_prec: {min_prec}");
         let mut lhs = self
             .parse_term()
             .with_context(|| "failed to parse lhs of the expression")?;
@@ -599,15 +616,21 @@ impl Parser {
         loop {
             let op = match self.peek(0) {
                 Some(tok) => &tok.kind,
-                None => return err!("No token to parse for the expression rhs =>\n{lhs:#?}"),
+                None => {
+                    return err!(
+                        self,
+                        "No token to parse for the expression rhs =>\n{lhs:#?}"
+                    )
+                }
             };
 
-            debug!("peeked at op: {op:?}");
+            debug!(self, "peeked at op: {op:?}");
 
             let un_prec = op.get_prec_unary();
             let bin_prec = op.get_prec_binary();
 
             debug!(
+                self,
                 "checking if {:?} is a valid unary op: {bin_prec:?}, {un_prec:?}, {}",
                 self.peek(0).unwrap(),
                 op.has_flags_unary(TokenFlags::LHS),
@@ -615,7 +638,7 @@ impl Parser {
 
             // if unary is the only valid operator, and its lhs. its not valid here, so lets return a nice error msg.
             if bin_prec < 0 && op.has_flags_unary(TokenFlags::LHS) {
-                return err!("{op:?} is a unary operator for the left, it cannot be used to the right of an expression.\n{lhs:#?}");
+                return err!(self, "{op:?} is a unary operator for the left, it cannot be used to the right of an expression.\n{lhs:#?}");
             }
 
             // Found a RHS unary operator, e.g. deref pointer.
@@ -635,7 +658,10 @@ impl Parser {
             // NOTE: tokens with no precedence are valued as negative, therefore they always exit the loop.
             // .. parse_expr escapes when it hits a semicolon because its prec is -1 !! thats unclear
             if bin_prec < min_prec {
-                debug!("precedence climb ended: {op:?}({bin_prec}) < {min_prec}");
+                debug!(
+                    self,
+                    "precedence climb ended: {op:?}({bin_prec}) < {min_prec}"
+                );
                 break;
             }
 
@@ -667,13 +693,13 @@ impl Parser {
     fn parse_term(&mut self) -> Result<Node<Expr>> {
         let tok = match self.peek(0) {
             Some(_) => self.consume(),
-            None => return err!("Expected term, found nothing."),
+            None => return err!(self, "Expected term, found nothing."),
         };
 
         match tok.kind {
             // Unary Expressions
             op @ _ if op.has_flags_unary(TokenFlags::LHS) => {
-                debug!("found unary expression: '{op:?}'");
+                debug!(self, "found unary expression: '{op:?}'");
                 let expr = self
                     .parse_expr(op.get_prec_unary() + 1)
                     .with_context(|| "failed to parse unary term")?;
@@ -692,7 +718,7 @@ impl Parser {
                 let expr = self
                     .parse_expr(0)
                     .with_context(|| "failed to parse parentheses term")?;
-                debug!("parsed parens {expr:#?}");
+                debug!(self, "parsed parens {expr:#?}");
                 self.expect(TokenKind::CloseParen)?;
                 Ok(expr)
             }
@@ -778,7 +804,7 @@ impl Parser {
                         end: tok.end_pos(),
                         node: Expr::Term(Term::Ident),
                     }),
-                    None => err!("Incomplete expression, nothing after =>\n{tok:#?}"),
+                    None => err!(self, "Incomplete expression, nothing after =>\n{tok:#?}"),
                 }
             }
             TokenKind::IntLit => Ok(Node {
@@ -796,7 +822,7 @@ impl Parser {
                 end: tok.end_pos(),
                 node: Expr::Term(Term::False),
             }),
-            _ => err!("Invalid Term =>\n{tok:#?}"),
+            _ => err!(self, "Invalid Term =>\n{tok:#?}"),
         }
     }
 
@@ -838,6 +864,7 @@ impl Parser {
                     }
                     _ => {
                         return err!(
+                            self,
                             "Expected an integer literal for array length, found {:?}",
                             self.peek(0)
                         )
@@ -857,8 +884,13 @@ impl Parser {
                 AddressingMode::Primitive
             }
 
-            None => return err!("No token to parse"),
-            _ => return err!("Invalid type parameter, expected 'ptr', 'array', or 'ident'"),
+            None => return err!(self, "No token to parse"),
+            _ => {
+                return err!(
+                    self,
+                    "Invalid type parameter, expected 'ptr', 'array', or 'ident'"
+                )
+            }
         };
 
         Ok(ParseType {
@@ -877,24 +909,25 @@ impl Parser {
     fn token_equals(&self, kind: TokenKind, offset: usize) -> Result<()> {
         match self.peek(offset) {
             Some(tok) if tok.kind == kind => Ok(()),
-            Some(tok) => err!("expected '{kind:?}', found => '{:?}'", tok.kind),
-            None => err!("No token to evaluate"),
+            Some(tok) => err!(self, "expected '{kind:?}', found => '{:?}'", tok.kind),
+            None => err!(self, "No token to evaluate"),
         }
     }
 
     fn consume(&mut self) -> Token {
-        debug!("consuming: {:?}", self.peek(0).unwrap());
+        debug!(self, "consuming: {:?}", self.peek(0).unwrap());
         match self.tokens.pop_front() {
             Some(tok) => {
                 match self.peek(0) {
                     // peek "next" tok (just consumed so next has offset == 0)
-                    Some(next) => Logger::set_pos(next.start),
-                    None => Logger::set_pos(tok.start),
+                    Some(next) => self.logger.set_pos(next.start),
+                    None => self.logger.set_pos(tok.start),
                 }
                 tok
             }
             None => {
-                let err: Result<Infallible> = err!("expected token to consume, found nothing.");
+                let err: Result<Infallible> =
+                    err!(self, "expected token to consume, found nothing.");
                 panic!("{err:?}")
             }
         }

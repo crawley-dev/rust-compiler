@@ -1,42 +1,104 @@
-use std::collections::VecDeque;
-
 use crate::{
-    checker::Checker,
+    checker::{CheckedData, Checker},
     lexer::{Lexer, Token},
     parser::{Ast, Parser},
-    utils::{count_digits, pos, CompilerResult, Contents, LogPrefix, Logger, Pos},
+    utils::{self, pos, CompilerResult, Contents, Logger, Pos},
 };
+use std::collections::VecDeque;
 
-#[derive(Debug, Clone)]
-pub struct ParsableContents(pub VecDeque<Token>);
-
-#[derive(Debug, Clone)]
-pub struct CheckableContents(pub Ast);
-
-#[derive(Debug, Clone)]
-pub struct GeneratableContents(pub Checker);
-
-pub trait Lexable {
-    fn lex<'a>(&'a self) -> ParsableContents;
+pub struct Globals {
+    pub registered_compile_chains: usize,
+    pub compile_chains: Vec<CompileChain>,
 }
 
-impl<'a> Lexable for &'a Contents {
-    fn lex(&self) -> ParsableContents {
-        Logger::set_prefix(LogPrefix::Lex);
+static mut GLOBALS: Globals = Globals {
+    registered_compile_chains: 0,
+    compile_chains: Vec::new(),
+};
 
-        if Logger::print_logs() {
-            println!("\nContents:\n{self:#?}\n");
+impl Globals {
+    pub fn get(id: usize) -> &'static CompileChain {
+        unsafe {
+            GLOBALS
+                .compile_chains
+                .get(id)
+                .expect("[COMPILER] Invalid compile chain ID")
+        }
+    }
+
+    pub fn register_new_compile_chain(
+        name: Option<&str>,
+        contents: Contents,
+        logger: Logger,
+    ) -> &'static mut CompileChain {
+        unsafe {
+            let name = match name {
+                Some(n) => n.to_string(),
+                None => format!("CompileChain_{}", GLOBALS.registered_compile_chains),
+            };
+            let id = GLOBALS.registered_compile_chains;
+            GLOBALS.registered_compile_chains += 1;
+            GLOBALS.compile_chains.push(CompileChain {
+                compile_chain_id: id,
+                name,
+                logger,
+                contents,
+                cur_stage: None,
+            });
+            GLOBALS
+                .compile_chains
+                .last_mut()
+                .expect("[COMPILER] Failed to register new compile chain")
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CompileChain {
+    pub compile_chain_id: usize,
+    pub name: String,
+    pub logger: Logger,
+    pub contents: Contents,
+    pub cur_stage: Option<CompileStage>,
+}
+
+#[derive(Debug)]
+pub enum CompileStage {
+    Lex(VecDeque<Token>),
+    Parse(Ast),
+    Check(CheckedData),
+    // Generate,
+}
+
+impl CompileChain {
+    pub fn lex(&mut self) -> &mut Self {
+        self.logger.set_prefix("Lex");
+        self.logger.print_output = false;
+        self.logger.print_logs = false;
+
+        match self.cur_stage {
+            Some(CompileStage::Lex(_)) => {
+                panic!(
+                    "[COMPILER] Cannot lex at any compilation stage other than the initial stage."
+                );
+            }
+            _ => {}
         }
 
-        let file_contents = self.contents.join("");
-        let result = Lexer::new(&file_contents).tokenise();
+        let lexer = Lexer::new(
+            &self.contents,
+            &mut self.logger,
+            self.compile_chain_id as u8,
+        );
+        let result = lexer.tokenise();
 
         match result {
             CompilerResult::Ok(tokens) => {
-                if Logger::print_output() {
+                if self.logger.print_output {
                     println!("{tokens:?}");
                 }
-                ParsableContents(tokens)
+                self.cur_stage = Some(CompileStage::Lex(tokens));
+                self
             }
             CompilerResult::Err { data, error } => {
                 let tokens = data.unwrap_or(VecDeque::new());
@@ -44,58 +106,239 @@ impl<'a> Lexable for &'a Contents {
                     Some(tok) => (tok.start, tok.len),
                     None => (pos(0, 0), 0),
                 };
-                handle_compile_error(tokens, error, start, pos(start.x + tok_len, start.y))
+                self.handle_compile_error(tokens, error, start, pos(start.x + tok_len, start.y))
             }
         }
     }
-}
 
-impl ParsableContents {
-    pub fn parse(self) -> CheckableContents {
-        Logger::set_prefix(LogPrefix::Parse);
+    pub fn parse(&mut self) -> &mut Self {
+        self.logger.set_prefix("Parse");
+        self.logger.print_output = true;
+        self.logger.print_logs = false;
 
-        let result = Parser::new(self.0).parse_tokens();
+        let tokens = match self.cur_stage.take() {
+            Some(CompileStage::Lex(tokens)) => tokens,
+            _ => {
+                panic!(
+                    "[COMPILER] Cannot parse at any compilation stage other than lexical analysis."
+                );
+            }
+        };
+        let result = Parser::new(tokens, &self.contents, &mut self.logger).parse_tokens();
 
         match result {
-            CompilerResult::Ok(tokens) => {
-                if Logger::print_output() {
-                    println!("{tokens:?}");
+            CompilerResult::Ok(data) => {
+                if self.logger.print_output {
+                    println!("{data:?}");
                 }
-                CheckableContents(tokens)
+                self.cur_stage = Some(CompileStage::Parse(data));
+                self
             }
             CompilerResult::Err { data, error } => {
                 let ast = data.unwrap(); // TODO(TOM): this should never fail, but never know.
-                let end = Logger::get_pos();
+                let end = self.logger.get_pos();
                 let start = pos(0, end.y);
-                handle_compile_error(ast, error, start, end)
+                self.handle_compile_error(ast, error, start, end)
             }
         }
     }
-}
 
-impl CheckableContents {
-    pub fn check(self) -> GeneratableContents {
-        Logger::set_prefix(LogPrefix::Semantic);
-        Logger::set_short_fmt(true);
+    pub fn check(&mut self) -> &mut Self {
+        self.logger.set_prefix("Semantic");
+        self.logger.print_output = true;
+        self.logger.print_logs = false;
 
-        let result = Checker::new().check_ast(self.0);
+        let ast = match self.cur_stage.take() {
+            Some(CompileStage::Parse(ast)) => ast,
+            _ => {
+                panic!("[COMPILER] Cannot check at any compilation stage other than parsing.");
+            }
+        };
+        let result = Checker::new(&self.contents, &mut self.logger).check_ast(ast);
 
         match result {
             CompilerResult::Ok(checker) => {
-                if Logger::print_output() {
+                if self.logger.print_output {
                     println!("{checker:#?}");
                 }
-                GeneratableContents(checker)
+                self.cur_stage = Some(CompileStage::Check((checker)));
+                self
             }
             CompilerResult::Err { data, error } => {
                 let checker = data.unwrap(); // TODO(TOM): this should never fail, but never know.
-                let end = Logger::get_pos();
+                let end = self.logger.get_pos();
                 let start = pos(0, end.y);
-                handle_compile_error(checker, error, start, end)
+                self.handle_compile_error(checker, error, start, end)
             }
         }
     }
+
+    pub fn handle_compile_error<T: std::fmt::Debug>(
+        &mut self,
+        error_data: T,
+        error: anyhow::Error,
+        error_start: Pos,
+        error_end: Pos,
+    ) -> ! {
+        let panic_banner =
+            match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
+                Ok(art) => art,
+                Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
+            };
+
+        println!("start: {error_start:#?}, end: {error_end:#?}");
+
+        let src_content = self.contents.get_lines(error_start.y, error_end.y);
+        let erroring_code = src_content
+            .iter()
+            .flat_map(|x| x.chars())
+            .collect::<String>();
+
+        // TODO(TOM): this doesn't cover some edge cases.
+        let (highlight_padding, error_highlight);
+        let first_char = src_content
+            .iter()
+            .flat_map(|x| x.chars())
+            .position(|x| x.is_alphanumeric())
+            .unwrap_or(0);
+        highlight_padding = " ".repeat(first_char);
+        error_highlight = "^".repeat(error_end.x as usize - first_char);
+
+        let len = error.chain().len();
+        let mut error_chain = String::from("[\n");
+        for (i, err) in error.chain().enumerate().rev() {
+            let err_msg = err.to_string();
+            for line in err_msg.lines() {
+                error_chain.push_str(&"    ");
+                error_chain.push_str(line);
+                error_chain.push('\n');
+            }
+            if let Some('\n') = error_chain.chars().last() {
+                error_chain.pop();
+            }
+            error_chain.push_str(",\n");
+        }
+        error_chain.pop();
+        error_chain.push_str("\n]");
+
+        println!(
+            "\n{panic_banner}\n\
+        \nBacktrace:\
+        \n{backtrace}\n
+        \nError Data:\
+        \n{error_data:#?}\n\
+        \nError Occurred near:\
+        \n{err_line_num}: {erroring_code}\
+        \n{line_digits}  {highlight_padding}{error_highlight}\n\
+        \nError Chain:\
+        \n{error_chain}\n",
+            err_line_num = error_start.y + 1,
+            line_digits = " ".repeat(utils::count_digits(error_start.y) as usize),
+            backtrace = error.backtrace(),
+        );
+
+        std::process::exit(0)
+    }
 }
+
+// use std::collections::VecDeque;
+
+// use crate::{
+//     checker::Checker,
+//     lexer::{Lexer, Token},
+//     parser::{Ast, Parser},
+//     utils::{count_digits, pos, CompileStage, CompilerResult, Contents, Logger, Pos},
+// };
+
+// #[derive(Debug, Clone)]
+// pub struct ParsableContents(pub VecDeque<Token>);
+
+// #[derive(Debug, Clone)]
+// pub struct CheckableContents(pub Ast);
+
+// #[derive(Debug, Clone)]
+// pub struct GeneratableContents(pub Checker);
+
+// pub trait Lexable {
+//     fn lex<'a>(&'a self) -> ParsableContents;
+// }
+
+// impl<'a> Lexable for &'a Contents {
+//     fn lex(&self) -> VecDeque<Token> {
+//         Logger::set_prefix(LogPrefix::Lex);
+
+//         if Logger::print_logs() {
+//             println!("\nContents:\n{self:#?}\n");
+//         }
+
+//         let file_contents = self.contents.join("");
+//         let result = Lexer::new(compile_chain).tokenise();
+
+//         match result {
+//             CompilerResult::Ok(tokens) => {
+//                 if Logger::print_output() {
+//                     println!("{tokens:?}");
+//                 }
+//                 ParsableContents(tokens)
+//             }
+//             CompilerResult::Err { data, error } => {
+//                 let tokens = data.unwrap_or(VecDeque::new());
+//                 let (start, tok_len) = match tokens.back() {
+//                     Some(tok) => (tok.start, tok.len),
+//                     None => (pos(0, 0), 0),
+//                 };
+//                 handle_compile_error(tokens, error, start, pos(start.x + tok_len, start.y))
+//             }
+//         }
+//     }
+// }
+
+// impl ParsableContents {
+//     pub fn parse(self) -> CheckableContents {
+//         Logger::set_prefix(LogPrefix::Parse);
+
+//         let result = Parser::new(self.0).parse_tokens();
+
+//         match result {
+//             CompilerResult::Ok(tokens) => {
+//                 if Logger::print_output() {
+//                     println!("{tokens:?}");
+//                 }
+//                 CheckableContents(tokens)
+//             }
+//             CompilerResult::Err { data, error } => {
+//                 let ast = data.unwrap(); // TODO(TOM): this should never fail, but never know.
+//                 let end = Logger::get_pos();
+//                 let start = pos(0, end.y);
+//                 handle_compile_error(ast, error, start, end)
+//             }
+//         }
+//     }
+// }
+
+// impl CheckableContents {
+//     pub fn check(self) -> GeneratableContents {
+//         Logger::set_prefix(LogPrefix::Semantic);
+//         Logger::set_short_fmt(true);
+
+//         let result = Checker::new().check_ast(self.0);
+
+//         match result {
+//             CompilerResult::Ok(checker) => {
+//                 if Logger::print_output() {
+//                     println!("{checker:#?}");
+//                 }
+//                 GeneratableContents(checker)
+//             }
+//             CompilerResult::Err { data, error } => {
+//                 let checker = data.unwrap(); // TODO(TOM): this should never fail, but never know.
+//                 let end = Logger::get_pos();
+//                 let start = pos(0, end.y);
+//                 handle_compile_error(checker, error, start, end)
+//             }
+//         }
+//     }
+// }
 
 // impl GeneratableContents {
 //     pub fn generate(self, file_name: String) {
@@ -129,68 +372,3 @@ fn code_gen(data: Checker, file_name: String) {
     };
 }
 */
-
-pub fn handle_compile_error<T: std::fmt::Debug>(
-    error_data: T,
-    error: anyhow::Error,
-    error_start: Pos,
-    error_end: Pos,
-) -> ! {
-    let panic_banner = match text_to_ascii_art::to_art(">Error<".to_string(), "standard", 8, 0, 0) {
-        Ok(art) => art,
-        Err(e) => format!("[COMPILER] Ascii Art Gen Error: {e}"),
-    };
-
-    println!("start: {error_start:#?}, end: {error_end:#?}");
-
-    let src_content = Contents::get_lines(error_start.y, error_end.y);
-    let erroring_code = src_content
-        .iter()
-        .flat_map(|x| x.chars())
-        .collect::<String>();
-
-    // TODO(TOM): this doesn't cover some edge cases.
-    let (highlight_padding, error_highlight);
-    let first_char = src_content
-        .iter()
-        .flat_map(|x| x.chars())
-        .position(|x| x.is_alphanumeric())
-        .unwrap_or(0);
-    highlight_padding = " ".repeat(first_char);
-    error_highlight = "^".repeat(error_end.x as usize - first_char);
-
-    let len = error.chain().len();
-    let mut error_chain = String::from("[\n");
-    for (i, err) in error.chain().enumerate().rev() {
-        let err_msg = err.to_string();
-        for line in err_msg.lines() {
-            error_chain.push_str(&"    ");
-            error_chain.push_str(line);
-            error_chain.push('\n');
-        }
-        if let Some('\n') = error_chain.chars().last() {
-            error_chain.pop();
-        }
-        error_chain.push_str(",\n");
-    }
-    error_chain.pop();
-    error_chain.push_str("\n]");
-
-    println!(
-        "\n{panic_banner}\n\
-        \nBacktrace:\
-        \n{backtrace}\n
-        \nError Data:\
-        \n{error_data:#?}\n\
-        \nError Occurred near:\
-        \n{err_line_num}: {erroring_code}\
-        \n{line_digits}  {highlight_padding}{error_highlight}\n\
-        \nError Chain:\
-        \n{error_chain}\n",
-        err_line_num = error_start.y + 1,
-        line_digits = " ".repeat(count_digits(error_start.y) as usize),
-        backtrace = error.backtrace(),
-    );
-
-    std::process::exit(0)
-}

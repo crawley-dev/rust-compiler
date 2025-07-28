@@ -9,7 +9,7 @@ use std::{
 };
 
 const PRINT_TERM_POS: bool = false;
-pub static mut SHORT_NODE_PRINT: bool = false;
+pub static SHORT_NODE_PRINT: bool = false;
 
 // region: lex.rs
 impl Debug for Token {
@@ -35,44 +35,44 @@ impl Debug for Token {
     }
 }
 
-impl Display for Token {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let str = self.str().replace("\n", "\\n");
-        match self.kind {
-            _ => write!(f, "{:?}({str})", self.kind),
-        }
-    }
-}
+// impl Display for Token {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+// let str = self.str().replace("\n", "\\n");
+// match self.kind {
+//     _ => write!(f, "{:?}({str})", self.kind),
+// }
+//     }
+// }
 
-impl Display for Lexer {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut val_max_len = 0;
-        let mut x_max_len = 0;
-        let mut y_max_len = 0;
-        for tok in &self.tokens {
-            let val_cur_len = format!("{tok}").len();
-            val_max_len = max(val_max_len, val_cur_len);
+// impl Display for Lexer {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         let mut val_max_len = 0;
+//         let mut x_max_len = 0;
+//         let mut y_max_len = 0;
+//         for tok in &self.tokens {
+//             let val_cur_len = format!("{tok}").len();
+//             val_max_len = max(val_max_len, val_cur_len);
 
-            let x = tok.start.x;
-            let y = tok.start.y;
-            x_max_len = max(x_max_len, format!("{x}").len());
-            y_max_len = max(y_max_len, format!("{y}").len());
-        }
+//             let x = tok.start.x;
+//             let y = tok.start.y;
+//             x_max_len = max(x_max_len, format!("{x}").len());
+//             y_max_len = max(y_max_len, format!("{y}").len());
+//         }
 
-        for tok in &self.tokens {
-            let val_str = format!("{tok}");
-            let val_whitespace = " ".repeat(val_max_len - val_str.len());
-            let x_str = format!("{:?}", tok.start.x);
-            let x_whitespace = " ".repeat(x_max_len - x_str.len());
-            let y_str = format!("{:?}", tok.start.y);
-            let y_whitespace = " ".repeat(y_max_len - y_str.len());
-            write!(f,
-                "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) | len({:2}) }}\n", tok.len
-            )?
-        }
-        Ok(())
-    }
-}
+//         for tok in &self.tokens {
+//             let val_str = format!("{tok}");
+//             let val_whitespace = " ".repeat(val_max_len - val_str.len());
+//             let x_str = format!("{:?}", tok.start.x);
+//             let x_whitespace = " ".repeat(x_max_len - x_str.len());
+//             let y_str = format!("{:?}", tok.start.y);
+//             let y_whitespace = " ".repeat(y_max_len - y_str.len());
+//             write!(f,
+//                 "Token {{ {val_str}{val_whitespace} | (col: {y_whitespace}{y_str}, row: {x_whitespace}{x_str}) | len({:2}) }}\n", tok.len
+//             )?
+//         }
+//         Ok(())
+//     }
+// }
 // endregion
 
 // region: parse.rs, semantic.rs
@@ -220,15 +220,15 @@ impl PosAwareDebug for Expr {
         // The galaxy brain move, derive(Debug) for stmt, then use that to get variant's name.
         // could I just do this in the match below? yes. did I? no.
 
+        let pos = start.fmt_range(end);
         let variant_name = self.get_variant_name();
         match self {
             Expr::Term(term) => match term {
                 Term::Ident | Term::IntLit | Term::False | Term::True => {
-                    let src = Contents::get_src_oneline(start, end);
                     if PRINT_TERM_POS {
-                        write!(f, "{variant_name}({src})")
+                        write!(f, "{variant_name} | {pos}",)
                     } else {
-                        write!(f, "{variant_name}({src})")
+                        write!(f, "{variant_name}")
                     }
                 }
                 Term::FnCall { .. } | Term::StructLit { .. } | Term::ArrayLit { .. } => {
@@ -237,13 +237,13 @@ impl PosAwareDebug for Expr {
             },
             Expr::Unary { op, expr } => f
                 .debug_struct(&variant_name)
-                .field("pos", &format_args!("{}", start.fmt_range(end)))
+                .field("pos", &pos)
                 .field("op", op)
                 .field("expr", expr)
                 .finish(),
             Expr::Binary { lhs, op, rhs } => f
                 .debug_struct(&variant_name)
-                .field("pos", &format_args!("{}", start.fmt_range(end)))
+                .field("pos", &pos)
                 .field("lhs", lhs)
                 .field("op", op)
                 .field("rhs", rhs)
@@ -269,11 +269,10 @@ impl PosAwareDebug for Term {
 
         match self {
             Term::Ident | Term::IntLit | Term::False | Term::True => {
-                let src = Contents::get_src_oneline(start, end);
                 if PRINT_TERM_POS {
-                    write!(f, "{variant_name}({src}) | {pos}")
+                    write!(f, "{variant_name} | {pos}")
                 } else {
-                    write!(f, "{variant_name}({src})")
+                    write!(f, "{variant_name}")
                 }
             }
             Term::StructLit { ident, fields } => f

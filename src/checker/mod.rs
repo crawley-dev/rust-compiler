@@ -150,11 +150,29 @@ struct SemContext {
     func: FuncContext,
 }
 
-#[derive(Educe, Clone)]
+#[derive(Educe)]
 #[educe(Debug)]
-pub struct Checker {
+pub struct CheckedData {
+    #[educe(Debug(ignore))]
+    pub ast: Ast,
+    pub type_vec: Vec<StoredType>,
+    pub type_map: HashMap<String, usize>,
+    pub fn_vec: Vec<Function>,
+    #[educe(Debug(ignore))]
+    pub fn_map: HashMap<String, Vec<usize>>,
+    #[educe(Debug(ignore))]
+    pub stack_var_vec: Vec<Variable>,
+    #[educe(Debug(ignore))]
+    pub stack_var_map: HashMap<String, usize>,
+}
+
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct Checker<'a> {
     pub ast: Ast,
     ctx: SemContext,
+    pub logger: &'a mut Logger,
+    pub contents: &'a Contents,
 
     #[educe(Debug(ignore))]
     pub type_map: HashMap<String, usize>,
@@ -173,8 +191,8 @@ pub struct Checker {
 
 // endregion
 
-impl Checker {
-    pub fn new() -> Checker {
+impl<'a> Checker<'a> {
+    pub fn new(contents: &'a Contents, logger: &'a mut Logger) -> Checker<'a> {
         let type_vec = Vec::from([
             new_primitive("void", 0, TypeMode::Void), // void is a special case, no size
             new_primitive("bool", 1, TypeMode::Boolean),
@@ -201,7 +219,7 @@ impl Checker {
             type_map.insert(ident, idx);
         }
 
-         Self {
+         Checker {
             ast: Ast { stmts: Vec::new() },
             ctx: SemContext {
                 loop_count: 0,
@@ -212,6 +230,8 @@ impl Checker {
                     signature: String::new(),
                 },
             },
+            contents,
+            logger,
 
             type_vec,
             fn_vec: Vec::new(),
@@ -222,7 +242,7 @@ impl Checker {
         }
     }
 
-    pub fn check_ast(mut self, ast: Ast) -> CompilerResult<Checker, Error> {
+    pub fn check_ast(mut self, ast: Ast) -> CompilerResult<CheckedData, Error> {
         let mut sem_ast = Ast {
             stmts: Vec::with_capacity(ast.stmts.len()),
         };
@@ -232,7 +252,15 @@ impl Checker {
         for stmt in &ast.stmts {
              if let Result::Err(error)  = self.index_top_level(stmt) {
                 return CompilerResult::Err {
-                    data: Some(self),
+                    data: Some(CheckedData {
+                        ast: sem_ast,
+                        type_vec: self.type_vec,
+                        type_map: self.type_map,
+                        fn_vec: self.fn_vec,
+                        fn_map: self.fn_map,
+                        stack_var_vec: self.stack_var_vec,
+                        stack_var_map: self.stack_var_map,
+                    }),
                     error,
                 }
             };
@@ -247,17 +275,21 @@ impl Checker {
                     if let Some(Some(data)) = data {
                         sem_ast.stmts.push(data);
                     }
-
-                    self.ast = sem_ast;
                     return CompilerResult::Err {
-                        data: Some(self),
+                        data: Some(CheckedData {
+                            ast: sem_ast,
+                            type_vec: self.type_vec,
+                            type_map: self.type_map,
+                            fn_vec: self.fn_vec,
+                            fn_map: self.fn_map,
+                            stack_var_vec: self.stack_var_vec,
+                            stack_var_map: self.stack_var_map,
+                        }),
                         error,
                     }
                 },
             }
         }
-
-        self.ast = sem_ast;
 
         /*
         // TODO(TOM): for ref, cpp "main" function either:
@@ -295,15 +327,23 @@ impl Checker {
         //     _ => Ok(checker),
         // }
         */
-        CompilerResult::Ok(self)
+        CompilerResult::Ok(CheckedData {
+            ast: sem_ast,
+            type_vec: self.type_vec,
+            type_map: self.type_map,
+            fn_vec: self.fn_vec,
+            fn_map: self.fn_map,
+            stack_var_vec: self.stack_var_vec,
+            stack_var_map: self.stack_var_map,
+        })
     }
 
     // region: Top Level
     fn index_top_level(&mut self, stmt: &Node<Stmt>) -> Result<()> {
-        Logger::set_pos(stmt.start);
+        self.logger.set_pos(stmt.start);
 
         // index all the functions and type aliases, so we can call a func later in the file & recurse.
-        debug!("Indexing top level stmt: {stmt:#?}");
+        debug!(self, "Indexing top level stmt: {stmt:#?}");
 
         match &stmt.node {
             Stmt::FnDecl { ident, args, scope, return_type } => {
@@ -348,7 +388,7 @@ impl Checker {
                 self.index_struct_decl(*ident, fields)
             }
             _ => err!(
-                "A Program only consists of Top-Level Statements, this is a {stmt:?}"
+                self, "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
         }
     }
@@ -368,7 +408,7 @@ impl Checker {
             // These have already been indexed, so we just return None.
             Stmt::TypeAlias { .. } | Stmt::StructDecl { .. } => CompilerResult::Ok(None),
             _ => comp_err!(
-                "A Program only consists of Top-Level Statements, this is a {stmt:?}"
+                self, "A Program only consists of Top-Level Statements, this is a {stmt:?}"
             ),
         }
     }
@@ -383,12 +423,12 @@ impl Checker {
         let mut function_index = None;
         let overloads = self.fn_map.get(fn_ident).unwrap();
 
-        debug!("Checking function '{}'", fn_ident);
+        debug!(self, "Checking function '{}'", fn_ident);
 
         for overload_idx in overloads {
             let overload = self.fn_vec.get(*overload_idx).unwrap();
 
-            debug!("Checking overload: '{}'", overload.signature);
+            debug!(self, "Checking overload: '{}'", overload.signature);
 
             // this overload isn't initialised, so its the current overload.
             if overload.scope.is_none() {
@@ -401,7 +441,7 @@ impl Checker {
         // these should always be the same, as we are checking an indexed func, but compiler cannot be sure.
         let (function, function_index) = match (function, function_index) {
             (Some(function), Some(function_index)) => (function, function_index),
-            _ => return comp_err!((Node { start, end, node: Stmt::FnSemantics {id: self.fn_vec.len()} }), "Function '{}' does not exist with the same signature", fn_ident),
+            _ => return comp_err!(self, (Node { start, end, node: Stmt::FnSemantics {id: self.fn_vec.len()} }), "Function '{fn_ident}' does not exist with the same signature"),
         };
 
         self.ctx.func.signature = function.signature.clone();
@@ -445,7 +485,7 @@ impl Checker {
         if self.ctx.func.return_type.type_id != VOID_ID {
             match checked_scope.node.stmts.last() {
                 Some(stmt) => Self::check_node_returns(&stmt.node),
-                None => return comp_err!((fn_sem), "Not all code paths return in '{}'", function.signature),
+                None => return comp_err!(self, (fn_sem), "Not all code paths return in '{}'", function.signature),
             };
         }
 
@@ -453,7 +493,7 @@ impl Checker {
         let mut_function = self.fn_vec.get_mut(function_index).unwrap();
         mut_function.scope = Some(checked_scope);
 
-        debug!("Function '{}' checked successfully", mut_function.signature);
+        debug!(self, "Function '{}' checked successfully", mut_function.signature);
         CompilerResult::Ok(fn_sem)
     }
     
@@ -467,7 +507,7 @@ impl Checker {
             let arg_ident = arg.ident.str();
 
             if !self.is_ident_unique(arg_ident) || semantic_map.contains_key(arg_ident) {
-                return err!("Argument's name is already in use, '{arg_ident}' in function {fn_ident}");
+                return err!(self, "Argument's name is already in use, '{arg_ident}' in function {fn_ident}");
             }
 
             let addr_type = AddressedType {
@@ -488,7 +528,7 @@ impl Checker {
         let overloads = match self.fn_map.get(fn_ident) {
             Some(overloads) => overloads,
             None => {
-                debug!("no instances of this function found, returning 0");
+                debug!(self, "no instances of this function found, returning 0");
                 return Ok(0)}, // this is a new function, its all good!
         };
         
@@ -499,7 +539,7 @@ impl Checker {
             let overload = self.fn_vec.get(*overload).unwrap();
 
             if return_type != original_decl.return_type {
-                return err!("All overloads of Function '{fn_ident}' must have the same return type");
+                return err!(self, "All overloads of Function '{fn_ident}' must have the same return type");
             }
 
             if overload.args.len() != semantics.len() {
@@ -510,7 +550,7 @@ impl Checker {
                 if overload == new {
                     match matching {
                         Some(_) => return err!(
-                            "Function '{fn_ident}' already exists with the same signature"
+                           self,  "Function '{fn_ident}' already exists with the same signature"
                         ),
                         None => matching = Some(idx),                        
                     }
@@ -595,7 +635,7 @@ impl Checker {
                                 }
                             }
                         }
-                        debug!("added\n{:#?}", checked_stmts.last());
+                        debug!(self, "added\n{:#?}", checked_stmts.last());
                     }
 
                     for stmt in stmts {
@@ -615,7 +655,7 @@ impl Checker {
                             }
                         }
 
-                        debug!("added\n{:#?}", checked_stmts.last())
+                        debug!(self, "added\n{:#?}", checked_stmts.last());
                     }
 
                     CompilerResult::Ok(Scope {
@@ -631,18 +671,18 @@ impl Checker {
     // endregion
     
     fn index_type_alias(&mut self, alias_str: &str, parse_type_str: &str) -> Result<()> {
-        debug!("checking type alias: {alias_str}");
+        debug!(self, "checking type alias: {alias_str}");
 
         // check if its already a type
         if self.type_map.get(alias_str).is_some() {
-            return err!("Duplicate definition of a Type: '{}'", alias_str);
+            return err!(self, "Duplicate definition of a Type: '{}'", alias_str);
         } else if self.stack_var_map.contains_key(alias_str) {
-            return err!("Illegal Type alias, a variable is assigned this name: '{}'", alias_str);
+            return err!(self, "Illegal Type alias, a variable is assigned this name: '{}'", alias_str);
         }
 
         let original_id = match self.type_map.get(parse_type_str) {
             Some(id) => *id,
-            None => return err!("Type not found: '{}'", parse_type_str),
+            None => return err!(self, "Type not found: '{}'", parse_type_str),
         };
         let aliased_type = StoredType::Alias { ident: alias_str.to_string(), aliased_id: original_id };
 
@@ -654,34 +694,34 @@ impl Checker {
 
     fn index_struct_decl(&mut self, ident: Token, fields: &[Arg]) -> Result<()> {
 
-        debug!("checking struct decl: {ident:#?}");
+        debug!(self, "checking struct decl: {ident:#?}");
 
         // check if its already a type
         if self.type_map.get(ident.str()).is_some() {
-            return err!("Duplicate definition of a Type: '{}'", ident.str());
+            return err!(self, "Duplicate definition of a Type: '{}'", ident.str());
         } 
 
         let mut width = 0;
         let mut members = Vec::with_capacity(fields.len());
         for (i, field) in fields.iter().enumerate() {
             if fields.iter().skip(i+1).position(|x| x.ident.str() == field.ident.str()).is_some() {
-                return err!("Duplicate definition of a Struct field: '{}'", field.ident.str());
+                return err!(self, "Duplicate definition of a Struct field: '{}'", field.ident.str());
             }
             else if field.ident.str() == ident.str() {
                 match field.parse_type.addr_mode {
                     AddressingMode::Pointer { .. } => (), // not recursive.
-                    _ => return err!("Struct field cannot be the same name as the struct: '{}'", field.ident.str()),
+                    _ => return err!(self, "Struct field cannot be the same name as the struct: '{}'", field.ident.str()),
                 }
             }
             else if self.type_map.contains_key(field.ident.str()) {
-                return err!("Illegal struct field, a type is assigned this name: '{}'", field.ident.str());
+                return err!(self, "Illegal struct field, a type is assigned this name: '{}'", field.ident.str());
             } 
 
             let field_type_ident = field.parse_type.get_ident().str();
-            debug!("trying to find field type: {field_type_ident}");
+            debug!(self, "trying to find field type: {field_type_ident}");
             let field_id = match self.type_map.get(field_type_ident) {
                 Some(id) => *id,
-                None => return err!("Struct field's type not found: '{}'", field_type_ident),
+                None => return err!(self, "Struct field's type not found: '{}'", field_type_ident),
             };
             let field_type = self.type_vec.get(field_id).unwrap();
 
@@ -702,7 +742,7 @@ impl Checker {
             members,
         };
         
-        debug!("struct decl looks ok, adding type.. {:#?}", struct_type);
+        debug!(self, "struct decl looks ok, adding type.. {:#?}", struct_type);
         
         self.type_map.insert(ident.str().to_string(), self.type_vec.len());
         self.type_vec.push(struct_type);
@@ -810,23 +850,23 @@ impl Checker {
     // endregion
 
     fn check_stmt(&mut self, stmt: Node<Stmt>) -> CompilerResult<Node<Stmt>> {
-        Logger::set_pos(stmt.start);
+        self.logger.set_pos(stmt.start);
         print!("\n\n");
-        debug!("checking {stmt:#?}");
+        debug!(self, "checking {stmt:#?}");
         
         match stmt.node {
             Stmt::VarDecl { init_expr, arg } => {
                 // check for name collisions
                 let str = arg.ident.str();
                 if self.stack_var_map.contains_key(str) {
-                    return comp_err!("Duplicate definition of a Variable: '{str}'");
+                    return comp_err!(self, "Duplicate definition of a Variable: '{str}'");
                 } else if self.type_map.contains_key(str) {
-                    return comp_err!("Illegal Variable name, Types are reserved: '{str}'");
+                    return comp_err!(self, "Illegal Variable name, Types are reserved: '{str}'");
                 }
 
                 let base_id = *self.type_map.get(arg.parse_type.get_ident().str()).unwrap();
                 if base_id == VOID_ID {
-                    return comp_err!("Cannot declare a variable of type 'void'");
+                    return comp_err!(self, "Cannot declare a variable of type 'void'");
                 };
                 
                 let var_type = AddressedType {
@@ -852,10 +892,10 @@ impl Checker {
                     let expected = self.create_expr_semantics(var.var_type)?;
                     let init_expr = self.check_expr(expr)?;
 
-                    debug!("init expr for '{}'\nexpected: {expected:#?}\ngiven expr: {init_expr:#?}", var.ident.str());
+                    debug!(self, "init expr for '{}'\nexpected: {expected:#?}\ngiven expr: {init_expr:#?}", var.ident.str());
 
                     if let Err(error) = self.check_type_equivalence(&expected, &init_expr) {
-                        return comp_err!((Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var.clone())}), "Invalid init expr for variable {}\n{error}", var.ident);
+                        return comp_err!(self, (Node { start: stmt.start, end: stmt.end, node: Stmt::VarSemantics(var.clone())}), "Invalid init expr for variable {:?}\n{error}", var.ident);
                     }
                 }
 
@@ -878,7 +918,7 @@ impl Checker {
                             let var_mut = self.get_var_mut(ident.str())?;
                             var_mut.init_expr = InitExpr::Deferred
                         }
-                        _ => return comp_err!((stmt), "Re-assignment of a Constant:\n{var:#?}"),
+                        _ => return comp_err!(self, (stmt), "Re-assignment of a Constant:\n{var:#?}"),
                     }
                 }
 
@@ -894,7 +934,7 @@ impl Checker {
                     TypeMode::Boolean => (),
                     _ => {
                         return comp_err!(
-                            "'If' statement condition not 'boolean'\n{condition:#?}"
+                            self, "'If' statement condition not 'boolean'\n{condition:#?}"
                         );
                     }
                 }
@@ -928,7 +968,7 @@ impl Checker {
                 let checked = self.check_expr(&condition)?;
                 if checked.type_mode != TypeMode::Boolean {
                     return comp_err!(
-                        "'ElseIf' statement condition not 'boolean'\n{condition:#?}"
+                        self, "'ElseIf' statement condition not 'boolean'\n{condition:#?}"
                     );
                 }
 
@@ -972,7 +1012,7 @@ impl Checker {
             }
             Stmt::Break => {
                 if self.ctx.loop_count <= 0 {
-                    return comp_err!((stmt), "Not inside a loop! cannot break");
+                    return comp_err!(self, (stmt), "Not inside a loop! cannot break");
                 }
                 CompilerResult::Ok(stmt)
             }
@@ -982,7 +1022,7 @@ impl Checker {
                     Some(expr) => expr,
                     None if self.ctx.func.return_type.type_id == VOID_ID => return CompilerResult::Ok(stmt),
                     None => {
-                        return comp_err!((stmt), "Mismatched '{}' return, expected '{:#?}', found =>\n'void'", self.ctx.func.signature, self.ctx.func.return_type);
+                        return comp_err!(self, (stmt), "Mismatched '{}' return, expected '{:#?}', found =>\n'void'", self.ctx.func.signature, self.ctx.func.return_type);
                     }
                 };
 
@@ -1005,9 +1045,9 @@ impl Checker {
                 CompilerResult::Ok(stmt)
             }
             Stmt::FnDecl { ident, .. } => {
-                comp_err!((stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
+                comp_err!(self, (stmt),"Functions cannot be nested, they're top level statements, {ident:#?}")
             }
-            _ => comp_err!((stmt.clone()), "Unexpected statement {stmt:#?}"),
+            _ => comp_err!(self, (stmt.clone()), "Unexpected statement {stmt:#?}"),
         }
     }
 
@@ -1026,13 +1066,14 @@ impl Checker {
         }
     }
 
+    // TODO(TOM): why am I referencing a box???
     fn check_expr_dot(&self, op: TokenKind, lhs: &Box<Node<Expr>>, rhs: &Box<Node<Expr>>) -> Result<ExprSem> {
-        let lhs_ident = Contents::get_src_oneline(lhs.start, lhs.end);
+        let lhs_ident = self.contents.get_src_oneline(lhs.start, lhs.end);
         let lhs_checked = self.check_expr(lhs)?;
 
         if lhs_checked.type_mode != TypeMode::Struct {
             return err!(
-                "[STRUCT] '{lhs_ident}' is not a struct, it does not have member fields to access.\n{lhs_checked:#?}..\n{rhs:#?}\n"
+                self, "[STRUCT] '{lhs_ident}' is not a struct, it does not have member fields to access.\n{lhs_checked:#?}..\n{rhs:#?}\n"
             );
         }
 
@@ -1041,15 +1082,15 @@ impl Checker {
             Expr::Term(Term::Ident) => {
                 let struct_members = match lhs_checked.expr_data {
                     ExprData::Struct { members, .. } => members,
-                    _ => return err!("Expected struct data in ExprSem for dot access, found\n{lhs_checked:#?}"),
+                    _ => return err!(self, "Expected struct data in ExprSem for dot access, found\n{lhs_checked:#?}"),
                 };
 
-                let rhs_ident = Contents::get_src_oneline(rhs.start, rhs.end);
+                let rhs_ident = self.contents.get_src_oneline(rhs.start, rhs.end);
                 match struct_members.iter().find(|m| m.ident == rhs_ident) {
                     Some(member) =>  {
                         self.create_expr_semantics(member.addr_type)?
                     },
-                    _ => return err!("'{lhs_ident}' does not have a member named '{rhs_ident}'"),
+                    _ => return err!(self, "'{lhs_ident}' does not have a member named '{rhs_ident}'"),
                 }
             }
             _ => self.check_expr(rhs)?,
@@ -1065,12 +1106,12 @@ impl Checker {
         match agreed_type.addr_mode {
             AddressingMode::Array { .. } => {
                 err!(
-                    "[ARRAY] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                    self, "[ARRAY] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                 )
             }
             AddressingMode::Pointer{ .. } => {
                 err!(
-                    "[POINTER] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
+                   self,  "[POINTER] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}"
                 )
             }
             AddressingMode::Primitive => {
@@ -1097,7 +1138,7 @@ impl Checker {
                                     expr_data: ExprData::Primitive { width: 1 },
                                 })
                             }
-                            _ => err!("[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                            _ => err!(self, "[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
                     }
 
@@ -1109,7 +1150,7 @@ impl Checker {
                                 addr_mode: AddressingMode::Primitive,
                                 expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
                             }),
-                            _ => err!("[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                            _ => err!(self, "[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
                     }
                     
@@ -1121,11 +1162,11 @@ impl Checker {
                                 type_mode: agreed_type.type_mode,
                                 expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
                             }),
-                            _ => err!("[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
+                            _ => err!(self, "[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
                     }
 
-                    _ => err!("[PRIMITIVE] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
+                    _ => err!(self, "[PRIMITIVE] Invalid binary expression: {op:?}..\n{lhs:#?}..\n{rhs:#?}")
                 }
             }
         }
@@ -1140,7 +1181,7 @@ impl Checker {
         // 'Ptr Deref' ptr               => var
         match checked.addr_mode {
             AddressingMode::Array{ .. } => {
-                err!("[ARRAY] Invalid Unary Expression: {op:?}\n{checked:#?}")
+                err!(self, "[ARRAY] Invalid Unary Expression: {op:?}\n{checked:#?}")
             }
             AddressingMode::Pointer{ depth } => {
                 match op {
@@ -1154,7 +1195,7 @@ impl Checker {
                                 expr_semantics.form = ExprForm::Sized;
                                 Ok(expr_semantics)
                             }
-                            _ => err!("[POINTER] 'Ptr Deref' expects a pointer, found {checked:#?}"),
+                            _ => err!(self, "[POINTER] 'Ptr Deref' expects a pointer, found {checked:#?}"),
                         }
                     }
                     TokenKind::Ptr => {
@@ -1165,7 +1206,7 @@ impl Checker {
                         })
                     }
                     _ => err!(
-                        "[POINTER] Invalid Unary Expression: {op:?}..\n{checked:#?}"
+                        self, "[POINTER] Invalid Unary Expression: {op:?}..\n{checked:#?}"
                     ),
                 }
             }
@@ -1180,15 +1221,15 @@ impl Checker {
                                 .. checked
                             })
                         }
-                        _ => err!("[PRIMITIVE] 'UnarySub' expects a signed integer, found {checked:#?}")
+                        _ => err!(self, "[PRIMITIVE] 'UnarySub' expects a signed integer, found {checked:#?}")
                     }
                     
                     TokenKind::Not => match checked.type_mode {
                         TypeMode::Boolean | TypeMode::Int{ .. } => Ok(checked),
-                        _ => err!("[PRIMITIVE] 'Not' expects a boolean or integer, found {checked:#?}")
+                        _ => err!(self, "[PRIMITIVE] 'Not' expects a boolean or integer, found {checked:#?}")
                     }
 
-                    TokenKind::Ampersand if checked.form != ExprForm::Sized => err!("[PRIMITIVE] 'AddressOf' expects a variable, found {checked:#?}"),
+                    TokenKind::Ampersand if checked.form != ExprForm::Sized => err!(self, "[PRIMITIVE] 'AddressOf' expects a variable, found {checked:#?}"),
                     TokenKind::Ampersand => Ok(ExprSem {
                             form: ExprForm::Compound,
                             type_mode: checked.type_mode,
@@ -1201,7 +1242,7 @@ impl Checker {
                                 },
                             },
                         }),
-                    _ => err!("[PRIMITIVE] Invalid Unary Expression: {op:?}..\n{checked:#?}"),
+                    _ => err!(self, "[PRIMITIVE] Invalid Unary Expression: {op:?}..\n{checked:#?}"),
                 }
             }
         }
@@ -1209,7 +1250,10 @@ impl Checker {
     // endregion: check expr
 
     fn check_term(&self, term: &Term, start: Pos, end: Pos) -> Result<ExprSem> {
-        Logger::set_pos(start);
+        unsafe {
+            let mut_self = self as *const Self as *mut Self;
+            (*mut_self).logger.set_pos(start);
+        }
 
         match &term {
             Term::True | Term::False => Ok(ExprSem {
@@ -1219,7 +1263,7 @@ impl Checker {
                 expr_data: ExprData::Primitive { width: 1 },
             }),
             Term::Ident => {
-                let var = self.get_var(&Contents::get_src_oneline(start, end))?;
+                let var = self.get_var(self.contents.get_src_oneline(start, end))?;
                 self.create_expr_semantics(var.var_type)
             }
             Term::IntLit => {
@@ -1241,7 +1285,7 @@ impl Checker {
             },
             Term::ArrayLit { elements } => {
                 if elements.len() == 0 {
-                    return err!("Empty array literals are not allowed");
+                    return err!(self, "Empty array literals are not allowed");
                 }
 
                 let mut sem_elements = Vec::with_capacity(elements.len());
@@ -1260,7 +1304,7 @@ impl Checker {
                     depth += 1; // if its a nested array, increase those numbers! 
                 }
 
-                debug!("array lit depth: {depth}, width: {width}");
+                debug!(self, "array lit depth: {depth}, width: {width}");
 
                 Ok(ExprSem {
                     form: ExprForm::Literal,
@@ -1273,7 +1317,7 @@ impl Checker {
                 // get function from map
                 let func_ids = match self.fn_map.get(ident.str()) {
                     Some(ids) => ids.as_slice(),
-                    None => return err!("Function not found: '{ident:#?}'"),
+                    None => return err!(self, "Function not found: '{ident:#?}'"),
                 };
 
                 let sem_args = args.iter().map(|arg| self.check_expr(arg)).collect::<Result<Vec<_>>>()?;
@@ -1304,7 +1348,7 @@ impl Checker {
                 }
 
                 if matched_overload == -1 {
-                    return err!("No matching function overload for '{ident:#?}'");
+                    return err!(self, "No matching function overload for '{ident:#?}'");
                 }
 
                 let func_semantics = self.fn_vec.get(matched_overload as usize).unwrap();
@@ -1314,10 +1358,10 @@ impl Checker {
         }
     }
 
-    fn check_type_equivalence<'a>(&'a self, a: &'a ExprSem, b: &'a ExprSem) -> Result<ExprSem<'a>> {
+    fn check_type_equivalence(&self, a: &'a ExprSem, b: &'a ExprSem) -> Result<ExprSem<'a>> {
         if a.addr_mode != b.addr_mode {
             return err!(
-                "Expr of different Addressing Mode! {a:?} vs {b:?}, \n{a:#?}\nvs\n{b:#?}",
+                self, "Expr of different Addressing Mode! {a:?} vs {b:?}, \n{a:#?}\nvs\n{b:#?}",
                 a = a.addr_mode,
                 b = b.addr_mode
             );
@@ -1331,7 +1375,7 @@ impl Checker {
             // cannot assign something bigger than the 'container'
             (ExprData::Primitive { width: a_width }, ExprData::Primitive { width: b_width }) if a_width < b_width => {
                 return err!(
-                    "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
+                    self, "Illegal Type Narrowing, Assignee({}) < Assigner({}), {a:#?}\n.. {b:#?}",
                     a_width,
                     b_width
                 );
@@ -1344,7 +1388,7 @@ impl Checker {
             (TypeMode::Int{ signed: a_sign}, TypeMode::Int{ signed: b_sign }) if a_sign == b_sign => (),
             (TypeMode::Struct, TypeMode::Struct) => {
                 // check that members are equal. 
-                debug!("Checking Struct equivalence: {a:#?} vs {b:#?}");
+                debug!(self, "Checking Struct equivalence: {a:#?} vs {b:#?}");
                 match (&a.expr_data, &b.expr_data) {
                     (ExprData::Struct { members: a_members, width: a_width }, ExprData::Struct { members: b_members, width: b_width }) if a_members.len() == b_members.len() && a_width == b_width => {
                         for (a_member, b_member) in a_members.iter().zip(b_members.iter()) {
@@ -1353,20 +1397,20 @@ impl Checker {
 
                             if self.check_type_equivalence(&a_member_sem, &b_member_sem).is_err() {
                                 return err!(
-                                    "Struct members mismatch: {a_member:#?} != {b_member:#?}\n{a:#?}\n.. {b:#?}",
+                                    self, "Struct members mismatch: {a_member:#?} != {b_member:#?}\n{a:#?}\n.. {b:#?}",
                                     a = a,
                                     b = b
                                 );
                             }
                         }
                     },
-                    _ => return err!("Struct data mismatch: {a:#?} != {b:#?}"),
+                    _ => return err!(self, "Struct data mismatch: {a:#?} != {b:#?}"),
                 }
             },
             _ if a.type_mode == b.type_mode => (),
             _ => {
                 return err!(
-                    "TypeMode mismatch: {:?} != {:?} ..\n{a:#?}\n.. {b:#?}",
+                    self, "TypeMode mismatch: {:?} != {:?} ..\n{a:#?}\n.. {b:#?}",
                     a.type_mode,
                     b.type_mode
                 )
@@ -1396,14 +1440,14 @@ impl Checker {
     ) -> Result<ExprData> {
         let struct_id = match self.type_map.get(ident.str()) {
             Some(id) => *id,
-            None => return err!("Struct type not found: '{}'", ident.str()),
+            None => return err!(self, "Struct type not found: '{}'", ident.str()),
         };
         let stored_type = self.type_vec.get(struct_id).unwrap();
         match stored_type {
             StoredType::Struct { members, width, ident } => {
                 if members.len() != fields.len() {
                     return err!(
-                        "Struct literal field count mismatch, expected {} fields, found {}",
+                       self,  "Struct literal field count mismatch, expected {} fields, found {}",
                         members.len(),
                         fields.len()
                     );
@@ -1413,7 +1457,7 @@ impl Checker {
                 for (i, (addr_type,struct_field)) in members.iter().zip(fields.iter()).enumerate() {
                     if struct_field.ident.str() != addr_type.ident {
                         return err!(
-                            "Struct literal field name mismatch at index {i}, expected '{}', found '{}'",
+                           self,  "Struct literal field name mismatch at index {i}, expected '{}', found '{}'",
                             struct_field.ident.str(),
                             ident,
                         );
@@ -1428,7 +1472,7 @@ impl Checker {
                
                 Ok(ExprData::Struct { members: members.as_slice(), width: *width })
             }
-            _ => err!("Expected a struct type, found '{stored_type:?}'"),
+            _ => err!(self, "Expected a struct type, found '{stored_type:?}'"),
         }
     }
 
@@ -1509,7 +1553,7 @@ impl Checker {
                 })
             }
             None => {
-                err!("Type not found for AddressedType: {var_type:?}")
+                err!(self, "Type not found for AddressedType: {var_type:?}")
             }
         }
     }
@@ -1521,14 +1565,14 @@ impl Checker {
     fn get_var(&self, str: &str) -> Result<&Variable> {
         match self.stack_var_map.get(str) {
             Some(id) => Ok(self.stack_var_vec.get(*id).unwrap()),
-            None => err!("Variable not found: '{str}'"),
+            None => err!(self, "Variable not found: '{str}'"),
         }
     }
 
     fn get_var_mut(&mut self, str: &str) -> Result<&mut Variable> {
         match self.stack_var_map.get(str) {
             Some(id) => Ok(self.stack_var_vec.get_mut(*id).unwrap()),
-            None => err!("Variable not found: '{str}'"),
+            None => err!(self, "Variable not found: '{str}'"),
         }
     }
 

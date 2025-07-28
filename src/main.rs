@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use toy_compiler::{
-    compile_chain::Lexable,
-    utils::{self, Contents},
+    compile_chain::Globals,
+    utils::{self, Contents, Logger},
 };
 
 fn main() {
@@ -15,20 +15,16 @@ fn main() {
         text_to_ascii_art::to_art(">Toy Compiler<".to_string(), "standard", 8, 0, 0).unwrap()
     );
 
-    // Get file contents, put it into the global buffer
     let file_name = utils::get_cmd_arg(2);
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("examples");
     path.push(&file_name);
-    let contents = utils::get_file_contents(&path);
-    Contents::init(file_name, contents);
 
-    println!(
-        "[COMPILER] File contents initialized:\n{:#?}",
-        Contents::get_contents()
-    );
+    let contents = Contents::new(utils::get_file_contents(&path));
+    let logger = Logger::new(&contents, false, false, false);
+    let compile_chain = Globals::register_new_compile_chain(Some(&file_name), contents, logger);
 
-    Contents::get().lex().parse().check();
+    compile_chain.lex().parse().check();
 }
 
 // UBUNTU bash script:

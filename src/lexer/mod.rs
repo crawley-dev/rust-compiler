@@ -1,4 +1,5 @@
 use crate::{
+    compile_chain::{CompileChain, Globals},
     debug, err,
     utils::{pos, CompilerResult, Contents, Logger, Pos},
 };
@@ -102,24 +103,309 @@ enum BufKind {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
-    pub start: Pos,
+    pub start: Pos, // TODO(TOM): make this just an index - drop y val
     pub len: u32,
+    pub compile_chain_id: u8,
 }
 
-pub fn token(kind: TokenKind, start: Pos, len: u32) -> Token {
-    Token { kind, start, len }
-}
-
-pub struct Lexer {
-    idx: usize,
-    input: Vec<u8>,
+pub struct Lexer<'a> {
+    pub tokens: VecDeque<Token>,
     reg: HashMap<&'static str, TokenKind>,
+    input: Vec<u8>,
+    idx: usize,
     is_linecomment: bool,
     is_multicomment: bool,
-    pub tokens: VecDeque<Token>,
+
+    logger: &'a mut Logger,
+    compile_chain_id: u8,
 }
 
 // endregion
+impl<'a> Lexer<'a> {
+    pub fn new(input: &Contents, logger: &'a mut Logger, compile_chain_id: u8) -> Lexer<'a> {
+        let reg: HashMap<&'static str, TokenKind> = HashMap::from([
+            // Generic Symbols
+            (",", TokenKind::Comma),
+            (":", TokenKind::Colon),
+            (";", TokenKind::SemiColon),
+            ("(", TokenKind::OpenParen),
+            (")", TokenKind::CloseParen),
+            ("{", TokenKind::OpenBrace),
+            ("}", TokenKind::CloseBrace),
+            ("[", TokenKind::OpenBracket),
+            ("]", TokenKind::CloseBracket),
+            ("//", TokenKind::LineComment),
+            ("/*", TokenKind::OpenMultiComment),
+            ("*/", TokenKind::CloseMultiComment),
+            // Operators
+            ("!", TokenKind::Not),
+            ("^", TokenKind::Ptr),
+            (".", TokenKind::Dot),
+            ("=", TokenKind::Eq),
+            ("+", TokenKind::Add),
+            ("-", TokenKind::Sub),
+            ("*", TokenKind::Mul),
+            ("/", TokenKind::Quo),
+            ("%", TokenKind::Mod),
+            ("&", TokenKind::Ampersand),
+            ("|", TokenKind::Bar),
+            ("~", TokenKind::Tilde),
+            ("&~", TokenKind::AndNot),
+            ("<<", TokenKind::Shl),
+            (">>", TokenKind::Shr),
+            ("->", TokenKind::Arrow),
+            // Combo Assign
+            ("+=", TokenKind::AddEq),
+            ("-=", TokenKind::SubEq),
+            ("*=", TokenKind::MulEq),
+            ("/=", TokenKind::QuoEq),
+            ("%=", TokenKind::ModEq),
+            ("&=", TokenKind::AndEq),
+            ("|=", TokenKind::OrEq),
+            ("~=", TokenKind::XorEq),
+            ("&~=", TokenKind::AndNotEq),
+            ("<<=", TokenKind::ShlEq),
+            (">>=", TokenKind::ShrEq),
+            // Comparison
+            ("&&", TokenKind::LogAnd),
+            ("||", TokenKind::LogOr),
+            ("==", TokenKind::CmpEq),
+            ("!=", TokenKind::NotEq),
+            ("<", TokenKind::Lt),
+            (">", TokenKind::Gt),
+            ("<=", TokenKind::LtEq),
+            (">=", TokenKind::GtEq),
+            // Keywords
+            ("let", TokenKind::Let),
+            ("fn", TokenKind::Fn),
+            ("return", TokenKind::Return),
+            ("if", TokenKind::If),
+            ("else", TokenKind::Else),
+            ("mut", TokenKind::Mut),
+            ("while", TokenKind::While),
+            ("break", TokenKind::Break),
+            ("true", TokenKind::True),
+            ("false", TokenKind::False),
+            ("type", TokenKind::Type),
+            ("struct", TokenKind::Struct),
+        ]);
+        Lexer {
+            tokens: VecDeque::new(),
+            reg,
+            input: input.src.join("").as_bytes().to_vec(),
+            idx: 0,
+            is_linecomment: false,
+            is_multicomment: false,
+            logger,
+            compile_chain_id,
+        }
+    }
+
+    pub fn tokenise(mut self) -> CompilerResult<VecDeque<Token>, Error> {
+        while self.idx < self.input.len() {
+            match self.next_token() {
+                Ok(Some(tok)) => match tok.kind {
+                    TokenKind::LineComment => self.is_linecomment = true,
+                    TokenKind::OpenMultiComment => self.is_multicomment = true,
+                    TokenKind::CloseMultiComment => self.is_multicomment = false,
+                    _ if self.is_multicomment => (),
+                    _ => {
+                        self.tokens.push_back(tok);
+                        debug!(self, "new tok: {:?}", self.tokens.back().as_ref().unwrap());
+                    }
+                },
+                Ok(None) => continue,
+                Err(e) => {
+                    return CompilerResult::Err {
+                        data: Some(self.tokens),
+                        error: e,
+                    }
+                }
+            };
+        }
+        CompilerResult::Ok(self.tokens)
+    }
+
+    fn next_token(&mut self) -> Result<Option<Token>> {
+        let mut buf = Vec::new();
+        let mut buf_kind = BufKind::Illegal;
+
+        while let Some(next_char) = self.peek(0) {
+            // the order of these match statements matter!
+            let char_type = match next_char {
+                b'\n' => BufKind::NewLine,
+                _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
+                b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
+                // b'_' if buf_kind == BufKind::IntLit => {
+                //     self.consume();
+                //     continue;
+                // } // skip number spacing, e.g 1_000_000 => 1000000
+                b'0'..=b'9' => BufKind::IntLit,
+                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
+                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
+                _ => {
+                    return err!(self, "unknown char found {next_char}"); // result T can be anything.
+                }
+            };
+
+            // buf_kind not set, set it.
+            if buf.is_empty() {
+                buf_kind = char_type;
+            } else if char_type != buf_kind {
+                break;
+            }
+
+            let ch = self.consume();
+            buf.push(ch);
+        }
+        Ok(self.create_tok(buf_kind, &buf))
+    }
+
+    // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
+    //  - trying to modify state in next_token causes bugs.
+    //      .. because after creating a token, the next char may not be "next_char" due to a reduce
+    //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
+    fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
+        if buf.is_empty() {
+            self.idx += 1;
+            self.logger.add_pos(pos(1, 0));
+            return None;
+        }
+
+        let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
+        let len = buf.len() as u32;
+
+        if self.logger.print_logs {
+            let mut print_buf = buf_str.clone();
+            let mut offset = 0;
+            for (i, c) in buf_str.chars().enumerate() {
+                if c == '\n' {
+                    print_buf.remove(i + offset);
+                    print_buf.insert_str(i + offset, r"\n");
+                    offset += 1;
+                }
+            }
+            debug!(
+                self,
+                "buf: '{print_buf}', kind: {buf_kind:?} | buf_len: {len}"
+            );
+        }
+
+        match buf_kind {
+            BufKind::Illegal => None,
+            BufKind::NewLine => {
+                self.is_linecomment = false;
+                self.logger
+                    .set_pos(pos(0, self.logger.get_pos().y + buf_str.len() as u32));
+                None
+            }
+            BufKind::Word => self.match_word(&buf_str),
+            BufKind::Symbol => self.match_symbol(&buf_str),
+            BufKind::IntLit => Some(Token {
+                kind: TokenKind::IntLit,
+                start: self.get_start(len),
+                len,
+                compile_chain_id: self.compile_chain_id,
+            }),
+        }
+    }
+
+    fn match_word(&self, buf_str: &str) -> Option<Token> {
+        let len = buf_str.len() as u32;
+        debug!(self, "matching word: '{}' .. len: {len}", buf_str);
+        match self.reg.get(buf_str) {
+            Some(kind) => Some(Token {
+                kind: *kind,
+                start: self.get_start(len),
+                len,
+                compile_chain_id: self.compile_chain_id,
+            }),
+            None => Some(Token {
+                kind: TokenKind::Ident,
+                start: self.get_start(len),
+                len,
+                compile_chain_id: self.compile_chain_id,
+            }),
+        }
+    }
+
+    fn match_symbol(&mut self, buf_str: &str) -> Option<Token> {
+        let mut buf_len = buf_str.len();
+        while buf_len > 0 {
+            let slice = &buf_str[..buf_len];
+            match self.reg.get(slice) {
+                Some(kind) => {
+                    // early return if the symbol
+                    return Some(Token {
+                        kind: *kind,
+                        start: self.get_start(buf_len as u32),
+                        len: buf_len as u32,
+                        compile_chain_id: self.compile_chain_id,
+                    });
+                }
+                None => {
+                    buf_len -= 1;
+                    self.idx -= 1;
+                    self.logger.sub_pos(pos(1, 0));
+                    debug!(
+                        self,
+                        "reduce '{}' | new pos: {}",
+                        &buf_str[..buf_len],
+                        self.idx
+                    );
+                }
+            }
+        }
+        self.idx += 1;
+        self.logger.add_pos(pos(1, 0));
+        debug!(self, "exiting symbol match, no match found");
+        None
+    }
+
+    fn peek(&self, offset: usize) -> Option<u8> {
+        self.input.get(self.idx + offset).copied()
+    }
+
+    fn consume(&mut self) -> u8 {
+        let char = self.input.get(self.idx).copied().unwrap();
+        if char == b'\n' {
+            debug!(self, "consuming '{}'", r"\n");
+        } else {
+            debug!(self, "consuming '{}'", char as char);
+        }
+
+        self.idx += 1;
+        self.logger.add_pos(pos(1, 0));
+
+        char
+    }
+
+    fn get_start(&self, len: u32) -> Pos {
+        let p = self.logger.get_pos();
+        pos(p.x - len, p.y)
+    }
+}
+
+impl Token {
+    pub fn str<'a>(&self) -> &'a str {
+        Globals::get(self.compile_chain_id as usize)
+            .contents
+            .get_src_oneline(self.start, self.end_pos())
+    }
+
+    pub fn end_pos(&self) -> Pos {
+        pos(self.start.x + self.len, self.start.y)
+    }
+}
+
+pub fn token(kind: TokenKind, start: Pos, len: u32, compile_chain_id: u8) -> Token {
+    Token {
+        kind,
+        start,
+        len,
+        compile_chain_id,
+    }
+}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,20 +507,20 @@ impl TokenKind {
     /// For compound assignment operators (like `+=`), returns the underlying arithmetic operator.
     ///
     /// For example, `AddEq` converts to `Add`.
-    pub fn assign_to_arithmetic(&self) -> Result<TokenKind> {
+    pub fn assign_to_arithmetic(&self) -> Option<TokenKind> {
         match self {
-            TokenKind::AddEq => Ok(TokenKind::Add),
-            TokenKind::SubEq => Ok(TokenKind::Sub),
-            TokenKind::MulEq => Ok(TokenKind::Mul),
-            TokenKind::QuoEq => Ok(TokenKind::Quo),
-            TokenKind::ModEq => Ok(TokenKind::Mod),
-            TokenKind::AndEq => Ok(TokenKind::Ampersand),
-            TokenKind::OrEq => Ok(TokenKind::Bar),
-            TokenKind::XorEq => Ok(TokenKind::Tilde),
-            TokenKind::AndNotEq => Ok(TokenKind::AndNot),
-            TokenKind::ShlEq => Ok(TokenKind::Shl),
-            TokenKind::ShrEq => Ok(TokenKind::Shr),
-            _ => err!("{:?} cannot be converted to an arithmetic operator", self),
+            TokenKind::AddEq => Some(TokenKind::Add),
+            TokenKind::SubEq => Some(TokenKind::Sub),
+            TokenKind::MulEq => Some(TokenKind::Mul),
+            TokenKind::QuoEq => Some(TokenKind::Quo),
+            TokenKind::ModEq => Some(TokenKind::Mod),
+            TokenKind::AndEq => Some(TokenKind::Ampersand),
+            TokenKind::OrEq => Some(TokenKind::Bar),
+            TokenKind::XorEq => Some(TokenKind::Tilde),
+            TokenKind::AndNotEq => Some(TokenKind::AndNot),
+            TokenKind::ShlEq => Some(TokenKind::Shl),
+            TokenKind::ShrEq => Some(TokenKind::Shr),
+            _ => None,
         }
     }
 
@@ -258,266 +544,5 @@ impl TokenKind {
 
     pub fn has_flags_unary(&self, flags: TokenFlags) -> bool {
         self.get_flags_unary().contains(flags)
-    }
-}
-
-impl Token {
-    pub fn str(&self) -> &str {
-        Contents::get_src_oneline(self.start, self.end_pos())
-    }
-
-    pub fn end_pos(&self) -> Pos {
-        pos(self.start.x + self.len, self.start.y)
-    }
-}
-
-impl Lexer {
-    pub fn new(input: &str) -> Lexer {
-        let reg: HashMap<&'static str, TokenKind> = HashMap::from([
-            // Generic Symbols
-            (",", TokenKind::Comma),
-            (":", TokenKind::Colon),
-            (";", TokenKind::SemiColon),
-            ("(", TokenKind::OpenParen),
-            (")", TokenKind::CloseParen),
-            ("{", TokenKind::OpenBrace),
-            ("}", TokenKind::CloseBrace),
-            ("[", TokenKind::OpenBracket),
-            ("]", TokenKind::CloseBracket),
-            ("//", TokenKind::LineComment),
-            ("/*", TokenKind::OpenMultiComment),
-            ("*/", TokenKind::CloseMultiComment),
-            // Operators
-            ("!", TokenKind::Not),
-            ("^", TokenKind::Ptr),
-            (".", TokenKind::Dot),
-            ("=", TokenKind::Eq),
-            ("+", TokenKind::Add),
-            ("-", TokenKind::Sub),
-            ("*", TokenKind::Mul),
-            ("/", TokenKind::Quo),
-            ("%", TokenKind::Mod),
-            ("&", TokenKind::Ampersand),
-            ("|", TokenKind::Bar),
-            ("~", TokenKind::Tilde),
-            ("&~", TokenKind::AndNot),
-            ("<<", TokenKind::Shl),
-            (">>", TokenKind::Shr),
-            ("->", TokenKind::Arrow),
-            // Combo Assign
-            ("+=", TokenKind::AddEq),
-            ("-=", TokenKind::SubEq),
-            ("*=", TokenKind::MulEq),
-            ("/=", TokenKind::QuoEq),
-            ("%=", TokenKind::ModEq),
-            ("&=", TokenKind::AndEq),
-            ("|=", TokenKind::OrEq),
-            ("~=", TokenKind::XorEq),
-            ("&~=", TokenKind::AndNotEq),
-            ("<<=", TokenKind::ShlEq),
-            (">>=", TokenKind::ShrEq),
-            // Comparison
-            ("&&", TokenKind::LogAnd),
-            ("||", TokenKind::LogOr),
-            ("==", TokenKind::CmpEq),
-            ("!=", TokenKind::NotEq),
-            ("<", TokenKind::Lt),
-            (">", TokenKind::Gt),
-            ("<=", TokenKind::LtEq),
-            (">=", TokenKind::GtEq),
-            // Keywords
-            ("let", TokenKind::Let),
-            ("fn", TokenKind::Fn),
-            ("return", TokenKind::Return),
-            ("if", TokenKind::If),
-            ("else", TokenKind::Else),
-            ("mut", TokenKind::Mut),
-            ("while", TokenKind::While),
-            ("break", TokenKind::Break),
-            ("true", TokenKind::True),
-            ("false", TokenKind::False),
-            ("type", TokenKind::Type),
-            ("struct", TokenKind::Struct),
-        ]);
-        Lexer {
-            idx: 0,
-            input: input.as_bytes().to_vec(),
-            reg,
-            is_linecomment: false,
-            is_multicomment: false,
-
-            tokens: VecDeque::new(),
-        }
-    }
-
-    pub fn tokenise(mut self) -> CompilerResult<VecDeque<Token>, Error> {
-        while self.idx < self.input.len() {
-            match self.next_token() {
-                Ok(Some(tok)) => match tok.kind {
-                    TokenKind::LineComment => self.is_linecomment = true,
-                    TokenKind::OpenMultiComment => self.is_multicomment = true,
-                    TokenKind::CloseMultiComment => self.is_multicomment = false,
-                    _ if self.is_multicomment => (),
-                    _ => {
-                        self.tokens.push_back(tok);
-                        debug!("new tok: {:?}", self.tokens.back().as_ref().unwrap());
-                    }
-                },
-                Ok(None) => continue,
-                Err(e) => {
-                    return CompilerResult::Err {
-                        data: Some(self.tokens),
-                        error: e,
-                    }
-                }
-            };
-        }
-        CompilerResult::Ok(self.tokens)
-    }
-
-    fn next_token(&mut self) -> Result<Option<Token>> {
-        let mut buf = Vec::new();
-        let mut buf_kind = BufKind::Illegal;
-
-        while let Some(next_char) = self.peek(0) {
-            // the order of these match statements matter!
-            let char_type = match next_char {
-                b'\n' => BufKind::NewLine,
-                _ if self.is_linecomment || next_char.is_ascii_whitespace() => BufKind::Illegal, // collect together all the illegal stuff at once!
-                b'0'..=b'9' | b'_' if buf_kind == BufKind::Word => BufKind::Word,
-                // b'_' if buf_kind == BufKind::IntLit => {
-                //     self.consume();
-                //     continue;
-                // } // skip number spacing, e.g 1_000_000 => 1000000
-                b'0'..=b'9' => BufKind::IntLit,
-                b'a'..=b'z' | b'A'..=b'Z' => BufKind::Word,
-                b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~' => BufKind::Symbol,
-                _ => {
-                    return err!("unknown char found {next_char}"); // result T can be anything.
-                }
-            };
-
-            // buf_kind not set, set it.
-            if buf.is_empty() {
-                buf_kind = char_type;
-            } else if char_type != buf_kind {
-                break;
-            }
-
-            let ch = self.consume();
-            buf.push(ch);
-        }
-        Ok(self.create_tok(buf_kind, &buf))
-    }
-
-    // TO FUTURE TOM: for future stuff, create a new bufkind and do stuff here.
-    //  - trying to modify state in next_token causes bugs.
-    //      .. because after creating a token, the next char may not be "next_char" due to a reduce
-    //      .. !! watchout for repeats, e.g on newline buf: self.pos.1 += collected_newlines
-    fn create_tok(&mut self, buf_kind: BufKind, buf: &[u8]) -> Option<Token> {
-        if buf.is_empty() {
-            self.idx += 1;
-            Logger::add_pos(pos(1, 0));
-            return None;
-        }
-
-        let buf_str = buf.iter().map(|x| *x as char).collect::<String>();
-        let len = buf.len() as u32;
-
-        if Logger::print_logs() {
-            let mut print_buf = buf_str.clone();
-            let mut offset = 0;
-            for (i, c) in buf_str.chars().enumerate() {
-                if c == '\n' {
-                    print_buf.remove(i + offset);
-                    print_buf.insert_str(i + offset, r"\n");
-                    offset += 1;
-                }
-            }
-            debug!("buf: '{print_buf}', kind: {buf_kind:?} | buf_len: {len}");
-        }
-
-        match buf_kind {
-            BufKind::Illegal => None,
-            BufKind::NewLine => {
-                self.is_linecomment = false;
-                Logger::set_pos(pos(0, Logger::get_pos().y + buf_str.len() as u32));
-                None
-            }
-            BufKind::Word => self.match_word(&buf_str),
-            BufKind::Symbol => self.match_symbol(&buf_str),
-            BufKind::IntLit => Some(Token {
-                kind: TokenKind::IntLit,
-                start: Self::get_start(len),
-                len,
-            }),
-        }
-    }
-
-    fn match_word(&self, buf_str: &str) -> Option<Token> {
-        let len = buf_str.len() as u32;
-        debug!("matching word: '{}' .. len: {len}", buf_str);
-        match self.reg.get(buf_str) {
-            Some(kind) => Some(Token {
-                kind: *kind,
-                start: Self::get_start(len),
-                len,
-            }),
-            None => Some(Token {
-                kind: TokenKind::Ident,
-                start: Self::get_start(len),
-                len,
-            }),
-        }
-    }
-
-    fn match_symbol(&mut self, buf_str: &str) -> Option<Token> {
-        let mut buf_len = buf_str.len();
-        while buf_len > 0 {
-            let slice = &buf_str[..buf_len];
-            match self.reg.get(slice) {
-                Some(kind) => {
-                    // early return if the symbol
-                    return Some(Token {
-                        kind: *kind,
-                        start: Self::get_start(buf_len as u32),
-                        len: buf_len as u32,
-                    });
-                }
-                None => {
-                    buf_len -= 1;
-                    self.idx -= 1;
-                    Logger::sub_pos(pos(1, 0));
-                    debug!("reduce '{}' | new pos: {}", &buf_str[..buf_len], self.idx);
-                }
-            }
-        }
-        self.idx += 1;
-        Logger::add_pos(pos(1, 0));
-        debug!("exiting symbol match, no match found");
-        None
-    }
-
-    fn peek(&self, offset: usize) -> Option<u8> {
-        self.input.get(self.idx + offset).copied()
-    }
-
-    fn consume(&mut self) -> u8 {
-        let char = self.input.get(self.idx).copied().unwrap();
-        if char == b'\n' {
-            debug!("consuming '{}'", r"\n");
-        } else {
-            debug!("consuming '{}'", char as char);
-        }
-
-        self.idx += 1;
-        Logger::add_pos(pos(1, 0));
-
-        char
-    }
-
-    fn get_start(len: u32) -> Pos {
-        let p = Logger::get_pos();
-        pos(p.x - len, p.y)
     }
 }
