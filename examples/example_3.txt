@@ -1,0 +1,8 @@
+fn test3() -> i32 {
+    let result: i32 = add(10, 20);
+    return result;
+}
+
+fn add(x: i32, y: i32) -> i32 {
+    return x + y;
+}

@@ -80,8 +80,8 @@ pub enum TokenKind {
     Struct,
 
     // Primitive Constructs
-    Ident,
-    IntLit,
+    Ident,  // e.g. "my_variable"
+    IntLit, // e.g. "1234"
 }
 
 #[derive(Debug)]

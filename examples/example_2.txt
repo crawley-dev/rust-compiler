@@ -1,0 +1,7 @@
+fn test2() -> i32 {
+    let a: i32;
+    let b: i32;
+    a = 5;
+    b = a * 2 + (a - 3);
+    return b - a;
+}

@@ -10,15 +10,7 @@ use crate::formatting::SHORT_NODE_PRINT;
 
 // region: Logger
 
-static mut LOGGER: Logger = Logger {
-    log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
-    print_logs: [false, false, true, false],
-    print_output: [false, true, true, false],
-    current_prefix: LogPrefix::Lex,
-    file_pos: Pos { x: 0, y: 0 },
-    padding: String::new(),
-    max_digits: Pos { x: 0, y: 0 },
-};
+static mut LOGGER: Logger = Logger::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogPrefix {
@@ -39,6 +31,18 @@ pub struct Logger {
 }
 
 impl Logger {
+    pub const fn new() -> Logger {
+        Logger {
+            log_prefixes: ["LEX", "PARSE", "SEM", "GEN"],
+            print_logs: [false, false, true, false],
+            print_output: [false, true, true, false],
+            current_prefix: LogPrefix::Lex,
+            file_pos: Pos { x: 0, y: 0 },
+            padding: String::new(),
+            max_digits: Pos { x: 0, y: 0 },
+        }
+    }
+
     pub fn set_short_fmt(_: bool) {
         unsafe {
             SHORT_NODE_PRINT = false;
@@ -232,6 +236,7 @@ impl Contents {
         let max_height = contents.len();
         let max_width = contents.iter().map(|x| x.len()).max().unwrap_or(0);
         unsafe {
+            Logger::set_pos(pos(0, 0));
             LOGGER.padding = " ".repeat(10); // if you have more than 10 digits, you're on your own
             LOGGER.max_digits = pos(
                 count_digits(max_width as u32),
@@ -263,7 +268,10 @@ impl Contents {
         match Self::get_contents().get(start.y as usize) {
             Some(line) if (end.x as usize) <= line.len() => &line[start.x as usize..end.x as usize],
             _ => {
-                // println!("[COMPILER] Invalid start position {start:?}, {end:?}");
+                // println!(
+                //     "[COMPILER] Invalid start position {start:?}, {end:?}.. {}",
+                //     Self::get_contents().len()
+                // );
                 " couldn't get src oneline. "
             }
         }

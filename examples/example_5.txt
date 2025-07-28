@@ -1,0 +1,20 @@
+fn fib(n: i32) -> i32 {
+    if n < 2 {
+        return n;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
+}
+
+fn test5() -> i32 {
+    let mut total: i32 = 0;
+    for i in 1..=5 {
+        total = total + fib(i);
+    }
+    {
+        let mut total: i32 = 100;
+        let _ = total + 1;
+    }
+    return total;
+}
+

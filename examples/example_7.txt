@@ -1,0 +1,89 @@
+fn main() {
+    let x: u32 = 10 / 5;
+
+    let x: u32 = 20;
+    let a: u32 = x + 30; // Addition
+    let b: u32 = x - 10; // Subtraction
+    let c: u32 = x * 2;  // Multiply
+    let d: u32 = x / 2;  // Divide
+
+    let e: u32 = ~x;     // Bitwise NOT
+    let f: u32 = x | a;  // Bitwise Or
+    let g: u32 = x & a;  // Bitwise And
+    let h: u32 = x ~ 2;  // Bitwise Xor
+    let i: u32 = x << 2; // Left Shift
+    let j: u32 = x >> 3; // Right Shift 
+
+    let l: bool = 4 > 2 && 2 == 2; // LogicalAnd expr
+    let n: bool = 0 || 5 + 1 > 6;
+    let ans: bool = 10 == 10 && 5 == 5; // LogicalOr expr
+
+    let a: u8 = 15;
+    let b: u8 = 7;
+    let c: u8 = 20;
+    let d: u8 = 3;
+    let e: u8 = 5;
+    let f: u8 = 8;
+    let g: u8 = 6;
+    let h: u8 = 9;
+    let i: u8 = 4;
+        
+    // Longer complex arithmetic expression
+    let ans = (((15 + 7 * 20) - (3 * 5 + 8)) / 6) * (9 - 4);
+    let ans = (((a + b * c) - (d * e + f)) / g) * (h - i) + ((e % d) * (f + g));
+    let ans = 100 + (200 / 10) - 3 * 10 + 10; // == 80, won't work, overflow..
+    let ans = 100 - 3 * 10 + (200 / 10);
+    let ans = 100 + 20 - 5 * 30 / 2 + (100 - 50);
+    let ans = 100 / 50 - 50 + 2; //  - 51 + 52 - 53 / 2
+    let ans = 100 + 50;
+    let ans = 100 / 50 - (10 + 2) - 2;
+    let ans = (10 + 2) - 100 / 50;
+    let ans = (100 / (50 + 50)) + 5;
+
+    let ans = ((15 + 7 * 20) - (3 * 5 + 8)) / 6;
+    let ans = (~5 + 5) -5;
+
+    if 0 || 5 + 1 > 6 {
+        exit(69);
+    } 
+    else if !(0 == 0) {
+        exit(25);
+    }
+
+    {
+        let mut dwa: i8 = 20;
+    }
+
+    let dwa: i32 = 5;
+    let mut i: i32 = 0;
+
+    let mut unsigned_test: u8 = 5 + 5;
+    let i_ptr: ^u8 = &(unsigned_test);
+    let mut test_test: u8 = (&unsigned_test)^;
+    test_test = (i_ptr^) + (i_ptr^);
+
+    let ans: u8 = ~(10 - (2 + 4 * (4-2))) / (1 + 1) * (4 - 1);
+
+
+    let mut i = 0;
+    let mut ans: i8 = 2;
+    while 1 == 1 {
+        ans *= 2;
+        i += 1;
+        if i > 5 {
+            break;
+            while 2 == 2 {
+                if 5 + 5 == 10 {
+                    break;
+                }
+            }
+        }
+    }
+
+    if 5 == 5 {
+        ans *= 2;
+        if 10 == 10 {
+            ans += 5;
+        }
+    }
+}

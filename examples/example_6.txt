@@ -1,11 +1,10 @@
 fn main() {
-    //let x: i32 = 5;
-    //let y: ^i32 = &x;
-    //let z: ^i32 = x&;
+    let x: i32 = 5;
+    let y: ^i32 = &x;
+    let z: ^i32 = x&;
 
     let a: i32 = 5-;
 
-    /*
     let mut a: i64 = 10;
     let mut b: i64 = 5;
     let mut c: i64;
@@ -16,7 +15,6 @@ fn main() {
     c = !b;         // Bitwise NOT
     c = ^&a;        // Dereference and address-of cancel out
 
-    /*
     // Binary operations
     c = a + b;   // Addition
     c = a - b;   // Subtraction
@@ -37,11 +35,8 @@ fn main() {
     
     // Ternary operator
     c = (a > b) ? a : b;
-    */
-    */
 }
 
-/*
 fn plus5(arg1: i32) -> i32 {
     return arg1 + 5;
 }
@@ -51,7 +46,7 @@ fn plus5(arg1: i32, arg2: bool, arg3: i64, arg4: u8) -> i32 {
 }
 
 
-fn main() {
+fn main_2() {
     let num: i32 = 1;
     let numplus5: i64 = plus5(num);
     let test_func: i64 = test(123, 22, 3);
@@ -70,4 +65,3 @@ fn test(mut arg1: i32, arg2: usize, arg3: u8) -> i32 {
 fn void_test() {
     return;
 }
-*/
