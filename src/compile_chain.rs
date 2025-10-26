@@ -2,6 +2,7 @@ use crate::{
     checker::{CheckedData, Checker},
     lexer::{Lexer, Token},
     parser::{Ast, Parser},
+    r#gen::CodeGen,
     utils::{self, pos, CompilerResult, Contents, Logger, Pos},
 };
 use std::collections::VecDeque;
@@ -67,7 +68,7 @@ pub enum CompileStage {
     Lex(VecDeque<Token>),
     Parse(Ast),
     Check(CheckedData),
-    // Generate,
+    CodeGen(String),
 }
 
 impl CompileChain {
@@ -98,7 +99,7 @@ impl CompileChain {
                     println!("{tokens:?}");
                 }
                 self.cur_stage = Some(CompileStage::Lex(tokens));
-                self
+                return self;
             }
             CompilerResult::Err { data, error } => {
                 let tokens = data.unwrap_or(VecDeque::new());
@@ -106,7 +107,12 @@ impl CompileChain {
                     Some(tok) => (tok.start, tok.len),
                     None => (pos(0, 0), 0),
                 };
-                self.handle_compile_error(tokens, error, start, pos(start.x + tok_len, start.y))
+                return self.handle_compile_error(
+                    tokens,
+                    error,
+                    start,
+                    pos(start.x + tok_len, start.y),
+                );
             }
         }
     }
@@ -132,13 +138,13 @@ impl CompileChain {
                     println!("{data:?}");
                 }
                 self.cur_stage = Some(CompileStage::Parse(data));
-                self
+                return self;
             }
             CompilerResult::Err { data, error } => {
                 let ast = data.unwrap(); // TODO(TOM): this should never fail, but never know.
                 let end = self.logger.get_pos();
                 let start = pos(0, end.y);
-                self.handle_compile_error(ast, error, start, end)
+                return self.handle_compile_error(ast, error, start, end);
             }
         }
     }
@@ -146,7 +152,7 @@ impl CompileChain {
     pub fn check(&mut self) -> &mut Self {
         self.logger.set_prefix("Semantic");
         self.logger.print_output = true;
-        self.logger.print_logs = true;
+        self.logger.print_logs = false;
 
         let ast = match self.cur_stage.take() {
             Some(CompileStage::Parse(ast)) => ast,
@@ -162,18 +168,46 @@ impl CompileChain {
                     println!("{checker:#?}");
                 }
                 self.cur_stage = Some(CompileStage::Check((checker)));
-                self
+                return self;
             }
             CompilerResult::Err { data, error } => {
                 let checker = data.unwrap(); // TODO(TOM): this should never fail, but never know.
                 let end = self.logger.get_pos();
                 let start = pos(0, end.y);
-                self.handle_compile_error(checker, error, start, end)
+                return self.handle_compile_error(checker, error, start, end);
             }
         }
     }
 
-    fn gen(&mut self) {}
+    fn gen(&mut self) -> &mut Self {
+        self.logger.set_prefix("CodeGen");
+        self.logger.print_output = true;
+        self.logger.print_logs = true;
+
+        let checked_data = match self.cur_stage.take() {
+            Some(CompileStage::Check(data)) => data,
+            _ => {
+                panic!(
+                    "[COMPILER] Cannot generate code at any compilation stage other than semantic checking."
+                );
+            }
+        };
+
+        let result = CodeGen::new(&self.contents, &mut self.logger).generate_code(checked_data);
+
+        match result {
+            CompilerResult::Ok(generated_code) => {
+                println!("[COMPILER] Code generation successful.");
+                self.cur_stage = Some(CompileStage::CodeGen(generated_code));
+                return self;
+            }
+            CompilerResult::Err { data: _, error } => {
+                let end = self.logger.get_pos();
+                let start = pos(0, end.y);
+                return self.handle_compile_error((), error, start, end);
+            }
+        }
+    }
 
     pub fn handle_compile_error<T: std::fmt::Debug>(
         &mut self,

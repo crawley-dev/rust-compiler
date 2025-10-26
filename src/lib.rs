@@ -11,9 +11,9 @@
 )]
 pub mod checker;
 pub mod formatting;
+pub mod gen;
 pub mod lexer;
 pub mod parser;
 pub mod utils;
-
 // mod code_gen;
 pub mod compile_chain;
