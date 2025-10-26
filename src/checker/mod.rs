@@ -483,6 +483,7 @@ impl<'a> Checker<'a> {
         }
 
         if self.ctx.func.return_type.type_id != VOID_ID {
+            debug!(self, "checking if the return type matches.");
             match checked_scope.node.stmts.last() {
                 Some(stmt) => Self::check_node_returns(&stmt.node),
                 None => return comp_err!(self, (fn_sem), "Not all code paths return in '{}'", function.signature),
@@ -1025,10 +1026,10 @@ impl<'a> Checker<'a> {
                         return comp_err!(self, (stmt), "Mismatched '{}' return, expected '{:#?}', found =>\n'void'", self.ctx.func.signature, self.ctx.func.return_type);
                     }
                 };
-
+                
                 let proposed_return_sem = self.check_expr(expr)?;
                 let expected_return_sem = self.create_expr_semantics(self.ctx.func.return_type)?;
-
+                
                 self.check_type_equivalence(&expected_return_sem, &proposed_return_sem)?;
                 
                 CompilerResult::Ok(stmt)
@@ -1103,6 +1104,9 @@ impl<'a> Checker<'a> {
         let lhs = self.check_expr(lhs)?;
         let rhs = self.check_expr(rhs)?;
         let agreed_type = self.check_type_equivalence(&lhs, &rhs)?;
+        let agreed_width = self.get_expr_width(&agreed_type);
+        
+        println!("matching: {agreed_type:#?}, {op:?}, {lhs:#?}, {rhs:#?}");
         match agreed_type.addr_mode {
             AddressingMode::Array { .. } => {
                 err!(
@@ -1121,10 +1125,10 @@ impl<'a> Checker<'a> {
                 match op {
                     _ if op.has_flags_binary(TokenFlags::CMP) => {
                         Ok(ExprSem {
-                            form: ExprForm::Sized,
+                            form: agreed_type.form,
                             type_mode: TypeMode::Boolean,
                             addr_mode: AddressingMode::Primitive,
-                            expr_data: ExprData::Primitive { width: 1 }
+                            expr_data: ExprData::Primitive { width: agreed_width }
                         })
                     }
 
@@ -1135,7 +1139,7 @@ impl<'a> Checker<'a> {
                                     form: agreed_type.form,
                                     type_mode: TypeMode::Boolean,
                                     addr_mode: AddressingMode::Primitive,
-                                    expr_data: ExprData::Primitive { width: 1 },
+                                    expr_data: ExprData::Primitive { width: agreed_width },
                                 })
                             }
                             _ => err!(self, "[PRIMITIVE] logical operations require: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
@@ -1145,10 +1149,10 @@ impl<'a> Checker<'a> {
                     _ if op.has_flags_binary(TokenFlags::ARITH) => {
                         match agreed_type.type_mode {
                             TypeMode::Int { .. } => Ok(ExprSem {
-                                form: ExprForm::Sized,
+                                form: agreed_type.form,
                                 type_mode: agreed_type.type_mode,
                                 addr_mode: AddressingMode::Primitive,
-                                expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
+                                expr_data: ExprData::Primitive { width: agreed_width },
                             }),
                             _ => err!(self, "[PRIMITIVE] Arithmetic require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
@@ -1157,10 +1161,10 @@ impl<'a> Checker<'a> {
                     _ if op.has_flags_binary(TokenFlags::BIT) => {
                         match agreed_type.type_mode {
                             TypeMode::Int { .. } => Ok(ExprSem {
-                                addr_mode: AddressingMode::Primitive,
-                                form: ExprForm::Sized,
+                                form: agreed_type.form,
                                 type_mode: agreed_type.type_mode,
-                                expr_data: ExprData::Primitive { width: self.get_expr_width(&agreed_type) },
+                                addr_mode: AddressingMode::Primitive,
+                                expr_data: ExprData::Primitive { width: agreed_width },
                             }),
                             _ => err!(self, "[PRIMITIVE] Bitwise require integers: {op:?}..\n{lhs:#?}..\n{rhs:#?}"),
                         }
@@ -1269,7 +1273,8 @@ impl<'a> Checker<'a> {
             Term::IntLit => {
                 Ok(ExprSem {
                     form: ExprForm::Literal,
-                    type_mode: TypeMode::Int{ signed: false },
+                    // we should prob default integer literals to being signed, but we shouldn't have to? - they should be able to coerce anyway they want...
+                    type_mode: TypeMode::Int{ signed: false }, 
                     addr_mode: AddressingMode::Primitive,
                     expr_data: ExprData::Primitive { width: 0 },
                 })

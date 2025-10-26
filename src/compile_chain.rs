@@ -146,7 +146,7 @@ impl CompileChain {
     pub fn check(&mut self) -> &mut Self {
         self.logger.set_prefix("Semantic");
         self.logger.print_output = true;
-        self.logger.print_logs = false;
+        self.logger.print_logs = true;
 
         let ast = match self.cur_stage.take() {
             Some(CompileStage::Parse(ast)) => ast,
@@ -172,6 +172,8 @@ impl CompileChain {
             }
         }
     }
+
+    fn gen(&mut self) {}
 
     pub fn handle_compile_error<T: std::fmt::Debug>(
         &mut self,
